@@ -53,14 +53,6 @@ struct MtxDataBookkeeping
     bool is_symmetric{};
 };
 
-template <typename VT, typename IT>
-struct MtxDataValues
-{
-    std::vector<IT> I;
-    std::vector<IT> J;
-    std::vector<VT> values;
-};
-
 static std::string
 file_base_name(const char * file_name)
 {
@@ -120,64 +112,50 @@ int main(int argc, char **argv){
     MPI_Init(&argc, &argv);
     MPI_Comm_size(MPI_COMM_WORLD, &commSize);
     MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
-    MPI_Status status;
+    MPI_Status statusBK, statusCols, statusRows, statusValues;
     MtxDataBookkeeping<VT, IT> sendBookkeeping, recvBookkeeping;
-    MtxDataValues<VT, IT> sendData, recvData;
+    MtxData<VT, IT> procLocalMtxStruct;
 
-    int blockLengthArr[2];
-    MPI_Aint displacementArr[2], firstAddress, secondAddress;
+    // Generate MPI Datatype
+    int blockLengthArrBK[2];
+    MPI_Aint displacementArrBK[2], firstAddressBK, secondAddressBK;
 
-    MPI_Datatype typeArr[2], bookkeepingType;
-    typeArr[0] = MPI_LONG;
-    typeArr[1] = MPI_CXX_BOOL;
-    blockLengthArr[0] = 3; // using 3 int elements
-    blockLengthArr[1] = 2; // using 2 bool elements
-    MPI_Get_address(&sendBookkeeping.n_rows, &firstAddress); // get addresses of "nodeSend" members
-    MPI_Get_address(&sendBookkeeping.is_sorted, &secondAddress);
+    MPI_Datatype typeArrBK[2], bookkeepingType;
+    typeArrBK[0] = MPI_LONG; typeArrBK[1] = MPI_CXX_BOOL;
+    blockLengthArrBK[0] = 3; // using 3 int elements
+    blockLengthArrBK[1] = 2; // and 2 bool elements
+    MPI_Get_address(&sendBookkeeping.n_rows, &firstAddressBK);
+    MPI_Get_address(&sendBookkeeping.is_sorted, &secondAddressBK);
 
-    displacementArr[0] = (MPI_Aint) 0; // calculate displacements
-    displacementArr[1] = MPI_Aint_diff(secondAddress, firstAddress);
-    MPI_Type_create_struct(2, blockLengthArr, displacementArr, typeArr, &bookkeepingType);
+    displacementArrBK[0] = (MPI_Aint) 0; // calculate displacements from addresses
+    displacementArrBK[1] = MPI_Aint_diff(secondAddressBK, firstAddressBK);
+    MPI_Type_create_struct(2, blockLengthArrBK, displacementArrBK, typeArrBK, &bookkeepingType);
     MPI_Type_commit(&bookkeepingType);
 
-    // Method 1. Segment by number of rows
+    int msgLength;
+
     if (myRank == 0 ){
         Config config;
         const char * file_name{};
         file_name = argv[1];
-        // int commSize = 50;
-        // int myRank = 4;
 
         std::string matrix_name = file_base_name(file_name);
-        MtxData<VT, IT> mtx = read_mtx_data<double, int>(file_name, config.sort_matrix); 
-        int rowsPerProc = mtx.n_rows / commSize; //24
-        int rowsRemainder = mtx.n_rows % rowsPerProc;
+        // NOTE: Matrix will be read in as SORTED
+        MtxData<VT, IT> mtx = read_mtx_data<double, int>(file_name, config.sort_matrix);
+        // Evenly split the number of rows
+        int rowsPerProc = mtx.n_rows / commSize;
 
-        // printf("Total number of rows in mtx: %li\n", mtx.n_rows);
-        // printf("Number of procs: %i, and number of rows per proc: %i\n", commSize, rowsPerProc);
-        // printf("Remainder rows: %i\n", rowsRemainder);
-        // exit(0);
-
-        // Initialize and populate vector with our ranks
-        std::vector<IT> rankVec;
-        for(int i = 0; i < commSize; ++i){
-            rankVec.push_back(i);
-        }
-
-        // int tempCnt = 0;
-
-
-        // idea, for each rank in the rank array
-        //  -make this struct
-        //  -send the struct
-        for(IT rank : rankVec){
+        // Eventhough we're iterting through the ranks, 
+        // this loop is still executing sequentially on the root proc
+        for(IT rank = 0; rank < commSize; ++rank){ // NOTE: This loop assumes we're using all ranks 0 -> commSize-1
             std::vector<IT> procLocalI;
             std::vector<IT> procLocalJ;
             std::vector<VT> procLocalValues;
             int startingIdx, runningIdx, finishingIdx;
             int nextRow;
 
-            // Main loop. Assigns rows, columns, and values to process local vectors
+            // MAIN LOOP. Assigns rows, columns, and values to process local vectors
+            // proc 1 gets first "rowsPerProc" rows, then proc 2 gets next "rowsPerProc" rows, etc.
             for(int row = rank * rowsPerProc; row < (rank + 1) * rowsPerProc; ++row){
                 nextRow = row + 1;
 
@@ -200,7 +178,7 @@ int main(int argc, char **argv){
                 // This while loop will go "across the rows", basically filling the process local vectors
                 // with the appropiate data
                 // printf("With starting idx: %i, and end index %i.\n", startingIdx, finishingIdx);
-                // NOTE: is this better than a plain while loop here?
+                // TODO: is this better than a plain while loop here?
                 do{
                     procLocalI.push_back(mtx.I[runningIdx]);
                     procLocalJ.push_back(mtx.J[runningIdx]);
@@ -209,10 +187,10 @@ int main(int argc, char **argv){
                 } while(runningIdx != finishingIdx);
             }
 
-            // TODO: DRY. Integrate with above loop.
-            // Remainder loop. Adds remaining rows to last processes
+            // REMAINDER LOOP. Adds remaining rows to last processes
+            // last proc gets "rowsPerProc" rows plus leftover (= mtx.n_rows % rowsPerProc) 
             if (rank == commSize - 1){
-                for(int row = (rank + 1) * rowsPerProc; row < mtx.n_rows; row++){
+                for(int row = (rank + 1) * rowsPerProc; row < mtx.n_rows; ++row){
                     // picks up where the above loop leaves off, at row "commSize * rowsPerProc"
                     nextRow = row + 1;
                     startingIdx = getIndex<IT>(mtx.I, row);
@@ -232,72 +210,78 @@ int main(int argc, char **argv){
                     } while(runningIdx != finishingIdx);
                 }
             }
-        
-
-            // For testing/verification
-            // for(int myRank = 0; myRank < 1; ++myRank){
-            //     printf("I'm rank %i, and my values are:\n", myRank);
-            //     for(int i = 0; i < procLocalValues.size(); ++i){
-            //         std::cout << "(" << procLocalJ[i] + 1 << "," <<  procLocalI[i] + 1 << ")" << "\n" ;
-            //     }
-            // }
 
             // Count the number of rows in each processes
             int procLocalRowCount = std::set<IT>( procLocalI.begin(), procLocalI.end() ).size();
-            // std::cout << uniqueCount << std::endl;
 
-            sendBookkeeping = {
-                procLocalRowCount, 
-                mtx.n_cols, // will need to remove reference to mtx, since all procs wont have view of it 
-                procLocalValues.size(), 
-                config.sort_matrix, 
-                0
-            };
+            // Here, we segment data for the root process
+            if (rank == 0){
+                procLocalMtxStruct = {
+                    procLocalRowCount,
+                    mtx.n_cols,
+                    procLocalValues.size(),
+                    config.sort_matrix,
+                    0,
+                    procLocalI,
+                    procLocalJ,
+                    procLocalValues
+                };
+            }
+            // Here, we segment and send data to another proc
+            else{
+                sendBookkeeping = {
+                    procLocalRowCount, 
+                    mtx.n_cols, // will need to remove reference to mtx, since all procs wont have view of it 
+                    procLocalValues.size(), 
+                    config.sort_matrix, 
+                    0
+                };
 
-            // We send the data over two MPI_Send commands:
+                // First, send BK struct
+                MPI_Send(&sendBookkeeping, 1, bookkeepingType, rank, 99, MPI_COMM_WORLD);
 
-
-
-            // NOTE: only sending one of these
-            MPI_Send(&sendBookkeeping, 1, bookkeepingType, 1, 42, MPI_COMM_WORLD);
-            // std::cout << procLocalStruct.values.size() << std::endl;
-            // // print_mtx(procLocalStruct);
-            // // printf("I'm rank %i, and my values are:\n", rank);
-            // for(int i = 0; i < procLocalStruct.values.size(); ++i){
-            //     // std::cout << "(" << procLocalStruct.J[i] + 1 << "," <<  procLocalStruct.I[i] + 1 << ") -> " << procLocalStruct.values[i] << "\n" ;
-            //     std::cout << procLocalStruct.values[i] - mtx.values[tempCnt]<< "\n" ;
-            //     tempCnt++;
-
-            // }
-            // printf("\n");
+                // Next, send three arrays, which will need to be probed on recieving process
+                MPI_Send(&procLocalI[0], procLocalI.size(), MPI_INT, rank, 42, MPI_COMM_WORLD);
+                MPI_Send(&procLocalJ[0], procLocalJ.size(), MPI_INT, rank, 43, MPI_COMM_WORLD);
+                MPI_Send(&procLocalValues[0], procLocalValues.size(), MPI_DOUBLE, rank, 44, MPI_COMM_WORLD);
+            }
         }
     }          
-    else if(myRank == 1){
-        MPI_Recv(&recvBookkeeping, 1, bookkeepingType, 0, 42, MPI_COMM_WORLD, &status);
+    else if(myRank != 0){
+        // First, recieve BK struct
+        MPI_Recv(&recvBookkeeping, 1, bookkeepingType, 0, 99, MPI_COMM_WORLD, &statusBK);
 
-        // printf("Status: %d\n", status.MPI_ERROR);
+        // Next, probe single message (since all arrays same length) and allocate space for incoming arrays
+        MPI_Probe(0, 42, MPI_COMM_WORLD, &statusRows);
+        MPI_Get_count(&statusRows, MPI_INT, &msgLength);
+        IT *recvBufRowCoords = new IT [msgLength];
+        IT *recvBufColCoords = new IT [msgLength]; 
+        VT *recvBufValues = new VT [msgLength]; // TODO: not conducive to templates?
 
-        printf("[%li, %li, %li], (%d, %d)\n", recvBookkeeping.n_rows, recvBookkeeping.n_cols, recvBookkeeping.nnz, recvBookkeeping.is_sorted, recvBookkeeping.is_symmetric);
+        // Next, recieve 3 arrays that we've allocated space for
+        MPI_Recv(recvBufRowCoords, msgLength, MPI_INT, 0, 42, MPI_COMM_WORLD, &statusRows);
+        MPI_Recv(recvBufColCoords, msgLength, MPI_INT, 0, 43, MPI_COMM_WORLD, &statusCols);
+        MPI_Recv(recvBufValues, msgLength, MPI_DOUBLE, 0, 44, MPI_COMM_WORLD, &statusValues);
+
+        // TODO: Just how bad is this?... Are we copying array -> vector?
+        std::vector<IT> vRows(recvBufRowCoords, recvBufRowCoords + msgLength);
+        std::vector<IT> vCols(recvBufColCoords, recvBufColCoords + msgLength);
+        std::vector<VT> vValues(recvBufValues, recvBufValues + msgLength);
+
+        procLocalMtxStruct = {
+            recvBookkeeping.n_rows,
+            recvBookkeeping.n_cols,
+            recvBookkeeping.nnz,
+            recvBookkeeping.is_sorted,
+            recvBookkeeping.is_symmetric,
+            vRows,
+            vCols,
+            vValues
+        };
     }
+    MPI_Barrier(MPI_COMM_WORLD); // TODO: Is this needed?
     
+    print_mtx(procLocalMtxStruct);
 
-
-    // proc 1 gets first "rowsPerProc" rows, then proc 2 gets next "rowsPerProc" rows, etc.
-    // last proc gets "rowsPerProc" rows plus leftover (= mtx.n_rows % rowsPerProc) 
-    // }
-
-    // Method 2. Segment by number of non-zero elements
-    // int nnzPerProc = mtx.nnz / commSize;
-    // int nnzRemainder = mtx.nnz % nnzPerProc;
-
-    // // Still need index of nnz
-    // for(int nz = myRank * nnzPerProc; nz < (myRank + 1) * nnzPerProc; ++nz){
-    //     // I dont think this idea works here
-    //     getIndex<IT>(mtx.values, nz)
-
-        //there needs to be some flag that states:
-        // if nnzPerProc is reached, just give rest of row to processes
-
-    // }
     MPI_Finalize();
 }
