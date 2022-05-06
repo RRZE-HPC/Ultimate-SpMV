@@ -1,11 +1,9 @@
-/*
-    The idea here, is to have the root process read the .mtx file to a MtxData struct like normal. But afterwards,
-    each processes would take certain parts of root MtxData struct, and each make their own...?
-*/
+// Temporary. Will integrate into templates later
 using VT = double;
 using ST = long;
 using IT = int;
 
+// Also temporary, needed by mtx-reader.h
 void
 log(const char * format, ...)
 {}
@@ -14,6 +12,7 @@ log(const char * format, ...)
 #include <set>
 #include <iostream>
 #include <mpi.h>
+
 struct Config
 {
     long n_els_per_row { -1 };      // ell
@@ -81,6 +80,7 @@ file_base_name(const char * file_name)
         return file.substr(0, pos_dot);
     }
 }
+
 template <typename IT>
 IT getIndex(std::vector<IT> v, int K)
 {
@@ -104,7 +104,6 @@ IT getIndex(std::vector<IT> v, int K)
         return -1; // TODO: implement better error
     }
 }
-
 
 int main(int argc, char **argv){
     int myRank, commSize;
