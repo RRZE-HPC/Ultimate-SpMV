@@ -295,7 +295,7 @@ int main(int argc, char **argv)
                 // First, send BK struct
                 MPI_Send(&sendBookkeeping, 1, bookkeepingType, rank, 99, MPI_COMM_WORLD);
 
-                // Next, send three arrays, which will need to be probed on recieving process
+                // Next, send three arrays
                 MPI_Send(&procLocalI[0], procLocalI.size(), MPI_INT, rank, 42, MPI_COMM_WORLD);
                 MPI_Send(&procLocalJ[0], procLocalJ.size(), MPI_INT, rank, 43, MPI_COMM_WORLD);
                 MPI_Send(&procLocalValues[0], procLocalValues.size(), MPI_DOUBLE, rank, 44, MPI_COMM_WORLD);
@@ -308,14 +308,19 @@ int main(int argc, char **argv)
         // First, recieve BK struct
         MPI_Recv(&recvBookkeeping, 1, bookkeepingType, 0, 99, MPI_COMM_WORLD, &statusBK);
 
-        // Next, probe single message (since all arrays same length) and allocate space for incoming arrays
-        MPI_Probe(0, 42, MPI_COMM_WORLD, &statusRows);
-        MPI_Get_count(&statusRows, MPI_INT, &msgLength);
+        // Next, allocate space for incoming arrays
+        msgLength = recvBookkeeping.nnz;
+        // MPI_Probe(0, 42, MPI_COMM_WORLD, &statusRows);
+        // MPI_Get_count(&statusRows, MPI_INT, &msgLength);
         IT *recvBufRowCoords = new IT[msgLength];
         IT *recvBufColCoords = new IT[msgLength];
         VT *recvBufValues = new VT[msgLength]; // TODO: not conducive to templates?
 
-        // Next, recieve 3 arrays that we've allocated space for
+        // std::cout << msgLength << std::endl;
+        // std::cout << recvBookkeeping.nnz << std::endl;
+        
+
+        // Next, recieve 3 arrays that we've allocated space for on local proc
         MPI_Recv(recvBufRowCoords, msgLength, MPI_INT, 0, 42, MPI_COMM_WORLD, &statusRows);
         MPI_Recv(recvBufColCoords, msgLength, MPI_INT, 0, 43, MPI_COMM_WORLD, &statusCols);
         MPI_Recv(recvBufValues, msgLength, MPI_DOUBLE, 0, 44, MPI_COMM_WORLD, &statusValues);
