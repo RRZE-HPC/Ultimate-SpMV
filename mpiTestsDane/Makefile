@@ -45,22 +45,26 @@ all:omp
 .PHONY: omp
 omp: spmv-omp
 
-spmv-omp: main-omp.o spmv-omp.o spmv-omp-adv.o $(REBUILD_DEPS)
+spmv-omp: main-omp.o spmv-omp.o splitSendMtxData.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 main-omp.o: main.cpp $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
 
-spmv-omp.o: spmv-omp.cpp $(REBUILD_DEPS)
+splitSendMtxData.o: splitSendMtxData.cpp $(REBUILD_DEPS)
+	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
+
+spmv-omp.o: spmv-ompOG.cpp $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
 
-spmv-omp-adv.o: spmv-omp-adv.cpp $(REBUILD_DEPS)
-	$(CXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
+# not yet utilized
+# spmv-omp-adv.o: spmv-omp-adv.cpp $(REBUILD_DEPS)
+# 	$(CXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
 
 
 .PHONY: clean
 clean:
 	-rm *.o
-  # -rm spmv-omp
+	-rm spmv-omp
 
 
