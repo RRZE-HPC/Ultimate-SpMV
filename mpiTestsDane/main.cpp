@@ -599,10 +599,12 @@ get_statistics(
 }
 
 
+// TODO: Make work for multiple procs
 template <typename VT, typename IT>
 static MatrixStats<double>
 get_matrix_stats(const MtxData<VT, IT> & mtx)
 {
+
     MatrixStats<double> stats;
     auto & all_rows = stats.all_rows;
     auto & all_cols = stats.all_cols;
@@ -654,7 +656,6 @@ get_matrix_stats(const MtxData<VT, IT> & mtx)
             all_rows[col].min_idx = row;
         }
     }
-
     // compute bandwidth and histogram for bandwidth from row stats
     {
         std::vector<uint64_t> bandwidths;
@@ -677,7 +678,6 @@ get_matrix_stats(const MtxData<VT, IT> & mtx)
 
         // determine needed no. of buckets in histogram
         size_t n_buckets = std::ceil(std::log10(mtx.n_cols) * 9.0 + 1.0);
-
         stats.bandwidths = get_statistics<double>(bandwidths, get_el, n_buckets);
 
     }
@@ -860,8 +860,6 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
     d.C = C;
     d.sigma = sigma;
 
-    printf("Here2.1\n");
-
     if (d.C     < 1) { d.C = SCS_DEFAULT_C; }
     if (d.sigma < 1) { d.sigma = 1; }
 
@@ -881,8 +879,6 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
     }
     d.n_rows_padded = d.n_chunks * d.C;
 
-    printf("Here2.2\n");
-
     // first enty: original row index
     // second entry: population count of row
     using index_and_els_per_row = std::pair<ST, ST>;
@@ -898,15 +894,10 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
     }
 
     // sort rows in the scope of sigma
-
-    printf("Here2.3\n");
-
     if (will_add_overflow(d.n_rows_padded, d.sigma)) {
         fprintf(stderr, "ERROR: no. of padded rows + sigma exceeds size type.\n");
         return false;
     }
-
-    printf("Here2.4\n");
 
     for (ST i = 0; i < d.n_rows_padded; i += d.sigma) {
         auto begin = &n_els_per_row[i];
@@ -921,20 +912,12 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
                   });
     }
 
-    
-    // V<IT, IT> newVec(5) = {1,2,3,4,5};
-    // std::cout << newVec << std::endl;
-    // exit(1);
-
     // determine chunk_ptrs and chunk_lengths
 
     // TODO: check chunk_ptrs can overflow
-    printf("Here2.5\n");
-    // std::cout << "Proc " << myRank << "uses chunks # " << d.n_chunks << std::endl;
+    std::cout << d.n_chunks << std::endl;
     d.chunk_lengths = V<IT, IT>(d.n_chunks); // init a vector of length d.n_chunks
-    printf("Here2.6\n");
     d.chunk_ptrs    = V<IT, IT>(d.n_chunks + 1);
-    printf("Here2.7\n");
 
     IT cur_chunk_ptr = 0;
     
@@ -1006,8 +989,6 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
     }
 
     d.n_elements = n_scs_elements;
-
-    printf("Here2.8\n");
 
     return true;
 }
@@ -1346,7 +1327,6 @@ spmv_scs_reference(const ST C,
              const VT *x,
              VT *y)
 {
-    // std::cout << "I ENTERED SPMV_SCS_REFERENCE" << std::endl;
 
     #pragma omp parallel for schedule(static)
     for (ST c = 0; c < n_chunks; ++c) {
@@ -1753,12 +1733,10 @@ static BenchmarkResult
 bench_spmv_scs(
                 const Config & config,
                 const MtxData<VT, IT> & mtx,
-                int myRank,
                 const Kernel::entry_t & k_entry,
                 DefaultValues<VT, IT> & defaults,
                 std::vector<VT> &x_out,
                 std::vector<VT> &y_out,
-                
                 const std::vector<VT> * x_in = nullptr
                 )
 {
@@ -1767,22 +1745,18 @@ bench_spmv_scs(
     BenchmarkResult r;
 
     ScsData<VT, IT> scs;
-    // printf("Here2\n");
 
     log("allocate and place CPU matrices end\n");
     log("converting to scs format start\n");
 
-    // if (myRank == 1){
 
-        if (!convert_to_scs<VT, IT>(mtx, config.chunk_size, config.sigma, scs)) {
-            printf("Im rank %i in the loop", myRank);
-            r.is_result_valid = false;
-            return r;
-        }
-        printf("Here3\n");
-    // }
+    if (!convert_to_scs<VT, IT>(mtx, config.chunk_size, config.sigma, scs)) {
+        // printf("Im rank %i in the loop", myRank);
+        r.is_result_valid = false;
+        return r;
+    }
+
     log("converting to scs format end\n");
-    // printf("Process %i converted to scs\n", myRank);
 
     V<VT, IT> x_scs(scs.n_cols);
     init_with_ptr_or_value(x_scs, x_scs.n_rows, x_in,
@@ -1792,7 +1766,6 @@ bench_spmv_scs(
     std::uninitialized_fill_n(y_scs.data(),y_scs.n_rows, defaults.y);
 
     Kernel::fn_scs_t<VT, IT> kernel = k_entry.as_scs_kernel<VT, IT>();
-    printf("Here4\n");
 
     // std::cout << "scs: C: " << scs.C << " sigma: " << scs.sigma << "\n";
     // std::cout << "scs: n_rows: " << scs.n_rows << " n_rows_padded: " << scs.n_rows_padded << "\n";
@@ -1847,7 +1820,6 @@ bench_spmv_scs(
     }
 
     // print_vector("y", y_scs);
-    // Only the root process will verify it's results, other processes have bad results
     if (config.verify_result) {
         V<VT, IT> y_ref(y_scs.n_rows);
         std::uninitialized_fill_n(y_ref.data(), y_ref.n_rows, defaults.y);
@@ -1921,13 +1893,11 @@ bench_spmv(const std::string & kernel_name,
            const Config & config,
            const Kernel::entry_t & k_entry,
            const MtxData<VT, IT> & mtx,
-           int myRank,
            DefaultValues<VT, IT> * defaults = nullptr,
            const std::vector<VT> * x_in = nullptr,
            std::vector<VT> * y_out_opt = nullptr
            )
 {
-    printf("Here1\n");
 
     BenchmarkResult r;
 
@@ -1939,11 +1909,6 @@ bench_spmv(const std::string & kernel_name,
     if (!defaults) {
         defaults = &default_values;
     }
-
-    printf("Here1.1\n");
-
-    // std::cout << k_entry.format << std::endl;
-    // exit(1);
 
     switch (k_entry.format) {
     case MatrixFormat::Csr:
@@ -1959,11 +1924,9 @@ bench_spmv(const std::string & kernel_name,
                                    k_entry, *defaults,
                                    x_out, y_out, x_in);
         break;
-    // myRank only used for scs at the present
     case MatrixFormat::SellCSigma:
-        printf("Here1.5\n");
         r = bench_spmv_scs<VT, IT>(config,
-                                   mtx, myRank,
+                                   mtx,
                                    k_entry, *defaults,
                                    x_out, y_out, x_in);
         break;    default:
@@ -2269,7 +2232,7 @@ int main(int argc, char *argv[])
     std::string kernel_to_benchmark { "csr" };
     std::string value_type = { "dp" };
 
-    // MARKER_INIT();
+    MARKER_INIT();
 
     if (argc < 2) {
         fprintf(stderr,
@@ -2519,10 +2482,10 @@ int main(int argc, char *argv[])
         // Only root proc will read entire matrix
         MtxData<VT, IT> mtx = read_mtx_data<double, int>(file_name, config.sort_matrix);
 
+        // Segment global row pointers, and place into an array
         int *workSharingArr = new int[commSize + 1];
-
-        // by definition, first element is pointer to beginning of matrix to segment
         workSharingArr[0] = 0; 
+
         int segment;
 
         if (!strcmp("seg-by-rows", seg_method))
@@ -2587,6 +2550,7 @@ int main(int argc, char *argv[])
 
             // MAIN LOOP. Assigns rows, columns, and values to process local vectors
             // proc 1 gets first "rowsPerProc" rows, then proc 2 gets next "rowsPerProc" rows, etc.
+            // for (int row = 23; row < 48; ++row)
             for (int row = workSharingArr[loopRank]; row < workSharingArr[loopRank + 1]; ++row)
             {
                 nextRow = row + 1;
@@ -2623,13 +2587,14 @@ int main(int argc, char *argv[])
             // Here, we segment data for the root process
             if (loopRank == 0)
             {
+            
                 procLocalMtxStruct = {
                     procLocalRowCount,
                     mtx.n_cols,
                     procLocalValues.size(),
                     config.sort_matrix,
                     0, // NOTE: These "sub matricies" will (almost) never be symmetric
-                    procLocalI,
+                    procLocalI, // should work as both local and global row ptr
                     procLocalJ,
                     procLocalValues};
             }
@@ -2653,7 +2618,6 @@ int main(int argc, char *argv[])
             }
         }
         delete[] workSharingArr;
-    // }
     }
     else if (myRank != 0)
     {
@@ -2662,17 +2626,18 @@ int main(int argc, char *argv[])
 
         // Next, allocate space for incoming arrays
         msgLength = recvBookkeeping.nnz;
-        IT *recvBufRowCoords = new IT[msgLength];
+        IT *recvBufGlobalRowCoords = new IT[msgLength];
+        // IT *recvBufLocalRowCoords = new IT[msgLength];
         IT *recvBufColCoords = new IT[msgLength];
         VT *recvBufValues = new VT[msgLength]; 
 
         // Next, recieve 3 arrays that we've allocated space for on local proc
-        MPI_Recv(recvBufRowCoords, msgLength, MPI_INT, 0, 42, MPI_COMM_WORLD, &statusRows);
+        MPI_Recv(recvBufGlobalRowCoords, msgLength, MPI_INT, 0, 42, MPI_COMM_WORLD, &statusRows);
         MPI_Recv(recvBufColCoords, msgLength, MPI_INT, 0, 43, MPI_COMM_WORLD, &statusCols);
         MPI_Recv(recvBufValues, msgLength, MPI_DOUBLE, 0, 44, MPI_COMM_WORLD, &statusValues);
 
         // TODO: Just how bad is this?... Are we copying array -> vector?
-        std::vector<IT> vRows(recvBufRowCoords, recvBufRowCoords + msgLength);
+        std::vector<IT> vGlobalRows(recvBufGlobalRowCoords, recvBufGlobalRowCoords + msgLength);
         std::vector<IT> vCols(recvBufColCoords, recvBufColCoords + msgLength);
         std::vector<VT> vValues(recvBufValues, recvBufValues + msgLength);
 
@@ -2682,27 +2647,48 @@ int main(int argc, char *argv[])
             recvBookkeeping.nnz,
             recvBookkeeping.is_sorted,
             recvBookkeeping.is_symmetric,
-            vRows,
+            vGlobalRows,
             vCols,
             vValues};
 
-        delete[] recvBufRowCoords;
+        // Notice, recvBufGlobalRowCoords not deleted, because each process needs to know
+        // it's global row pointer for reconstruction later 
+        delete[] recvBufGlobalRowCoords;
         delete[] recvBufColCoords;
         delete[] recvBufValues;
     }
     MPI_Barrier(MPI_COMM_WORLD);
-// //////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    // Each process exchanges it's global row ptrs for local row ptrs
+    {
+        int firstGlobalRow = procLocalMtxStruct.I[0];
+        IT *globalRowCoords = new IT[procLocalMtxStruct.nnz];
+        IT *localRowCoords = new IT[procLocalMtxStruct.nnz];
+
+        for(int row = 0; row < procLocalMtxStruct.nnz; ++row){
+            // save proc's global row ptr
+            globalRowCoords[row] = localRowCoords[row];
+
+            // subtract first pointer from the rest, to make them process local
+            localRowCoords[row] = procLocalMtxStruct.I[row] - firstGlobalRow;
+        }
+
+        std::vector<IT> vLocalRows(localRowCoords, localRowCoords + procLocalMtxStruct.nnz);
+
+        // assign local row ptrs to struct
+        procLocalMtxStruct.I = vLocalRows;
+
+        // notice, we do not free globalRowCoords 
+        delete[] localRowCoords; 
+    }
 
     // long file_pos = ftell(f);
+    
 
     MatrixStats<double> matrix_stats;
     bool matrix_stats_computed = false;
-    int outerCount = 0, innerCount = 0;
 
     for (auto & it : Kernel::kernels()) {
-        std::cout << "Outer loop: " << outerCount << std::endl;
-        ++outerCount;
         const std::string & name = it.first;
 
         if (name != kernel_to_benchmark && kernel_to_benchmark != "all") {
@@ -2710,10 +2696,6 @@ int main(int argc, char *argv[])
         }
 
         for (auto & it2 : it.second) {
-            // std::cout << "name: " << it2 << std::endl;
-
-            std::cout << "Inner loop: " << innerCount << std::endl;
-            ++innerCount;
             std::type_index k_float_type = std::get<0>(it2.first);
             std::type_index k_index_type = std::get<1>(it2.first);
 
@@ -2722,7 +2704,6 @@ int main(int argc, char *argv[])
             BenchmarkResult result;
             bool result_valid = true;
 
-            /*START ACTUAL BENCHMARK*/
             log("benchmarking kernel: %s\n", name.c_str());
 
 //             // TODO: include single precision option!
@@ -2754,41 +2735,33 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
                     continue;
                 }
-                // MtxData<double, int> mtx = read_mtx_data<double, int>(file_name, config.sort_matrix);
-                // MtxData<double, int> mtx = read_proc_local_mtx_data<double, int>(file_name, seg_method, config.sort_matrix);
+
+                // NOTE: muted for now
 
                 // if (!matrix_stats_computed) {
                 //     matrix_stats = get_matrix_stats(procLocalMtxStruct);
                 //     matrix_stats_computed = true;
                 // }
-                result = bench_spmv<double, int>(name, config, k_entry, procLocalMtxStruct, myRank);
-                // print_mtx(procLocalMtxStruct);
+
+                result = bench_spmv<double, int>(name, config, k_entry, procLocalMtxStruct);
             }
-// // #ifdef BENCHMARK_COMPLEX
-// //             else if (k_float_type == std::type_index(typeid(std::complex<float>))) {
-// //                 results[2] = bench_gemv<std::complex<float>>(name, n_rows, n_cols, k_entry, file_name);
-// //             }
-// //             else if (k_float_type == std::type_index(typeid(std::complex<double>))) {
-// //                 results[3] = bench_gemv<std::complex<double>>(name, n_rows, n_cols, k_entry, file_name);
-// //             }
-// // #endif
-//             else {
-//                 result_valid = false;
-//             }
+#ifdef BENCHMARK_COMPLEX
+            else if (k_float_type == std::type_index(typeid(std::complex<float>))) {
+                results[2] = bench_gemv<std::complex<float>>(name, n_rows, n_cols, k_entry, file_name);
+            }
+            else if (k_float_type == std::type_index(typeid(std::complex<double>))) {
+                results[3] = bench_gemv<std::complex<double>>(name, n_rows, n_cols, k_entry, file_name);
+            }
+#endif
+            else {
+                result_valid = false;
+            }
 
-//             log("benchmarking kernel: %s end\n", name.c_str());
+            log("benchmarking kernel: %s end\n", name.c_str());
 
-//             // Only the root process will print it's results.
-//             // if (myRank == 0){
-//                 if (result_valid) {
-//                     printf("\n\nI'm process %i and my results are being printed:", myRank);
-
-//                     print_results(print_list, name, matrix_stats, result, n_cpu_threads, print_details);
-//                 }
-//                 else{
-//                     printf("\n\nI'm process %i and my results aren't valid\n\n", myRank);
-//                 }
-//             // }
+            if (result_valid) {
+                print_results(print_list, name, matrix_stats, result, n_cpu_threads, print_details);
+            }
         }
     }
 

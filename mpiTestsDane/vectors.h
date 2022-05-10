@@ -120,10 +120,13 @@ private:
 
         size_t n_bytes_to_alloc = sizeof(VT) * n_els;
 
-        int err = posix_memalign(
-                    (void **)&memory,
-                    DEFAULT_ALIGNMENT,
-                    n_bytes_to_alloc);
+        int err = 0;
+
+        // int err = posix_memalign(
+        //             (void **)&memory,
+        //             DEFAULT_ALIGNMENT,
+        //             n_bytes_to_alloc);
+        memory = (VT *)malloc(n_bytes_to_alloc);
 
         if (err != 0) {
             fprintf(stderr,

@@ -9,7 +9,7 @@ ifeq ($(COMPILER),gcc)
   OPT_LEVEL = -Ofast
   OPT_ARCH  = -march=native
 
-  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -Wall -fopenmp $(OPT_ARCH)
+  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(OPT_ARCH)
 
   ifeq ($(ASAN),1)
     CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
