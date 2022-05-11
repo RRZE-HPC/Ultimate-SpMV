@@ -915,7 +915,7 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
     // determine chunk_ptrs and chunk_lengths
 
     // TODO: check chunk_ptrs can overflow
-    std::cout << d.n_chunks << std::endl;
+    // std::cout << d.n_chunks << std::endl;
     d.chunk_lengths = V<IT, IT>(d.n_chunks); // init a vector of length d.n_chunks
     d.chunk_ptrs    = V<IT, IT>(d.n_chunks + 1);
 
@@ -1740,6 +1740,7 @@ bench_spmv_scs(
                 const std::vector<VT> * x_in = nullptr
                 )
 {
+
     log("allocate and place CPU matrices start\n");
 
     BenchmarkResult r;
@@ -1756,10 +1757,37 @@ bench_spmv_scs(
         return r;
     }
 
+    // Set upper and lower bounds for local x vector
+    IT x_col_upper = mtx.J[mtx.nnz - 1], x_col_lower = mtx.J[0];
+    IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
+
+    std::cout << "rank: " << myRank << "init col idx val: " << initial_col_idx <<std::endl;
+
+    // normalize col_idxs to point to (TODO: extra work for root proc)
+    for(int i = 0; i < scs.n_elements; ++i){
+        updated_col_idx = scs.col_idxs[i] - initial_col_idx;
+        // std::cout << scs.col_idxs[i] << " - " << initial_col_idx << " = " << updated_col_idx << std::endl;
+
+        if(updated_col_idx < 0){
+            // padded case
+            scs.col_idxs[i] = 0;    
+        }
+        else{
+            scs.col_idxs[i] = updated_col_idx;
+        }
+    }
     log("converting to scs format end\n");
 
-    V<VT, IT> x_scs(scs.n_cols);
-    init_with_ptr_or_value(x_scs, x_scs.n_rows, x_in,
+    // V<VT, IT> x_scs(scs.n_cols);
+    V<VT, IT> local_x_scs(x_col_upper - x_col_lower + 1); //always need the +1?
+
+
+
+
+    // init_with_ptr_or_value(x_scs, x_scs.n_rows, x_in,
+    //                        defaults.x, config.random_init_x);
+
+    init_with_ptr_or_value(local_x_scs, local_x_scs.n_rows, x_in,
                            defaults.x, config.random_init_x);
 
     V<VT, IT> y_scs = V<VT, IT>(scs.n_rows_padded);
@@ -1770,13 +1798,14 @@ bench_spmv_scs(
     // std::cout << "scs: C: " << scs.C << " sigma: " << scs.sigma << "\n";
     // std::cout << "scs: n_rows: " << scs.n_rows << " n_rows_padded: " << scs.n_rows_padded << "\n";
     // std::cout << "scs: n_elements: " << scs.n_elements << "\n";
-    //
+    
     // print_vector("x", x_scs);
     // print_vector("y(pre)", y_scs);
     // print_vector("chunk_ptrs", scs.chunk_ptrs);
     // print_vector("chunk_lengths", scs.chunk_lengths);
     // print_vector("col_idxs", scs.col_idxs);
     // print_vector("values", scs.values);
+
 
     if (k_entry.is_gpu_kernel) {
 #ifdef __NVCC__
@@ -1813,7 +1842,7 @@ bench_spmv_scs(
                        scs.n_chunks,
                        scs.chunk_ptrs.data(), scs.chunk_lengths.data(),
                        scs.col_idxs.data(), scs.values.data(),
-                       x_scs.data(), y_scs.data());
+                       local_x_scs.data(), y_scs.data());
                 },
                 /* is_gpu_kernel */ false,
                 config);
@@ -1828,7 +1857,7 @@ bench_spmv_scs(
                         scs.n_chunks,
                         scs.chunk_ptrs.data(), scs.chunk_lengths.data(),
                         scs.col_idxs.data(), scs.values.data(),
-                        x_scs.data(), y_ref.data());
+                        local_x_scs.data(), y_ref.data());
 
         r.is_result_valid &= spmv_verify(y_scs.data(), y_ref.data(),
                                         y_scs.n_rows, config.verbose_verification);
@@ -1871,12 +1900,16 @@ bench_spmv_scs(
 
     compute_code_balances(k_entry.format, k_entry.is_gpu_kernel, false, r);
 
-    x_out = std::move(x_scs);
+    x_out = std::move(local_x_scs);
 
     y_out.resize(scs.n_rows);
     for (int i = 0; i < scs.old_to_new_idx.n_rows; ++i) {
         y_out[i] = y_scs[scs.old_to_new_idx[i]];
     }
+
+    std::cout << "\n" << "Proc: " << myRank << " | Original x_vec length: " << mtx.n_cols 
+    << ", Shortened x_vec length: " << x_col_upper - x_col_lower + 1 << std::endl;
+
     return r;
 }
 
@@ -2660,27 +2693,25 @@ int main(int argc, char *argv[])
     MPI_Barrier(MPI_COMM_WORLD);
 
     // Each process exchanges it's global row ptrs for local row ptrs
-    {
-        int firstGlobalRow = procLocalMtxStruct.I[0];
-        IT *globalRowCoords = new IT[procLocalMtxStruct.nnz];
-        IT *localRowCoords = new IT[procLocalMtxStruct.nnz];
+    int firstGlobalRow = procLocalMtxStruct.I[0];
+    IT *globalRowCoords = new IT[procLocalMtxStruct.nnz];
+    IT *localRowCoords = new IT[procLocalMtxStruct.nnz];
 
-        for(int row = 0; row < procLocalMtxStruct.nnz; ++row){
-            // save proc's global row ptr
-            globalRowCoords[row] = localRowCoords[row];
+    for(int row = 0; row < procLocalMtxStruct.nnz; ++row){
+        // save proc's global row ptr
+        globalRowCoords[row] = localRowCoords[row];
 
-            // subtract first pointer from the rest, to make them process local
-            localRowCoords[row] = procLocalMtxStruct.I[row] - firstGlobalRow;
-        }
-
-        std::vector<IT> vLocalRows(localRowCoords, localRowCoords + procLocalMtxStruct.nnz);
-
-        // assign local row ptrs to struct
-        procLocalMtxStruct.I = vLocalRows;
-
-        // notice, we do not free globalRowCoords 
-        delete[] localRowCoords; 
+        // subtract first pointer from the rest, to make them process local
+        localRowCoords[row] = procLocalMtxStruct.I[row] - firstGlobalRow;
     }
+
+    std::vector<IT> vLocalRows(localRowCoords, localRowCoords + procLocalMtxStruct.nnz);
+
+    // assign local row ptrs to struct
+    procLocalMtxStruct.I = vLocalRows;
+
+    // notice, we do not free globalRowCoords 
+    delete[] localRowCoords; 
 
     // long file_pos = ftell(f);
     
@@ -2742,7 +2773,7 @@ int main(int argc, char *argv[])
                 //     matrix_stats = get_matrix_stats(procLocalMtxStruct);
                 //     matrix_stats_computed = true;
                 // }
-
+                
                 result = bench_spmv<double, int>(name, config, k_entry, procLocalMtxStruct);
             }
 #ifdef BENCHMARK_COMPLEX
