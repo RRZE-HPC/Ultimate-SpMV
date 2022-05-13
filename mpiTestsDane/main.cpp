@@ -28,6 +28,9 @@
 
 #include <mpi.h>
 
+using VT = double;
+using ST = long;
+using IT = int;
 
 // The default C to use for sell-c-sigma, when no C is specified.
 enum { SCS_DEFAULT_C = 8 };
@@ -604,16 +607,29 @@ template <typename VT, typename IT>
 static MatrixStats<double>
 get_matrix_stats(const MtxData<VT, IT> & mtx)
 {
+    // int myRank;
+    // MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
 
     MatrixStats<double> stats;
     auto & all_rows = stats.all_rows;
     auto & all_cols = stats.all_cols;
 
     all_rows.resize(mtx.n_rows);
-    all_cols.resize(mtx.n_cols);
+    all_cols.resize(mtx.n_cols); // forces all_cols container to have n_cols elements
+
+    // std::vector<IT> local_J;
+    // IT updated_col;
+    // auto minimum_col = *std::min_element(mtx.J.begin(), mtx.J.end());
+
+    // for(int i = 0; i < mtx.nnz; ++i){
+    //     updated_col = mtx.J[i] - minimum_col - 1;
+        
+    //     local_J.push_back(updated_col);
+    // }
 
     for (ST i = 0; i < mtx.nnz; ++i) {
         IT row = mtx.I[i];
+        // IT col = local_J[i];  // for some reason, works when original method fails.
         IT col = mtx.J[i];
 
         if (mtx.values[i] != VT{}) {
@@ -642,19 +658,21 @@ get_matrix_stats(const MtxData<VT, IT> & mtx)
         ++all_rows[row].n_values;
         ++all_cols[col].n_values;
 
-        if ((uint64_t)col > all_rows[row].max_idx) {
-            all_rows[row].max_idx = col;
-        }
-        if ((uint64_t)col < all_rows[row].min_idx) {
-            all_rows[row].min_idx = col;
-        }
+        // if ((uint64_t)col > all_rows[row].max_idx) {
+        //     all_rows[row].max_idx = col;
+        // }
+        // if ((uint64_t)col < all_rows[row].min_idx) {
+        //     all_rows[row].min_idx = col;
+        // }
 
-        if ((uint64_t)row > all_rows[col].max_idx) {
-            all_rows[col].max_idx = row;
-        }
-        if ((uint64_t)row < all_rows[col].min_idx) {
-            all_rows[col].min_idx = row;
-        }
+        // if ((uint64_t)row > all_rows[col].max_idx) {
+        //     all_rows[col].max_idx = row;
+        // }
+        // if ((uint64_t)row < all_rows[col].min_idx) {
+        //     all_rows[col].min_idx = row;
+        // }
+
+        // printf("(Proc: %i, nnz %li out of %li, row %i, col %i) => %li %li\n", myRank, i, mtx.nnz, row, col, all_rows[col].min_idx, all_rows[col].max_idx);
     }
     // compute bandwidth and histogram for bandwidth from row stats
     {
@@ -1757,13 +1775,13 @@ bench_spmv_scs(
         return r;
     }
 
+    // TODO: integrate into convert_to_scs
+
     // Set upper and lower bounds for local x vector
-    IT x_col_upper = mtx.J[mtx.nnz - 1], x_col_lower = mtx.J[0];
+    IT x_col_upper = *max_element(mtx.J.begin(), mtx.J.end()), x_col_lower = *min_element(mtx.J.begin(), mtx.J.end());
     IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
 
-    std::cout << "rank: " << myRank << "init col idx val: " << initial_col_idx <<std::endl;
-
-    // normalize col_idxs to point to (TODO: extra work for root proc)
+    // normalize col_idxs to point to
     for(int i = 0; i < scs.n_elements; ++i){
         updated_col_idx = scs.col_idxs[i] - initial_col_idx;
         // std::cout << scs.col_idxs[i] << " - " << initial_col_idx << " = " << updated_col_idx << std::endl;
@@ -1779,16 +1797,10 @@ bench_spmv_scs(
     log("converting to scs format end\n");
 
     // V<VT, IT> x_scs(scs.n_cols);
-    V<VT, IT> local_x_scs(x_col_upper - x_col_lower + 1); //always need the +1?
-
-
-
-
-    // init_with_ptr_or_value(x_scs, x_scs.n_rows, x_in,
-    //                        defaults.x, config.random_init_x);
+    V<VT, IT> local_x_scs(x_col_upper - x_col_lower + 1);
 
     init_with_ptr_or_value(local_x_scs, local_x_scs.n_rows, x_in,
-                           defaults.x, config.random_init_x);
+                           defaults.x);
 
     V<VT, IT> y_scs = V<VT, IT>(scs.n_rows_padded);
     std::uninitialized_fill_n(y_scs.data(),y_scs.n_rows, defaults.y);
@@ -2697,12 +2709,12 @@ int main(int argc, char *argv[])
     IT *globalRowCoords = new IT[procLocalMtxStruct.nnz];
     IT *localRowCoords = new IT[procLocalMtxStruct.nnz];
 
-    for(int row = 0; row < procLocalMtxStruct.nnz; ++row){
+    for(int nz = 0; nz < procLocalMtxStruct.nnz; ++nz){
         // save proc's global row ptr
-        globalRowCoords[row] = localRowCoords[row];
+        globalRowCoords[nz] = localRowCoords[nz];
 
         // subtract first pointer from the rest, to make them process local
-        localRowCoords[row] = procLocalMtxStruct.I[row] - firstGlobalRow;
+        localRowCoords[nz] = procLocalMtxStruct.I[nz] - firstGlobalRow;
     }
 
     std::vector<IT> vLocalRows(localRowCoords, localRowCoords + procLocalMtxStruct.nnz);
@@ -2737,27 +2749,21 @@ int main(int argc, char *argv[])
 
             log("benchmarking kernel: %s\n", name.c_str());
 
-//             // TODO: include single precision option!
+            // if (k_float_type == std::type_index(typeid(float)) &&
+            //     k_index_type == std::type_index(typeid(int))   &&
+            //     (value_type == "sp" || value_type == "all")) {
+            //     if (!is_type_large_enough_for_mtx_sizes<int>(file_name)) {
+            //         fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
+            //         continue;
+            //     }
 
-//             // if (k_float_type == std::type_index(typeid(float)) &&
-//             //     k_index_type == std::type_index(typeid(int))   &&
-//             //     (value_type == "sp" || value_type == "all")) {
-//             //     if (!is_type_large_enough_for_mtx_sizes<int>(file_name)) {
-//             //         fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
-//             //         continue;
-//             //     }
-//             //     // matrix segmentation should happen here?
-//             //     // MtxData<float, int> mtx = read_mtx_data<float, int>(file_name, config.sort_matrix);
-//             //     // MtxData<float, int> mtx = read_proc_local_mtx_data<float, int>(file_name, seg_method, config.sort_matrix);
-
-//             //     if (!matrix_stats_computed) {
-//             //         matrix_stats = get_matrix_stats(procLocalMtxStruct);
-//             //         matrix_stats_computed = true;
-//             //     }
-//             //     result = bench_spmv<float, int>(name, config, k_entry, procLocalMtxStruct, myRank);
-//             // }
-//             // else 
-
+            //     if (!matrix_stats_computed) {
+            //         matrix_stats = get_matrix_stats(procLocalMtxStruct);
+            //         matrix_stats_computed = true;
+            //     }
+            //     result = bench_spmv<float, int>(name, config, k_entry, procLocalMtxStruct, myRank);
+            // }
+            // else 
             if (k_float_type == std::type_index(typeid(double)) &&
                      k_index_type == std::type_index(typeid(int))    &&
                 (value_type == "dp" || value_type == "all")) {
@@ -2767,12 +2773,10 @@ int main(int argc, char *argv[])
                     continue;
                 }
 
-                // NOTE: muted for now
-
-                // if (!matrix_stats_computed) {
-                //     matrix_stats = get_matrix_stats(procLocalMtxStruct);
-                //     matrix_stats_computed = true;
-                // }
+                if (!matrix_stats_computed) {
+                    matrix_stats = get_matrix_stats(procLocalMtxStruct);
+                    matrix_stats_computed = true;
+                }
                 
                 result = bench_spmv<double, int>(name, config, k_entry, procLocalMtxStruct);
             }

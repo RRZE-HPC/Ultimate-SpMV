@@ -1,2 +1,4 @@
 test.cpp
 *.o
+verify.sh
+verifyResults.txt

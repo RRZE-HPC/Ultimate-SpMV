@@ -40,13 +40,19 @@ endif
 REBUILD_DEPS = $(MAKEFILE_LIST) spmv.h vectors.h mtx-reader.h
 
 .PHONY: all
-all:omp
+all: omp
 
 .PHONY: omp
 omp: spmv-omp
 
-spmv-omp: main-omp.o spmv-omp.o splitSendMtxData.o $(REBUILD_DEPS)
+# .PHONY: omp-adv
+# omp-adv: spmv-omp-adv
+
+spmv-omp: main-omp.o spmv-ompOG.o splitSendMtxData.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+
+# spmv-omp-adv: main-omp.o spmv-omp-adv.o splitSendMtxData.o $(REBUILD_DEPS)
+# 	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 main-omp.o: main.cpp $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
@@ -57,14 +63,16 @@ splitSendMtxData.o: splitSendMtxData.cpp $(REBUILD_DEPS)
 spmv-omp.o: spmv-ompOG.cpp $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
 
-# not yet utilized
-# spmv-omp-adv.o: spmv-omp-adv.cpp $(REBUILD_DEPS)
-# 	$(CXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
+spmv-omp-adv.o: spmv-omp-adv.cpp $(REBUILD_DEPS)
+	$(MPICXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
 
 
 .PHONY: clean
 clean:
 	-rm *.o
-	-rm spmv-omp
 
+.PHONY: rm
+rm:
+	-rm spmv-omp
+	-rm spmv-omp-adv
 
