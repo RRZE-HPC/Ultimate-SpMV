@@ -2,3 +2,5 @@ test.cpp
 *.o
 verify.sh
 verifyResults.txt
+spmv-omp
+spmv-omp-adv
