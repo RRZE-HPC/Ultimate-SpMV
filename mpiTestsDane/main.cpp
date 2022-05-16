@@ -865,7 +865,9 @@ template <typename VT, typename IT>
 static bool
 convert_to_scs(const MtxData<VT, IT> & mtx,
                ST C, ST sigma,
-               ScsData<VT, IT> & d)
+               ScsData<VT, IT> & d,
+               IT *x_col_upper,
+               IT *x_col_lower)
 {
     d.nnz    = mtx.nnz;
     d.n_rows = mtx.n_rows;
@@ -972,8 +974,6 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
         }
     }
 
-    
-
     d.values   = V<VT, IT>(n_scs_elements);
     d.col_idxs = V<IT, IT>(n_scs_elements);
 
@@ -983,6 +983,13 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
     }
 
     std::vector<IT> col_idx_in_row(d.n_rows_padded);
+
+    // Bounds for x-vector optimization
+    *x_col_upper = *max_element(mtx.J.begin(), mtx.J.end());
+    *x_col_lower = *min_element(mtx.J.begin(), mtx.J.end());
+
+    // Declare variables for x-vector optimization
+    IT updated_col_idx, initial_col_idx = mtx.J[0];
 
     // fill values and col_idxs
     for (ST i = 0; i < d.nnz; ++i) {
@@ -996,8 +1003,20 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
 
         IT idx = chunk_start + col_idx_in_row[row] * d.C + chunk_row;
 
-        d.col_idxs[idx] = mtx.J[i];
-        d.values[idx]   = mtx.values[i];
+        // NOTE: Keep old col_idx for reference
+        // d.col_idxs[idx] = mtx.J[i];
+
+        // New col_idx generation
+        updated_col_idx = mtx.J[i] - initial_col_idx;
+        if(updated_col_idx < 0){
+            // padded case
+            d.col_idxs[i] = 0;    
+        }
+        else{
+            d.col_idxs[i] = updated_col_idx;
+        }
+
+        d.values[idx] = mtx.values[i];
 
         col_idx_in_row[row]++;
     }
@@ -1764,32 +1783,14 @@ bench_spmv_scs(
     log("allocate and place CPU matrices end\n");
     log("converting to scs format start\n");
 
+    IT x_col_upper = IT {}, x_col_lower = IT {};
 
-    if (!convert_to_scs<VT, IT>(mtx, config.chunk_size, config.sigma, scs)) {
+    if (!convert_to_scs<VT, IT>(mtx, config.chunk_size, config.sigma, scs, &x_col_upper, &x_col_lower)) {
         // printf("Im rank %i in the loop", myRank);
         r.is_result_valid = false;
         return r;
     }
 
-    // TODO: integrate into convert_to_scs
-
-    // Set upper and lower bounds for local x vector
-    IT x_col_upper = *max_element(mtx.J.begin(), mtx.J.end()), x_col_lower = *min_element(mtx.J.begin(), mtx.J.end());
-    IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
-
-    // normalize col_idxs to point to
-    for(int i = 0; i < scs.n_elements; ++i){
-        updated_col_idx = scs.col_idxs[i] - initial_col_idx;
-        // std::cout << scs.col_idxs[i] << " - " << initial_col_idx << " = " << updated_col_idx << std::endl;
-
-        if(updated_col_idx < 0){
-            // padded case
-            scs.col_idxs[i] = 0;    
-        }
-        else{
-            scs.col_idxs[i] = updated_col_idx;
-        }
-    }
     log("converting to scs format end\n");
 
     // V<VT, IT> x_scs(scs.n_cols);
@@ -2390,12 +2391,12 @@ void segAndSendData(MtxData<VT, IT> & procLocalMtxStruct, Config config, const c
         // Only root proc will read entire matrix
         MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name, config.sort_matrix);
 
-    //     // Segment global row pointers, and place into an array
+        // Segment global row pointers, and place into an array
         int *workSharingArr = new int[commSize + 1];
         segWorkSharingArr<VT, IT>(mtx, workSharingArr, seg_method, commSize);
 
-    //     // Eventhough we're iterting through the ranks, this loop is
-    //     // (in the present implementation) executing sequentially on the root proc
+        // Eventhough we're iterting through the ranks, this loop is
+        // (in the present implementation) executing sequentially on the root proc
         for (int loopRank = 0; loopRank < commSize; ++loopRank)
         { // NOTE: This loop assumes we're using all ranks 0 -> commSize-1
             std::vector<IT> procLocalI;
@@ -2764,10 +2765,6 @@ int main(int argc, char *argv[])
         for (auto & it2 : it.second) {
             std::type_index k_float_type = std::get<0>(it2.first);
             std::type_index k_index_type = std::get<1>(it2.first);
-
-            // how are these useful here? what so they do more than value_type?
-            // std::cout << k_float_type.name() << std::endl;
-            // std::cout << k_index_type.name() << std::endl;
 
             Kernel::entry_t & k_entry = it2.second;
 
