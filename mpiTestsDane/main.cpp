@@ -2627,11 +2627,12 @@ void check_if_result_valid(const char * file_name, std::vector<VT> *y_total, con
 }
 
 template<typename VT, typename IT>
-void compute_and_verify_result(const char * file_name, const char * seg_method, Config config, const std::string name, Kernel::entry_t & k_entry){
+void compute_and_verify_result(const char * file_name, const char * seg_method, Config config, const std::string name, Kernel::entry_t & k_entry, int print_details, int n_cpu_threads, bool print_list){
     BenchmarkResult result;
 
     MatrixStats<double> matrix_stats;
     bool matrix_stats_computed = false;
+    bool print_proc_local_stats = false;
 
     // Initialize MPI variables
     int myRank, commSize;
@@ -2658,12 +2659,15 @@ void compute_and_verify_result(const char * file_name, const char * seg_method, 
 
     delete[] workSharingArr;
 
+    // Every process prints it's mtx-local statistics
+    if (print_proc_local_stats){ 
+        print_results(print_list, name, matrix_stats, result, n_cpu_threads, print_details);
+    }
     if (config.verify_result){
-        // Only have root proc check results, because all processes have the same y_total
+        // But have root proc check results, because all processes have the same y_total
         if (myRank == 0){
             check_if_result_valid<VT, IT>(file_name, &y_total, name, config.sort_matrix);
         }
-
     }
 }
 
@@ -2925,7 +2929,7 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
                     continue;
                 }
-                compute_and_verify_result<float, int>(file_name, seg_method, config, name, k_entry);
+                compute_and_verify_result<float, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list);
             }
             else if (k_float_type == std::type_index(typeid(double)) &&
                      k_index_type == std::type_index(typeid(int))    &&
@@ -2935,7 +2939,7 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
                     continue;
                 }
-                compute_and_verify_result<double, int>(file_name, seg_method, config, name, k_entry);
+                compute_and_verify_result<double, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list);
             }
 // #ifdef BENCHMARK_COMPLEX
 //             else if (k_float_type == std::type_index(typeid(std::complex<float>))) {
