@@ -79,7 +79,7 @@ struct Config
     bool verify_result{ true };
 
     // Verify result against solution of COO kernel.
-    bool verify_result_with_coo{ false };
+    bool verify_result_with_coo{ true };
 
     // Print incorrect elements from solution.
     bool verbose_verification{ true };
@@ -1159,8 +1159,14 @@ spmv(FN && kernel, bool is_gpu_kernel, const Config & config)
         t_kernel_start = get_time();
 
                 /* M AND P */
+        // If wa want to hard-code number of iterations, it would be done here
+        // n_repetitions = 10;
         for (unsigned long r = 0; r < n_repetitions; ++r) {
+            // i.e. do kernel() for every repetition
+            // std::cout << "Kernal run: " << r << std::endl;
             kernel();
+            // this is where swapping goes!
+            //swap(x,y), but where are x and y?
         }
         if (is_gpu_kernel) {
 #ifdef __NVCC__
@@ -1291,6 +1297,36 @@ init_with_ptr_or_value(V<VT, IT> & x,
     }
     else {
         random_init(x);
+    }
+}
+
+template <typename VT>
+static void
+init_std_vec_with_ptr_or_value(std::vector<VT> & x,
+                       ST n_x,
+                       const std::vector<VT> * x_in,
+                       VT default_value,
+                       bool init_with_random_numbers = false)
+{
+    if (!init_with_random_numbers) {
+        if (x_in) {
+            if (x_in->size() != size_t(n_x)) {
+                fprintf(stderr, "ERROR: x_in has incorrect size.\n");
+                exit(1);
+            }
+
+            for (ST i = 0; i < n_x; ++i) {
+                x[i] = (*x_in)[i];
+            }
+        }
+        else {
+            for (ST i = 0; i < n_x; ++i) {
+                x[i] = default_value;
+            }
+        }
+    }
+    else {
+        random_init(&(*x.begin()), &(*x.end()));
     }
 }
 
@@ -1766,6 +1802,8 @@ static BenchmarkResult
 bench_spmv_scs(
                 const Config & config,
                 const MtxData<VT, IT> & mtx,
+                const int * workSharingArr,
+                std::vector<VT> *y_total, //IDK if this is const
                 const Kernel::entry_t & k_entry,
                 DefaultValues<VT, IT> & defaults,
                 std::vector<VT> &x_out,
@@ -1773,11 +1811,15 @@ bench_spmv_scs(
                 const std::vector<VT> * x_in = nullptr
                 )
 {
+    // TODO: More efficient just to deduce this from workSharringArr size?
+    int commSize, myRank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
 
     log("allocate and place CPU matrices start\n");
 
     BenchmarkResult r;
-
+    // gathered y can be allocated here?
     ScsData<VT, IT> scs;
 
     log("allocate and place CPU matrices end\n");
@@ -1796,13 +1838,23 @@ bench_spmv_scs(
     // V<VT, IT> x_scs(scs.n_cols);
     V<VT, IT> local_x_scs(x_col_upper - x_col_lower + 1);
 
+    // Boolean value in last arguement determines if x is random, or taken from default values
+    // NOTE: may be important for swapping
     init_with_ptr_or_value(local_x_scs, local_x_scs.n_rows, x_in,
-                           defaults.x);
+                           defaults.x, false);
 
+    // for(int i = 0; i < local_x_scs.n_rows; ++i){
+    //     std::cout << local_x_scs[i] << std::endl;
+    // }
+
+    // This y is only process local. Need an Allgather for each proc to have
+    // all of the solution segments
     V<VT, IT> y_scs = V<VT, IT>(scs.n_rows_padded);
     std::uninitialized_fill_n(y_scs.data(),y_scs.n_rows, defaults.y);
 
     Kernel::fn_scs_t<VT, IT> kernel = k_entry.as_scs_kernel<VT, IT>();
+
+    // std::cout << "Proc: " << myRank << " has " << scs.n_rows_padded << " rows with padding." << std::endl;
 
     // std::cout << "scs: C: " << scs.C << " sigma: " << scs.sigma << "\n";
     // std::cout << "scs: n_rows: " << scs.n_rows << " n_rows_padded: " << scs.n_rows_padded << "\n";
@@ -1912,17 +1964,52 @@ bench_spmv_scs(
     x_out = std::move(local_x_scs);
 
     y_out.resize(scs.n_rows);
+
     for (int i = 0; i < scs.old_to_new_idx.n_rows; ++i) {
         y_out[i] = y_scs[scs.old_to_new_idx[i]];
+    }
+
+    // TODO: How often is this allocated? Every swap, or only once?
+    // Every processes needs counts array
+    int *countsArr = new int[commSize];
+    int *displacementArr = new int[commSize];
+
+    for(int i = 0; i < commSize; ++i){
+        countsArr[i] = workSharingArr[i+1] - workSharingArr[i];
+        displacementArr[i] = workSharingArr[i];
+    }
+
+    // Must use Allgatherv to collect results from each proc to y_total,
+    // since messages are of varying size
+    if(typeid(VT) == typeid(double)){
+        MPI_Allgatherv(&y_out[0],
+                    y_out.size(),
+                    MPI_DOUBLE,
+                    &(*y_total)[0],
+                    countsArr,
+                    displacementArr,
+                    MPI_DOUBLE,
+                    MPI_COMM_WORLD);
+    }
+    else if(typeid(VT) == typeid(float)){
+        MPI_Allgatherv(&y_out[0],
+                    y_out.size(),
+                    MPI_FLOAT,
+                    &(*y_total)[0],
+                    countsArr,
+                    displacementArr,
+                    MPI_FLOAT,
+                    MPI_COMM_WORLD);
     }
 
     // std::cout << "\n" << "Proc: " << myRank << " | Original x_vec length: " << mtx.n_cols 
     // << ", Shortened x_vec length: " << x_col_upper - x_col_lower + 1 << std::endl;
 
+    delete[] countsArr;
+    delete[] displacementArr;
+
     return r;
 }
-
-
 
 /**
  * Benchmark the OpenMP/GPU spmv kernel with a matrix of dimensions \p n_rows x
@@ -1935,6 +2022,8 @@ bench_spmv(const std::string & kernel_name,
            const Config & config,
            const Kernel::entry_t & k_entry,
            const MtxData<VT, IT> & mtx,
+           const int * workSharingArr,
+           std::vector<VT> * y_total, //IDK if this is const
            DefaultValues<VT, IT> * defaults = nullptr,
            const std::vector<VT> * x_in = nullptr,
            std::vector<VT> * y_out_opt = nullptr
@@ -1943,6 +2032,7 @@ bench_spmv(const std::string & kernel_name,
 
     BenchmarkResult r;
 
+    // How are these involved with swapping?
     std::vector<VT> y_out;
     std::vector<VT> x_out;
 
@@ -1968,7 +2058,8 @@ bench_spmv(const std::string & kernel_name,
         break;
     case MatrixFormat::SellCSigma:
         r = bench_spmv_scs<VT, IT>(config,
-                                   mtx,
+                                   mtx, 
+                                   workSharingArr, y_total,
                                    k_entry, *defaults,
                                    x_out, y_out, x_in);
         break;    default:
@@ -1976,18 +2067,8 @@ bench_spmv(const std::string & kernel_name,
         return r;
     }
 
-
-    if (config.verify_result_with_coo) {
-        log("verify begin\n");
-
-        bool ok = spmv_verify(kernel_name, mtx, x_out, y_out);
-
-        r.is_result_valid = ok;
-
-        log("verify end\n");
-    }
-
     if (y_out_opt) *y_out_opt = std::move(y_out);
+
 
     // if (print_matrices) {
     //     printf("Matrices for kernel: %s\n", kernel_name.c_str());
@@ -2366,16 +2447,11 @@ void defineBookkeepingType(MtxDataBookkeeping<long int> *sendBookkeeping, MPI_Da
 }
 
 template <typename VT, typename IT, typename ST>
-void segAndSendData(MtxData<VT, IT> & procLocalMtxStruct, Config config, const char * seg_method, const char * file_name){
+void segAndSendData(MtxData<VT, IT> & procLocalMtxStruct, Config config, const char * seg_method, const char * file_name, int *workSharingArr, int myRank, int commSize){
 
     // Declare functions to be used locally
     // void segWorkSharingArr(const MtxData<VT, IT>, int *, const char *, int);
     // void segMtxStruct(const MtxData<VT, IT>, std::vector<IT> *, std::vector<IT> *, std::vector<VT> *, int *, int);
-
-    int myRank, commSize;
-
-    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
-    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
 
     MPI_Status statusBK, statusCols, statusRows, statusValues;
 
@@ -2392,7 +2468,7 @@ void segAndSendData(MtxData<VT, IT> & procLocalMtxStruct, Config config, const c
         MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name, config.sort_matrix);
 
         // Segment global row pointers, and place into an array
-        int *workSharingArr = new int[commSize + 1];
+        // int *workSharingArr = new int[commSize + 1];
         segWorkSharingArr<VT, IT>(mtx, workSharingArr, seg_method, commSize);
 
         // Eventhough we're iterting through the ranks, this loop is
@@ -2412,7 +2488,6 @@ void segAndSendData(MtxData<VT, IT> & procLocalMtxStruct, Config config, const c
             // Here, we segment data for the root process
             if (loopRank == 0)
             {
-            
                 procLocalMtxStruct = {
                     procLocalRowCount,
                     mtx.n_cols,
@@ -2439,16 +2514,15 @@ void segAndSendData(MtxData<VT, IT> & procLocalMtxStruct, Config config, const c
                 // Next, send three arrays
                 MPI_Send(&procLocalI[0], procLocalI.size(), MPI_INT, loopRank, 42, MPI_COMM_WORLD);
                 MPI_Send(&procLocalJ[0], procLocalJ.size(), MPI_INT, loopRank, 43, MPI_COMM_WORLD);
-                // TODO: deduce type, if sp, do something else
                 if(typeid(VT) == typeid(double)){
                     MPI_Send(&procLocalValues[0], procLocalValues.size(), MPI_DOUBLE, loopRank, 44, MPI_COMM_WORLD);
                 }
                 else if(typeid(VT) == typeid(float)){
-                    MPI_Send(&procLocalValues[0], procLocalValues.size(), MPI_DOUBLE, loopRank, 44, MPI_COMM_WORLD);
+                    MPI_Send(&procLocalValues[0], procLocalValues.size(), MPI_FLOAT, loopRank, 44, MPI_COMM_WORLD);
                 }
             }
         }
-        delete[] workSharingArr;
+        // delete[] workSharingArr;
     }
     else if (myRank != 0)
     {
@@ -2510,11 +2584,87 @@ void segAndSendData(MtxData<VT, IT> & procLocalMtxStruct, Config config, const c
     // assign local row ptrs to struct
     procLocalMtxStruct.I = vLocalRows;
 
+    // Broadcast work sharing array to other processes
+    MPI_Bcast(workSharingArr,
+              commSize + 1,
+              MPI_INT,
+              0,
+              MPI_COMM_WORLD);
+
     // NOTE: what possibilities are there to use global row coords later?
     delete[] globalRowCoords;
     delete[] localRowCoords;
 
     MPI_Type_free(&bookkeepingType);
+}
+
+template<typename VT, typename IT>
+void check_if_result_valid(const char * file_name, std::vector<VT> *y_total, const std::string name, bool sort_matrix){
+        DefaultValues<VT, IT> defaults;
+
+        // Root proc reads all of mtx
+        MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name, sort_matrix);
+
+        std::vector<VT> x_total(mtx.n_cols);
+        // std::uninitialized_fill_n(x_total.data(), x_total.n_rows, idk.y);
+
+
+        // recreate_x_total()
+
+        // TODO: Only works since seed is same. Not flexible to swapping.
+        init_std_vec_with_ptr_or_value<VT>(x_total, mtx.n_cols, nullptr, defaults.x);
+
+        bool is_result_valid = spmv_verify<VT, IT>(name, mtx, x_total, *y_total);
+
+        // std::cout << result_valid << std::endl;
+    
+        if (is_result_valid) {
+            printf("Results valid.\n");
+        }
+        else{
+            printf("Results NOT valid.\n");
+        }
+}
+
+template<typename VT, typename IT>
+void compute_and_verify_result(const char * file_name, const char * seg_method, Config config, const std::string name, Kernel::entry_t & k_entry){
+    BenchmarkResult result;
+
+    MatrixStats<double> matrix_stats;
+    bool matrix_stats_computed = false;
+
+    // Initialize MPI variables
+    int myRank, commSize;
+    MPI_Comm_size(MPI_COMM_WORLD, &commSize);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    // Declare struct on each process
+    MtxData<VT, IT> procLocalMtxStruct;
+
+    // Allocate space for work sharing array. Is populated in segAndSendData function
+    IT *workSharingArr = new IT[commSize + 1];
+
+    segAndSendData<VT, IT, ST>(procLocalMtxStruct, config, seg_method, file_name, workSharingArr, myRank, commSize);
+
+    if (!matrix_stats_computed) {
+        matrix_stats = get_matrix_stats(procLocalMtxStruct);
+        matrix_stats_computed = true;
+    }
+
+    // Each process must allocate space for total y vector
+    IT rowsInMatrix = workSharingArr[commSize];
+    std::vector<VT> y_total(rowsInMatrix);
+
+    result = bench_spmv<VT, IT>(name, config, k_entry, procLocalMtxStruct, workSharingArr, &y_total);
+
+    delete[] workSharingArr;
+
+    if (config.verify_result){
+        // Only have root proc check results, because all processes have the same y_total
+        if (myRank == 0){
+            check_if_result_valid<VT, IT>(file_name, &y_total, name, config.sort_matrix);
+        }
+
+    }
 }
 
 int main(int argc, char *argv[])
@@ -2747,13 +2897,9 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    // Initialize communicator
     MPI_Init(&argc, &argv);
 
     // long file_pos = ftell(f);
-    
-    MatrixStats<double> matrix_stats;
-    bool matrix_stats_computed = false;
 
     for (auto & it : Kernel::kernels()) {
         const std::string & name = it.first;
@@ -2768,8 +2914,7 @@ int main(int argc, char *argv[])
 
             Kernel::entry_t & k_entry = it2.second;
 
-            BenchmarkResult result;
-            bool result_valid = true;
+            // bool result_valid = true;
 
             log("benchmarking kernel: %s\n", name.c_str());
 
@@ -2780,18 +2925,7 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
                     continue;
                 }
-
-                // Declare struct on each process
-                MtxData<float, int> procLocalMtxStruct;
-
-                segAndSendData<float, int, long int>(procLocalMtxStruct, config, seg_method, file_name);
-
-                if (!matrix_stats_computed) {
-                    matrix_stats = get_matrix_stats(procLocalMtxStruct);
-                    matrix_stats_computed = true;
-                }
-                
-                result = bench_spmv<float, int>(name, config, k_entry, procLocalMtxStruct);
+                compute_and_verify_result<float, int>(file_name, seg_method, config, name, k_entry);
             }
             else if (k_float_type == std::type_index(typeid(double)) &&
                      k_index_type == std::type_index(typeid(int))    &&
@@ -2801,44 +2935,26 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
                     continue;
                 }
-
-                // Declare struct on each process
-                MtxData<double, int> procLocalMtxStruct;
-
-                segAndSendData<double, int, long int>(procLocalMtxStruct, config, seg_method, file_name);
-
-                if (!matrix_stats_computed) {
-                    matrix_stats = get_matrix_stats(procLocalMtxStruct);
-                    matrix_stats_computed = true;
-                }
-                
-                result = bench_spmv<double, int>(name, config, k_entry, procLocalMtxStruct);
+                compute_and_verify_result<double, int>(file_name, seg_method, config, name, k_entry);
             }
-#ifdef BENCHMARK_COMPLEX
-            else if (k_float_type == std::type_index(typeid(std::complex<float>))) {
-                results[2] = bench_gemv<std::complex<float>>(name, n_rows, n_cols, k_entry, file_name);
-            }
-            else if (k_float_type == std::type_index(typeid(std::complex<double>))) {
-                results[3] = bench_gemv<std::complex<double>>(name, n_rows, n_cols, k_entry, file_name);
-            }
-#endif
-            else {
-                result_valid = false;
-            }
-
+// #ifdef BENCHMARK_COMPLEX
+//             else if (k_float_type == std::type_index(typeid(std::complex<float>))) {
+//                 results[2] = bench_gemv<std::complex<float>>(name, n_rows, n_cols, k_entry, file_name);
+//             }
+//             else if (k_float_type == std::type_index(typeid(std::complex<double>))) {
+//                 results[3] = bench_gemv<std::complex<double>>(name, n_rows, n_cols, k_entry, file_name);
+//             }
+// #endif
             log("benchmarking kernel: %s end\n", name.c_str());
-
-            if (result_valid) {
-                print_results(print_list, name, matrix_stats, result, n_cpu_threads, print_details);
-            }
         }
     }
+
+    MPI_Finalize();
 
     log("main end\n");
 
     MARKER_DEINIT();
 
-    MPI_Finalize();
     return 0;
 }
 
