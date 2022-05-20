@@ -2098,7 +2098,7 @@ bench_spmv_scs(
  */
 template <typename VT, typename IT>
 static BenchmarkResult
-bench_spmv(const std::string &kernel_name,
+ bench_spmv(const std::string &kernel_name,
            const Config &config,
            const Kernel::entry_t &k_entry,
            const MtxData<VT, IT> &mtx,
@@ -2727,13 +2727,12 @@ void check_if_result_valid(const char *file_name, std::vector<VT> *y_total, cons
 }
 
 template <typename VT, typename IT>
-void compute_and_verify_result(const char *file_name, const char *seg_method, Config config, const std::string name, Kernel::entry_t &k_entry, int print_details, int n_cpu_threads, bool print_list)
+void compute_and_verify_result(const char *file_name, const char *seg_method, Config config, const std::string name, Kernel::entry_t &k_entry, int print_details, int n_cpu_threads, bool print_list, bool print_proc_local_stats)
 {
     BenchmarkResult result;
 
     MatrixStats<double> matrix_stats;
     bool matrix_stats_computed = false;
-    bool print_proc_local_stats = false;
 
     // Initialize MPI variables
     int my_rank, comm_size;
@@ -2779,8 +2778,10 @@ int main(int argc, char *argv[])
 {
     Config config;
     bool print_list = false;
+    bool print_proc_local_stats = false;
     int print_details = 0;
     int print_matrix_stats = 0;
+    
 
     const char *file_name{};
     const char *seg_method{"seg-by-rows"};
@@ -3075,7 +3076,7 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
                     continue;
                 }
-                compute_and_verify_result<float, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list);
+                compute_and_verify_result<float, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list, print_proc_local_stats);
             }
             else if (k_float_type == std::type_index(typeid(double)) &&
                      k_index_type == std::type_index(typeid(int)) &&
@@ -3087,7 +3088,7 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
                     continue;
                 }
-                compute_and_verify_result<double, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list);
+                compute_and_verify_result<double, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list, print_proc_local_stats);
             }
             // #ifdef BENCHMARK_COMPLEX
             //             else if (k_float_type == std::type_index(typeid(std::complex<float>))) {
