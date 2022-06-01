@@ -3,6 +3,7 @@
 #include "vectors.h"
 #include "splitSendMtxData.h"
 
+#include <typeinfo>
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -79,8 +80,8 @@ struct max_rel_error<std::complex<double>>
 struct Config
 {
     long n_els_per_row{-1}; // ell
-    long chunk_size{-1};    // sell-c-sigma
-    long sigma{-1};         // sell-c-sigma
+    long chunk_size{SCS_DEFAULT_C};    // sell-c-sigma
+    long sigma{1};         // sell-c-sigma
 
     // Initialize rhs vector with random numbers.
     bool random_init_x{true};
@@ -88,7 +89,7 @@ struct Config
     bool random_init_A{false};
 
     // No. of repetitions to perform. 0 for automatic detection.
-    unsigned long n_repetitions{};
+    unsigned long n_repetitions{10};
 
     // Verify result of SpVM.
     bool verify_result{true};
@@ -102,6 +103,9 @@ struct Config
     // Sort rows/columns of sparse matrix before
     // converting it to a specific format.
     bool sort_matrix{true};
+
+    // Configures if the code will be executed in bench mode or compute mode
+    std::string mode = "bench"; 
 };
 
 template <typename VT, typename IT>
@@ -180,35 +184,6 @@ struct BenchmarkResult
     double cb_a_nzc{};
 };
 
-Kernel::fn_void_t
-Kernel::add(std::string name,
-            std::type_index value_type,
-            std::type_index index_type,
-            fn_void_t kernel,
-            bool is_gpu,
-            MatrixFormat format)
-{
-    kernels_t &ks = kernels();
-
-    if (ks.find(name) == ks.end())
-    {
-        ks.insert({name, kernel_types_t()});
-    }
-
-    ks[name].insert(std::make_pair(
-        std::make_tuple(value_type, index_type),
-        entry_t(kernel, is_gpu, format)));
-
-    return kernel;
-}
-
-Kernel::kernels_t &
-Kernel::kernels()
-{
-    static kernels_t ks;
-    return ks;
-}
-
 void log(const char *format, ...)
 {
     if (g_log)
@@ -226,6 +201,76 @@ void log(const char *format, ...)
         fflush(stdout);
     }
 }
+
+// template <ST C, typename VT, typename IT>
+// static void
+// scs_impl(const ST n_chunks,
+//          const IT * RESTRICT chunk_ptrs,
+//          const IT * RESTRICT chunk_lengths,
+//          const IT * RESTRICT col_idxs,
+//          const VT * RESTRICT values,
+//          const VT * RESTRICT x,
+//          VT * RESTRICT y)
+// {
+
+//     #pragma omp parallel for schedule(static)
+//     for (ST c = 0; c < n_chunks; ++c) {
+//         VT tmp[C]{};
+
+//         IT cs = chunk_ptrs[c];
+
+//         for (IT j = 0; j < chunk_lengths[c]; ++j) {
+//             #pragma omp simd
+//             for (IT i = 0; i < C; ++i) {
+//                 tmp[i] += values[cs + j * C + i] * x[col_idxs[cs + j * C + i]];
+//             }
+//         }
+
+//         #pragma omp simd
+//         for (IT i = 0; i < C; ++i) {
+//             y[c * C + i] = tmp[i];
+//         }
+//     }
+// }
+
+
+// /**
+//  * Dispatch to Sell-C-sigma kernels templated by C.
+//  *
+//  * Note: only works for selected Cs, see INSTANTIATE_CS.
+//  */
+// template <typename VT, typename IT>
+// static void
+// spmv_omp_scs_c(
+//              const ST C,
+//              const ST n_chunks,
+//              const IT * RESTRICT chunk_ptrs,
+//              const IT * RESTRICT chunk_lengths,
+//              const IT * RESTRICT col_idxs,
+//              const VT * RESTRICT values,
+//              const VT * RESTRICT x,
+//              VT * RESTRICT y)
+// {
+//     switch (C)
+//     {
+//         #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64)
+
+//         #define X(CC) case CC: scs_impl<CC>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); break;
+//         INSTANTIATE_CS
+//         #undef X
+
+// #ifdef SCS_C
+//     case SCS_C:
+//         case SCS_C: scs_impl<SCS_C>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y);
+//         break;
+// #endif
+//     default:
+//         fprintf(stderr,
+//                 "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
+//                 long(C));
+//         exit(1);
+//     }
+// }
 
 template <typename VT>
 static void
@@ -894,42 +939,28 @@ convert_to_ell(const MtxData<VT, IT> &mtx,
  */
 template <typename VT, typename IT>
 static bool
-convert_to_scs(const MtxData<VT, IT> &mtx,
+convert_to_scs(const MtxData<VT, IT> & mtx,
                ST C, ST sigma,
-               ScsData<VT, IT> &d,
-               IT *x_col_upper,
-               IT *x_col_lower)
+               ScsData<VT, IT> & d)
 {
-    d.nnz = mtx.nnz;
+    d.nnz    = mtx.nnz;
     d.n_rows = mtx.n_rows;
     d.n_cols = mtx.n_cols;
 
     d.C = C;
     d.sigma = sigma;
 
-    if (d.C < 1)
-    {
-        d.C = SCS_DEFAULT_C;
-    }
-    if (d.sigma < 1)
-    {
-        d.sigma = 1;
-    }
-
-    if (d.sigma % d.C != 0 && d.sigma != 1)
-    {
+    if (d.sigma % d.C != 0 && d.sigma != 1) {
         fprintf(stderr, "NOTE: sigma is not a multiple of C\n");
     }
 
-    if (will_add_overflow(d.n_rows, d.C))
-    {
+    if (will_add_overflow(d.n_rows, d.C)) {
         fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
         return false;
     }
-    d.n_chunks = (mtx.n_rows + d.C - 1) / d.C;
+    d.n_chunks      = (mtx.n_rows + d.C - 1) / d.C;
 
-    if (will_mult_overflow(d.n_chunks, d.C))
-    {
+    if (will_mult_overflow(d.n_chunks, d.C)) {
         fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
         return false;
     }
@@ -941,35 +972,30 @@ convert_to_scs(const MtxData<VT, IT> &mtx,
 
     std::vector<index_and_els_per_row> n_els_per_row(d.n_rows_padded);
 
-    for (ST i = 0; i < d.n_rows_padded; ++i)
-    {
+    for (ST i = 0; i < d.n_rows_padded; ++i) {
         n_els_per_row[i].first = i;
     }
 
-    for (ST i = 0; i < mtx.nnz; ++i)
-    {
+    for (ST i = 0; i < mtx.nnz; ++i) {
         ++n_els_per_row[mtx.I[i]].second;
     }
 
     // sort rows in the scope of sigma
-    if (will_add_overflow(d.n_rows_padded, d.sigma))
-    {
+    if (will_add_overflow(d.n_rows_padded, d.sigma)) {
         fprintf(stderr, "ERROR: no. of padded rows + sigma exceeds size type.\n");
         return false;
     }
 
-    for (ST i = 0; i < d.n_rows_padded; i += d.sigma)
-    {
+    for (ST i = 0; i < d.n_rows_padded; i += d.sigma) {
         auto begin = &n_els_per_row[i];
-        auto end = (i + d.sigma) < d.n_rows_padded
-                       ? &n_els_per_row[i + d.sigma]
-                       : &n_els_per_row[d.n_rows_padded];
+        auto end   = (i + d.sigma) < d.n_rows_padded
+                        ? &n_els_per_row[i + d.sigma]
+                        : &n_els_per_row[d.n_rows_padded];
 
         std::sort(begin, end,
                   // sort longer rows first
-                  [](const auto &a, const auto &b)
-                  {
-                      return a.second > b.second;
+                  [](const auto & a, const auto & b) {
+                    return a.second > b.second;
                   });
     }
 
@@ -978,25 +1004,21 @@ convert_to_scs(const MtxData<VT, IT> &mtx,
     // TODO: check chunk_ptrs can overflow
     // std::cout << d.n_chunks << std::endl;
     d.chunk_lengths = V<IT, IT>(d.n_chunks); // init a vector of length d.n_chunks
-    d.chunk_ptrs = V<IT, IT>(d.n_chunks + 1);
+    d.chunk_ptrs    = V<IT, IT>(d.n_chunks + 1);
 
     IT cur_chunk_ptr = 0;
-
-    for (ST i = 0; i < d.n_chunks; ++i)
-    {
+    
+    for (ST i = 0; i < d.n_chunks; ++i) {
         auto begin = &n_els_per_row[i * d.C];
-        auto end = &n_els_per_row[i * d.C + d.C];
+        auto end   = &n_els_per_row[i * d.C + d.C];
 
         d.chunk_lengths[i] =
-            std::max_element(begin, end,
-                             [](const auto &a, const auto &b)
-                             {
-                                 return a.second < b.second;
-                             })
-                ->second;
+                std::max_element(begin, end,
+                    [](const auto & a, const auto & b) {
+                        return a.second < b.second;
+                    })->second;
 
-        if (will_add_overflow(cur_chunk_ptr, d.chunk_lengths[i] * (IT)d.C))
-        {
+        if (will_add_overflow(cur_chunk_ptr, d.chunk_lengths[i] * (IT)d.C)) {
             fprintf(stderr, "ERROR: chunck_ptrs exceed index type.\n");
             return false;
         }
@@ -1005,19 +1027,20 @@ convert_to_scs(const MtxData<VT, IT> &mtx,
         cur_chunk_ptr += d.chunk_lengths[i] * d.C;
     }
 
-    ST n_scs_elements = d.chunk_ptrs[d.n_chunks - 1] + d.chunk_lengths[d.n_chunks - 1] * d.C;
+    
+
+    ST n_scs_elements = d.chunk_ptrs[d.n_chunks - 1]
+                        + d.chunk_lengths[d.n_chunks - 1] * d.C;
     d.chunk_ptrs[d.n_chunks] = n_scs_elements;
 
     // construct permutation vector
 
     d.old_to_new_idx = V<IT, IT>(d.n_rows);
 
-    for (ST i = 0; i < d.n_rows_padded; ++i)
-    {
+    for (ST i = 0; i < d.n_rows_padded; ++i) {
         IT old_row_idx = n_els_per_row[i].first;
 
-        if (old_row_idx < d.n_rows)
-        {
+        if (old_row_idx < d.n_rows) {
             d.old_to_new_idx[old_row_idx] = i;
         }
     }
@@ -1025,50 +1048,27 @@ convert_to_scs(const MtxData<VT, IT> &mtx,
     d.values = V<VT, IT>(n_scs_elements);
     d.col_idxs = V<IT, IT>(n_scs_elements);
 
-    for (ST i = 0; i < n_scs_elements; ++i)
-    {
+    for (ST i = 0; i < n_scs_elements; ++i) {
         d.values[i] = VT{};
         d.col_idxs[i] = IT{};
     }
 
     std::vector<IT> col_idx_in_row(d.n_rows_padded);
 
-    // Bounds for x-vector optimization
-    *x_col_upper = *max_element(mtx.J.begin(), mtx.J.end());
-    *x_col_lower = *min_element(mtx.J.begin(), mtx.J.end());
-
-    // Declare variables for x-vector optimization
-    IT updated_col_idx, initial_col_idx = mtx.J[0];
-
     // fill values and col_idxs
-    for (ST i = 0; i < d.nnz; ++i)
-    {
+    for (ST i = 0; i < d.nnz; ++i) {
         IT row_old = mtx.I[i];
         IT row = d.old_to_new_idx[row_old];
 
         ST chunk_index = row / d.C;
 
         IT chunk_start = d.chunk_ptrs[chunk_index];
-        IT chunk_row = row % d.C;
+        IT chunk_row   = row % d.C;
 
         IT idx = chunk_start + col_idx_in_row[row] * d.C + chunk_row;
 
-        // NOTE: Keep old col_idx for reference
-        // d.col_idxs[idx] = mtx.J[i];
-
-        // New col_idx generation
-        updated_col_idx = mtx.J[i] - initial_col_idx;
-        if (updated_col_idx < 0)
-        {
-            // padded case
-            d.col_idxs[i] = 0;
-        }
-        else
-        {
-            d.col_idxs[i] = updated_col_idx;
-        }
-
-        d.values[idx] = mtx.values[i];
+        d.col_idxs[idx] = mtx.J[i];
+        d.values[idx]   = mtx.values[i];
 
         col_idx_in_row[row]++;
     }
@@ -1123,159 +1123,159 @@ compare_arrays(const VT *reference,
     return error_counter;
 }
 
-template <typename VT>
-static bool
-spmv_verify(
-    const VT *y_ref,
-    const VT *y_actual,
-    const ST n,
-    bool verbose)
-{
-    VT max_rel_error_found{};
+// template <typename VT>
+// static bool
+// spmv_verify(
+//     const VT *y_ref,
+//     const VT *y_actual,
+//     const ST n,
+//     bool verbose)
+// {
+//     VT max_rel_error_found{};
 
-    ST error_counter =
-        compare_arrays(
-            y_ref, y_actual, n,
-            verbose,
-            max_rel_error<VT>::value,
-            max_rel_error_found);
+//     ST error_counter =
+//         compare_arrays(
+//             y_ref, y_actual, n,
+//             verbose,
+//             max_rel_error<VT>::value,
+//             max_rel_error_found);
 
-    if (error_counter > 0)
-    {
-        // TODO: fix reported name and sizes.
-        fprintf(stderr,
-                "WARNING: spmv kernel %s (fp size %lu, idx size %lu) is incorrect, "
-                "relative error > %e for %ld/%ld elements. Max found rel error %e.\n",
-                "", sizeof(VT), 0ul,
-                max_rel_error<VT>::value,
-                (long)error_counter, (long)n,
-                max_rel_error_found);
-    }
+//     if (error_counter > 0)
+//     {
+//         // TODO: fix reported name and sizes.
+//         fprintf(stderr,
+//                 "WARNING: spmv kernel %s (fp size %lu, idx size %lu) is incorrect, "
+//                 "relative error > %e for %ld/%ld elements. Max found rel error %e.\n",
+//                 "", sizeof(VT), 0ul,
+//                 max_rel_error<VT>::value,
+//                 (long)error_counter, (long)n,
+//                 max_rel_error_found);
+//     }
 
-    return error_counter == 0;
-}
+//     return error_counter == 0;
+// }
 
-template <typename VT, typename IT>
-static bool
-spmv_verify(const std::string &kernel_name,
-            const MtxData<VT, IT> &mtx,
-            const std::vector<VT> &x,
-            const std::vector<VT> &y_actual)
-{
-    std::vector<VT> y_ref(mtx.n_rows);
+// template <typename VT, typename IT>
+// static bool
+// spmv_verify(const std::string &kernel_name,
+//             const MtxData<VT, IT> &mtx,
+//             const std::vector<VT> &x,
+//             const std::vector<VT> &y_actual)
+// {
+//     std::vector<VT> y_ref(mtx.n_rows);
 
-    ST nnz = mtx.nnz;
-    if (mtx.I.size() != mtx.J.size() || mtx.I.size() != mtx.values.size())
-    {
-        fprintf(stderr, "ERROR: %s:%d sizes of rows, cols, and values differ.\n", __FILE__, __LINE__);
-        exit(1);
-    }
+//     ST nnz = mtx.nnz;
+//     if (mtx.I.size() != mtx.J.size() || mtx.I.size() != mtx.values.size())
+//     {
+//         fprintf(stderr, "ERROR: %s:%d sizes of rows, cols, and values differ.\n", __FILE__, __LINE__);
+//         exit(1);
+//     }
 
-    for (ST i = 0; i < nnz; ++i)
-    {
-        y_ref[mtx.I[i]] += mtx.values[i] * x[mtx.J[i]];
-    }
+//     for (ST i = 0; i < nnz; ++i)
+//     {
+//         y_ref[mtx.I[i]] += mtx.values[i] * x[mtx.J[i]];
+//     }
 
-    return spmv_verify(y_ref.data(), y_actual.data(),
-                       y_actual.size(), /*verbose*/ true);
-}
+//     return spmv_verify(y_ref.data(), y_actual.data(),
+//                        y_actual.size(), /*verbose*/ true);
+// }
 
-template <typename VT, typename IT, typename FN>
-static BenchmarkResult
-spmv(FN &&kernel, bool is_gpu_kernel, const Config &config)
-{
-    log("running kernel begin\n");
+// template <typename VT, typename IT, typename FN>
+// static BenchmarkResult
+// spmv(FN &&kernel, bool is_gpu_kernel, const Config &config)
+// {
+//     log("running kernel begin\n");
 
-    log("warmup begin\n"); // what is the purpose of this warm-up?
+//     log("warmup begin\n"); // what is the purpose of this warm-up?
 
-    kernel();
+//     kernel();
 
-    if (is_gpu_kernel)
-    {
-#ifdef __NVCC__
-        assert_gpu(cudaDeviceSynchronize());
-#endif
-    }
+//     if (is_gpu_kernel)
+//     {
+// #ifdef __NVCC__
+//         assert_gpu(cudaDeviceSynchronize());
+// #endif
+//     }
 
-    log("warmup end\n");
+//     log("warmup end\n");
 
-    double t_kernel_start = 0.0;
-    double t_kernel_end = 0.0;
-    double duration = 0.0;
+//     double t_kernel_start = 0.0;
+//     double t_kernel_end = 0.0;
+//     double duration = 0.0;
 
-    // Indicate if result is invalid, e.g., duration of >1s was not reached.
-    bool is_result_valid = true;
+//     // Indicate if result is invalid, e.g., duration of >1s was not reached.
+//     bool is_result_valid = true;
 
-    unsigned long n_repetitions = config.n_repetitions > 0 ? config.n_repetitions : 5;
-    int repeate_measurement;
+//     unsigned long n_repetitions = config.n_repetitions > 0 ? config.n_repetitions : 5;
+//     int repeate_measurement;
 
-    do
-    {
-        log("running kernel with %ld repetitions\n", n_repetitions);
-        repeate_measurement = 0;
+//     do
+//     {
+//         log("running kernel with %ld repetitions\n", n_repetitions);
+//         repeate_measurement = 0;
 
-        t_kernel_start = get_time();
+//         t_kernel_start = get_time();
 
-        /* M AND P */
-        // If wa want to hard-code number of iterations, it would be done here
-        // n_repetitions = 10;
-        for (unsigned long r = 0; r < n_repetitions; ++r)
-        {
-            // i.e. do kernel() for every repetition
-            // std::cout << "Kernal run: " << r << std::endl;
-            kernel();
-            // this is where swapping goes!
-            // swap(x,y), but where are x and y?
-        }
-        if (is_gpu_kernel)
-        {
-#ifdef __NVCC__
-            assert_gpu(cudaDeviceSynchronize());
-#endif
-        }
+//         /* M AND P */
+//         // If wa want to hard-code number of iterations, it would be done here
+//         // n_repetitions = 10;
+//         for (unsigned long r = 0; r < n_repetitions; ++r)
+//         {
+//             // i.e. do kernel() for every repetition
+//             // std::cout << "Kernal run: " << r << std::endl;
+//             kernel();
+//             // this is where swapping goes!
+//             // swap(x,y), but where are x and y?
+//         }
+//         if (is_gpu_kernel)
+//         {
+// #ifdef __NVCC__
+//             assert_gpu(cudaDeviceSynchronize());
+// #endif
+//         }
 
-        t_kernel_end = get_time();
+//         t_kernel_end = get_time();
 
-        duration = t_kernel_end - t_kernel_start;
+//         duration = t_kernel_end - t_kernel_start;
 
-        if (duration < 1.0 && config.n_repetitions == 0)
-        {
-            unsigned long prev_n_repetitions = n_repetitions;
-            n_repetitions = std::ceil(n_repetitions / duration * 1.1);
+//         if (duration < 1.0 && config.n_repetitions == 0)
+//         {
+//             unsigned long prev_n_repetitions = n_repetitions;
+//             n_repetitions = std::ceil(n_repetitions / duration * 1.1);
 
-            if (prev_n_repetitions == n_repetitions)
-            {
-                ++n_repetitions;
-            }
+//             if (prev_n_repetitions == n_repetitions)
+//             {
+//                 ++n_repetitions;
+//             }
 
-            if (n_repetitions < prev_n_repetitions)
-            {
-                // This typically happens if type ulong is too small to hold the
-                // number of repetitions we would need for a duration > 1s.
-                // We use the time we measured and flag the result.
-                log("cannot increase no. of repetitions any further to reach a duration of >1s\n");
-                log("aborting measurement for this kernel\n");
-                n_repetitions = prev_n_repetitions;
-                repeate_measurement = 0;
-                is_result_valid = false;
-            }
-            else
-            {
-                repeate_measurement = 1;
-            }
-        }
-    } while (repeate_measurement);
+//             if (n_repetitions < prev_n_repetitions)
+//             {
+//                 // This typically happens if type ulong is too small to hold the
+//                 // number of repetitions we would need for a duration > 1s.
+//                 // We use the time we measured and flag the result.
+//                 log("cannot increase no. of repetitions any further to reach a duration of >1s\n");
+//                 log("aborting measurement for this kernel\n");
+//                 n_repetitions = prev_n_repetitions;
+//                 repeate_measurement = 0;
+//                 is_result_valid = false;
+//             }
+//             else
+//             {
+//                 repeate_measurement = 1;
+//             }
+//         }
+//     } while (repeate_measurement);
 
-    BenchmarkResult r;
+//     BenchmarkResult r;
 
-    r.is_result_valid = is_result_valid;
-    r.n_calls = n_repetitions;
-    r.duration_total_s = duration;
+//     r.is_result_valid = is_result_valid;
+//     r.n_calls = n_repetitions;
+//     r.duration_total_s = duration;
 
-    log("running kernel end\n");
+//     log("running kernel end\n");
 
-    return r;
-}
+//     return r;
+// }
 
 template <typename T, typename DIST, typename ENGINE>
 struct random_number
@@ -1408,485 +1408,20 @@ init_std_vec_with_ptr_or_value(std::vector<VT> &x,
     }
 }
 
-/**
- * Kernel used to compute a reference CSR solution.
- */
+
+// TODO: what do I return for this?
+// NOTE: every process will return something...
 template <typename VT, typename IT>
-static void
-spmv_csr_reference(
-    const ST num_rows,
-    const IT *row_ptrs,
-    const IT *col_idxs,
-    const VT *mat_values,
-    const VT *x,
-    VT *y)
-{
-    for (ST row = 0; row < num_rows; ++row)
-    {
-        VT sum{};
-        for (ST k = row_ptrs[row]; k < row_ptrs[row + 1]; ++k)
-        {
-            auto val = mat_values[k];
-            auto col = col_idxs[k];
-            sum += val * x[col];
-        }
-        y[row] = sum;
-    }
-}
-
-/**
- * Kernel used to compute a reference ELL solution.
- */
-template <typename VT, typename IT>
-static void
-spmv_ell_reference(
-    const ST num_rows,
-    const ST nelems_per_row,
-    const IT *col_idxs,
-    const VT *mat_values,
-    const VT *x,
-    VT *y)
-{
-    for (ST row = 0; row < num_rows; row++)
-    {
-        VT sum{};
-        for (ST i = 0; i < nelems_per_row; i++)
-        {
-            auto val = mat_values[row + i * num_rows];
-            auto col = col_idxs[row + i * num_rows];
-            sum += val * x[col];
-        }
-        y[row] = sum;
-    }
-}
-
-/**
- * Kernel for Sell-C-Sigma. Supports all Cs > 0.
- *
- * Where is this actually entered in main()?
- */
-template <typename VT, typename IT>
-static void
-spmv_scs_reference(const ST C,
-                   const ST n_chunks,
-                   const IT *chunk_ptrs,
-                   const IT *chunk_lengths,
-                   const IT *col_idxs,
-                   const VT *values,
-                   const VT *x,
-                   VT *y)
-{
-
-#pragma omp parallel for schedule(static)
-    for (ST c = 0; c < n_chunks; ++c)
-    {
-        VT tmp[C];
-        for (ST i = 0; i < C; ++i)
-        {
-            tmp[i] = VT{};
-        }
-
-        IT cs = chunk_ptrs[c];
-
-        for (ST j = 0; j < chunk_lengths[c]; ++j)
-        {
-            for (ST i = 0; i < C; ++i)
-            {
-                tmp[i] += values[cs + i] * x[col_idxs[cs + i]];
-            }
-            cs += C;
-        }
-
-        for (ST i = 0; i < C; ++i)
-        {
-            y[c * C + i] = tmp[i];
-        }
-    }
-}
-
-/**
- * @brief Compute the code balance for a certain MatrixFormat.
- * @param format
- * @param alpha
- * @param beta
- * @param value_type_size
- * @param index_type_size
- * @param nnz
- * @param n_rows
- * @param C_for_scs
- * @param write_allocate_for_lhs
- * @return
- */
-static double
-code_balance(
-    MatrixFormat format,
-    double alpha,
-    double beta,
-    uint64_t value_type_size,
-    uint64_t index_type_size,
-    uint64_t nnz,
-    uint64_t n_rows,
-    uint64_t C_for_scs,
-    bool write_allocate_for_lhs,
-    bool value_type_is_complex)
-{
-    double accesses_to_lhs = 1.0;
-
-    if (write_allocate_for_lhs)
-        accesses_to_lhs += 1.0;
-
-    double v_per_nnz_b{};
-    double nzr = (double)nnz / (double)n_rows;
-
-    // just to shorten the formulas.
-    const double s_vt = value_type_size;
-    const double s_it = index_type_size;
-
-    switch (format)
-    {
-    case MatrixFormat::Csr:
-    {
-        v_per_nnz_b = (s_vt + s_it) + alpha * s_vt + (accesses_to_lhs * s_vt + s_it) / nzr;
-        break;
-    }
-    case MatrixFormat::EllCm:
-    case MatrixFormat::EllRm:
-    {
-        v_per_nnz_b = (s_vt + s_it) / beta + alpha * s_vt + accesses_to_lhs * s_vt / nzr;
-        break;
-    }
-    case MatrixFormat::SellCSigma:
-    {
-        const double C = C_for_scs;
-        const double n_chunks = std::ceil((double)n_rows / C);
-        const double n_rows_padded = C * n_chunks;
-        const double nzr_padded = (double)nnz / n_rows_padded;
-
-        v_per_nnz_b = (s_vt + s_it) / beta + alpha * s_vt + accesses_to_lhs * s_vt / nzr_padded + 2 * s_it * n_chunks / (double)nnz;
-        break;
-    }
-    default:
-        fprintf(stderr, "ERROR: Cannot compute code balance for unknown matrix format.\n");
-        exit(1);
-    }
-
-    double flops_per_nnz = value_type_is_complex ? 8.0 : 2.0;
-
-    return v_per_nnz_b / flops_per_nnz;
-}
-
-static void
-compute_code_balances(
-    MatrixFormat format,
-    bool is_gpu_kernel,
-    bool is_vt_complex,
-    BenchmarkResult &r)
-{
-    r.beta = 1.0 / (r.fill_in_percent / 100.0 + 1.0);
-
-    r.cb_a_0 = code_balance(format,
-                            /* alpha */ 0.0,
-                            r.beta,
-                            r.value_type_size,
-                            r.index_type_size,
-                            r.nnz,
-                            r.n_rows,
-                            r.C,
-                            !is_gpu_kernel, // assume no WA for GPU kernels
-                            is_vt_complex);
-
-    r.cb_a_nzc = code_balance(format,
-                              /* alpha */ 1.0 / ((double)r.nnz / (double)r.n_rows),
-                              r.beta,
-                              r.value_type_size,
-                              r.index_type_size,
-                              r.nnz,
-                              r.n_rows,
-                              r.C,
-                              !is_gpu_kernel, // assume no WA for GPU kernels
-                              is_vt_complex);
-}
-
-template <typename VT, typename IT>
-static BenchmarkResult
-bench_spmv_csr(
-    const Config &config,
-    const MtxData<VT, IT> &mtx,
-
-    const Kernel::entry_t &k_entry,
-
-    DefaultValues<VT, IT> &defaults,
-    std::vector<VT> &x_out,
-    std::vector<VT> &y_out,
-
-    const std::vector<VT> *x_in = nullptr)
-{
-    BenchmarkResult r;
-
-    const ST nnz = mtx.nnz;
-    const ST n_rows = mtx.n_rows;
-    const ST n_cols = mtx.n_cols;
-
-    V<VT, IT> values;
-    V<IT, IT> col_idxs;
-    V<IT, IT> row_ptrs;
-
-    log("converting to csr format start\n");
-
-    convert_to_csr<VT, IT>(mtx, row_ptrs, col_idxs, values);
-
-    log("converting to csr format end\n");
-
-    V<VT, IT> x_csr = V<VT, IT>(mtx.n_cols);
-    init_with_ptr_or_value(x_csr, x_csr.n_rows, x_in,
-                           defaults.x, config.random_init_x);
-
-    V<VT, IT> y_csr = V<VT, IT>(mtx.n_rows);
-    std::uninitialized_fill_n(y_csr.data(), y_csr.n_rows, defaults.y);
-
-    Kernel::fn_csr_t<VT, IT> kernel = k_entry.as_csr_kernel<VT, IT>();
-
-    // print_vector("x", x_csr.data(), x_csr.data() + x_csr.n_rows);
-    // print_vector("y(pre)", y_csr.data(), y_csr.data() + y_csr.n_rows);
-    //
-    // print_vector("row_ptrs", row_ptrs.data(), row_ptrs.data() + row_ptrs.n_rows);
-    // print_vector("col_idxs", col_idxs.data(), col_idxs.data() + col_idxs.n_rows);
-    // print_vector("values",   values.data(),   values.data()   + values.n_rows);
-
-    if (k_entry.is_gpu_kernel)
-    {
-#ifdef __NVCC__
-        log("init GPU matrices start\n");
-        VG<VT, IT> values_gpu(values);
-        VG<IT, IT> col_idxs_gpu(col_idxs);
-        VG<IT, IT> row_ptrs_gpu(row_ptrs);
-        VG<VT, IT> x_gpu(x_csr);
-        VG<VT, IT> y_gpu(y_csr);
-        log("init GPU matrices end\n");
-
-        r = spmv<VT, IT>([&]()
-                         {
-                const int num_blocks = (n_rows + default_block_size - 1) \
-                                        / default_block_size;
-
-                kernel<<<num_blocks, default_block_size>>>(n_rows,
-                       row_ptrs_gpu.data(), col_idxs_gpu.data(), values_gpu.data(),
-                       x_gpu.data(), y_gpu.data()); },
-                         /* is_gpu_kernel */ true,
-                         config);
-
-        y_csr = y_gpu.copy_from_device();
-#endif
-    }
-    else
-    {
-        r = spmv<VT, IT>([&]()
-                         { kernel(n_rows,
-                                  row_ptrs.data(), col_idxs.data(), values.data(),
-                                  x_csr.data(), y_csr.data()); },
-                         /* is_gpu_kernel */ false,
-                         config);
-    }
-
-    // print_vector("y", y_csr.data(), y_csr.data() + y_csr.n_rows);
-
-    if (config.verify_result)
-    {
-        V<VT, IT> y_ref(y_csr.n_rows);
-        std::uninitialized_fill_n(y_ref.data(), y_ref.n_rows, defaults.y);
-
-        spmv_csr_reference(n_rows, row_ptrs.data(), col_idxs.data(),
-                           values.data(), x_csr.data(), y_ref.data());
-
-        r.is_result_valid &= spmv_verify(y_csr.data(), y_ref.data(),
-                                         y_csr.n_rows, config.verbose_verification);
-    }
-
-    double mem_matrix_b =
-        (double)sizeof(VT) * nnz             // values
-        + (double)sizeof(IT) * nnz           // col idxs
-        + (double)sizeof(IT) * (n_rows + 1); // row ptrs
-    double mem_x_b = (double)sizeof(VT) * n_cols;
-    double mem_y_b = (double)sizeof(VT) * n_rows;
-    double mem_b = mem_matrix_b + mem_x_b + mem_y_b;
-
-    r.mem_mb = mem_b / 1e6;
-    r.mem_m_mb = mem_matrix_b / 1e6;
-    r.mem_x_mb = mem_x_b / 1e6;
-    r.mem_y_mb = mem_y_b / 1e6;
-
-    r.n_rows = mtx.n_rows;
-    r.n_cols = mtx.n_cols;
-    r.nnz = nnz;
-
-    r.duration_kernel_s = r.duration_total_s / r.n_calls;
-    r.perf_gflops = (double)nnz * 2.0 / r.duration_kernel_s / 1e9; // Only count usefull flops
-
-    r.value_type_str = type_name_from_type<VT>();
-    r.index_type_str = type_name_from_type<IT>();
-    r.value_type_size = sizeof(VT);
-    r.index_type_size = sizeof(IT);
-
-    r.was_matrix_sorted = mtx.is_sorted;
-
-    compute_code_balances(k_entry.format, k_entry.is_gpu_kernel, false, r);
-
-    x_out = std::move(x_csr);
-    y_out = std::move(y_csr);
-
-    return r;
-}
-
-template <typename VT, typename IT>
-static BenchmarkResult
-bench_spmv_ell(
-    const Config &config,
-    const MtxData<VT, IT> &mtx,
-    const Kernel::entry_t &k_entry,
-    DefaultValues<VT, IT> &defaults,
-    std::vector<VT> &x_out,
-    std::vector<VT> &y_out,
-
-    const std::vector<VT> *x_in = nullptr)
-{
-    BenchmarkResult r;
-
-    const ST nnz = mtx.nnz;
-    const ST n_rows = mtx.n_rows;
-    // const ST n_cols = mtx.n_cols;
-
-    ST n_els_per_row = config.n_els_per_row;
-
-    V<VT, IT> values;
-    V<IT, IT> col_idxs;
-
-    log("converting to ell format start\n");
-
-    bool col_majro = k_entry.format == MatrixFormat::EllCm;
-
-    if (!convert_to_ell<VT, IT>(mtx, col_majro, n_els_per_row, col_idxs, values))
-    {
-        r.is_result_valid = false;
-        return r;
-    }
-
-    if (n_els_per_row * n_rows != col_idxs.n_rows && n_els_per_row * n_rows != values.n_rows)
-    {
-        fprintf(stderr, "ERROR: converting matrix to ell format failed.\n");
-        r.is_result_valid = false;
-        return r;
-    }
-
-    log("converting to ell format end\n");
-
-    V<VT, IT> x_ell = V<VT, IT>(mtx.n_cols);
-    init_with_ptr_or_value(x_ell, x_ell.n_rows, x_in,
-                           defaults.x, config.random_init_x);
-
-    V<VT, IT> y_ell = V<VT, IT>(mtx.n_rows);
-    std::uninitialized_fill_n(y_ell.data(), y_ell.n_rows, defaults.y);
-
-    Kernel::fn_ell_t<VT, IT> kernel = k_entry.as_ell_kernel<VT, IT>();
-
-    if (k_entry.is_gpu_kernel)
-    {
-#ifdef __NVCC__
-        log("init GPU matrices start\n");
-        VG<VT, IT> values_gpu(values);
-        VG<IT, IT> col_idxs_gpu(col_idxs);
-        VG<VT, IT> x_gpu(x_ell);
-        VG<VT, IT> y_gpu(y_ell);
-        log("init GPU matrices end\n");
-
-        r = spmv<VT, IT>([&]()
-                         {
-                const int num_blocks = (n_rows + default_block_size - 1) \
-                                        / default_block_size;
-
-                kernel<<<num_blocks, default_block_size>>>(n_rows,
-                       n_els_per_row, col_idxs_gpu.data(), values_gpu.data(),
-                       x_gpu.data(), y_gpu.data()); },
-                         /* is_gpu_kernel */ true,
-                         config);
-
-        y_ell = y_gpu.copy_from_device();
-#endif
-    }
-    else
-    {
-        r = spmv<VT, IT>([&]()
-                         { kernel(n_rows, n_els_per_row,
-                                  col_idxs.data(), values.data(),
-                                  x_ell.data(), y_ell.data()); },
-                         /* is_gpu_kernel */ false,
-                         config);
-    }
-
-    if (config.verify_result)
-    {
-        V<VT, IT> y_ref(y_ell.n_rows);
-        std::uninitialized_fill_n(y_ref.data(), y_ref.n_rows, defaults.y);
-
-        spmv_ell_reference(n_rows, n_els_per_row,
-                           col_idxs.data(), values.data(),
-                           x_ell.data(), y_ref.data());
-
-        r.is_result_valid &= spmv_verify(y_ref.data(), y_ell.data(),
-                                         y_ell.n_rows, config.verbose_verification);
-    }
-
-    double mem_matrix_b =
-        (double)sizeof(VT) * values.n_rows      // values
-        + (double)sizeof(IT) * col_idxs.n_rows; // col idxs
-
-    double mem_x_b = (double)sizeof(VT) * x_ell.n_rows;
-    double mem_y_b = (double)sizeof(VT) * y_ell.n_rows;
-
-    double mem_b = mem_matrix_b + mem_x_b + mem_y_b;
-
-    r.mem_mb = mem_b / 1e6;
-    r.mem_m_mb = mem_matrix_b / 1e6;
-    r.mem_x_mb = mem_x_b / 1e6;
-    r.mem_y_mb = mem_y_b / 1e6;
-
-    r.n_rows = mtx.n_rows;
-    r.n_cols = mtx.n_cols;
-    r.nnz = nnz;
-
-    r.duration_kernel_s = r.duration_total_s / r.n_calls;
-    r.perf_gflops = (double)nnz * 2.0 / r.duration_kernel_s / 1e9; // Only count usefull flops
-
-    r.value_type_str = type_name_from_type<VT>();
-    r.index_type_str = type_name_from_type<IT>();
-    r.value_type_size = sizeof(VT);
-    r.index_type_size = sizeof(IT);
-
-    r.was_matrix_sorted = mtx.is_sorted;
-
-    r.fill_in_percent = ((double)(n_els_per_row * n_rows) / nnz - 1.0) * 100.0;
-    r.nzr = n_els_per_row;
-
-    compute_code_balances(k_entry.format, k_entry.is_gpu_kernel, false, r);
-
-    x_out = std::move(x_ell);
-    y_out = std::move(y_ell);
-
-    return r;
-}
-
-template <typename VT, typename IT>
-static BenchmarkResult
-bench_spmv_scs(
-    const Config &config,
-    const MtxData<VT, IT> &mtx,
+void bench_spmv_scs(
+    const Config *config,
+    const MtxData<VT, IT> &local_mtx,
     const int *work_sharing_arr,
-    std::vector<VT> *y_total, // IDK if this is const
-    const Kernel::entry_t &k_entry,
+    std::vector<VT> *total_y, // IDK if this is const
     DefaultValues<VT, IT> &defaults,
-    std::vector<VT> &x_out,
-    std::vector<VT> &y_out,
     const std::vector<VT> *x_in = nullptr)
 {
+
+
     // TODO: More efficient just to deduce this from workSharringArr size?
     int comm_size, my_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
@@ -1894,193 +1429,156 @@ bench_spmv_scs(
 
     log("allocate and place CPU matrices start\n");
 
-    BenchmarkResult r;
+    // BenchmarkResult r;
     // gathered y can be allocated here?
     ScsData<VT, IT> scs;
 
     log("allocate and place CPU matrices end\n");
     log("converting to scs format start\n");
 
-    IT x_col_upper = IT{}, x_col_lower = IT{};
+    // IT x_col_upper = IT{}, x_col_lower = IT{};
 
-    if (!convert_to_scs<VT, IT>(mtx, config.chunk_size, config.sigma, scs, &x_col_upper, &x_col_lower))
-    {
-        // printf("Im rank %i in the loop", my_rank);
-        r.is_result_valid = false;
-        return r;
-    }
+    // TODO: fuse potentially
+    convert_to_scs<VT, IT>(local_mtx, config->chunk_size, config->sigma, scs);
+    // convert_to_scs<VT, IT>(mtx, config.chunk_size, config.sigma, scs, &x_col_upper, &x_col_lower);
+
+    std::vector<VT> total_x;
+    // std::vector<VT> total_y(scs.n_rows);
+
+    std::vector<VT> local_x;
+    std::vector<VT> local_y;
 
     log("converting to scs format end\n");
 
-    // V<VT, IT> x_scs(scs.n_cols);
-    V<VT, IT> local_x_scs(x_col_upper - x_col_lower + 1);
-
-    // Boolean value in last arguement determines if x is random, or taken from default values
-    // NOTE: may be important for swapping
-    init_with_ptr_or_value(local_x_scs, local_x_scs.n_rows, x_in,
-                           defaults.x, false);
-
-    // for(int i = 0; i < local_x_scs.n_rows; ++i){
-    //     std::cout << local_x_scs[i] << std::endl;
-    // }
-
     // This y is only process local. Need an Allgather for each proc to have
     // all of the solution segments
-    V<VT, IT> y_scs = V<VT, IT>(scs.n_rows_padded);
-    std::uninitialized_fill_n(y_scs.data(), y_scs.n_rows, defaults.y);
-
-    Kernel::fn_scs_t<VT, IT> kernel = k_entry.as_scs_kernel<VT, IT>();
-
-    // std::cout << "Proc: " << my_rank << " has " << scs.n_rows_padded << " rows with padding." << std::endl;
-
-    // std::cout << "scs: C: " << scs.C << " sigma: " << scs.sigma << "\n";
-    // std::cout << "scs: n_rows: " << scs.n_rows << " n_rows_padded: " << scs.n_rows_padded << "\n";
-    // std::cout << "scs: n_elements: " << scs.n_elements << "\n";
-
-    // print_vector("x", x_scs);
-    // print_vector("y(pre)", y_scs);
-    // print_vector("chunk_ptrs", scs.chunk_ptrs);
-    // print_vector("chunk_lengths", scs.chunk_lengths);
-    // print_vector("col_idxs", scs.col_idxs);
-    // print_vector("values", scs.values);
-
-    if (k_entry.is_gpu_kernel)
-    {
-#ifdef __NVCC__
-        log("init GPU matrices start\n");
-        VG<VT, IT> values_gpu(scs.values);
-        VG<IT, IT> col_idxs_gpu(scs.col_idxs);
-        VG<IT, IT> chunk_ptrs_gpu(scs.chunk_ptrs);
-        VG<IT, IT> chunk_lengths_gpu(scs.chunk_lengths);
-        VG<VT, IT> x_gpu(x_scs);
-        VG<VT, IT> y_gpu(y_scs);
-        log("init GPU matrices end\n");
-
-        r = spmv<VT, IT>([&]()
-                         {
-                const int num_blocks = (scs.n_rows_padded + default_block_size - 1) \
-                                        / default_block_size;
-
-                kernel<<<num_blocks, default_block_size>>>(
-                        scs.C,
-                        scs.n_chunks,
-                        chunk_ptrs_gpu.data(), chunk_lengths_gpu.data(),
-                        col_idxs_gpu.data(),
-                        values_gpu.data(),
-                        x_gpu.data(), y_gpu.data()); },
-                         /* is_gpu_kernel */ true,
-                         config);
-
-        y_scs = y_gpu.copy_from_device();
-#endif
-    }
-    else
-    {
-        r = spmv<VT, IT>([&]()
-                         { kernel(scs.C,
-                                  scs.n_chunks,
-                                  scs.chunk_ptrs.data(), scs.chunk_lengths.data(),
-                                  scs.col_idxs.data(), scs.values.data(),
-                                  local_x_scs.data(), y_scs.data()); },
-                         /* is_gpu_kernel */ false,
-                         config);
-    }
-
-    // print_vector("y", y_scs);
-    if (config.verify_result)
-    {
-        V<VT, IT> y_ref(y_scs.n_rows);
-        std::uninitialized_fill_n(y_ref.data(), y_ref.n_rows, defaults.y);
-
-        spmv_scs_reference(scs.C,
-                           scs.n_chunks,
-                           scs.chunk_ptrs.data(), scs.chunk_lengths.data(),
-                           scs.col_idxs.data(), scs.values.data(),
-                           local_x_scs.data(), y_ref.data());
-
-        r.is_result_valid &= spmv_verify(y_scs.data(), y_ref.data(),
-                                         y_scs.n_rows, config.verbose_verification);
-    }
-
-    double mem_matrix_b =
-        (double)sizeof(VT) * scs.n_elements    // values
-        + (double)sizeof(IT) * scs.n_chunks    // chunk_ptrs
-        + (double)sizeof(IT) * scs.n_chunks    // chunk_lengths
-        + (double)sizeof(IT) * scs.n_elements; // col_idxs
-
-    double mem_x_b = (double)sizeof(VT) * scs.n_cols;
-    double mem_y_b = (double)sizeof(VT) * scs.n_rows_padded;
-    double mem_b = mem_matrix_b + mem_x_b + mem_y_b;
-
-    r.mem_mb = mem_b / 1e6;
-    r.mem_m_mb = mem_matrix_b / 1e6;
-    r.mem_x_mb = mem_x_b / 1e6;
-    r.mem_y_mb = mem_y_b / 1e6;
-
-    r.n_rows = mtx.n_rows;
-    r.n_cols = mtx.n_cols;
-    r.nnz = scs.nnz;
-
-    r.duration_kernel_s = r.duration_total_s / r.n_calls;
-    r.perf_gflops = (double)scs.nnz * 2.0 / r.duration_kernel_s / 1e9; // Only count usefull flops
-
-    r.value_type_str = type_name_from_type<VT>();
-    r.index_type_str = type_name_from_type<IT>();
-    r.value_type_size = sizeof(VT);
-    r.index_type_size = sizeof(IT);
-
-    r.was_matrix_sorted = mtx.is_sorted;
-
-    r.fill_in_percent = ((double)scs.n_elements / scs.nnz - 1.0) * 100.0;
-    r.C = scs.C;
-    r.sigma = scs.sigma;
-
-    compute_code_balances(k_entry.format, k_entry.is_gpu_kernel, false, r);
-
-    x_out = std::move(local_x_scs);
-
-    y_out.resize(scs.n_rows);
-
-    for (int i = 0; i < scs.old_to_new_idx.n_rows; ++i)
-    {
-        y_out[i] = y_scs[scs.old_to_new_idx[i]];
-    }
+    V<VT, IT> local_y_scs = V<VT, IT>(scs.n_rows_padded);
+    std::uninitialized_fill_n(local_y_scs.data(), local_y_scs.n_rows, defaults.y);
 
     // TODO: How often is this allocated? Every swap, or only once?
     // Every processes needs counts array
     int *counts_arr = new int[comm_size];
     int *displ_arr_bk = new int[comm_size];
 
+    // Set upper and lower bounds for local x vector
+    IT x_col_upper = *max_element(local_mtx.J.begin(), local_mtx.J.end());
+    IT x_col_lower = *min_element(local_mtx.J.begin(), local_mtx.J.end());
+
+    IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
+
+    // normalize col_idxs to point to
+    for(int i = 0; i < scs.n_elements; ++i){
+        updated_col_idx = scs.col_idxs[i] - initial_col_idx;
+
+        if(updated_col_idx < 0){
+            // padded case
+            scs.col_idxs[i] = 0;    
+        }
+        else{
+            scs.col_idxs[i] = updated_col_idx;
+        }
+    }
+
+    // V<VT, IT> x_scs(scs.n_cols);
+    V<VT, IT> local_x_scs(x_col_upper - x_col_lower + 1);
+
+    // Boolean value in last arguement determines if x is random, or taken from default values
+    // NOTE: may be important for swapping
+    // Just replace with a standard vector?
+    init_with_ptr_or_value(local_x_scs, local_x_scs.n_rows, x_in,
+                            defaults.x, false);
+    // init_with_ptr_or_value(x_scs, x_scs.n_rows, x_in,
+    //                     defaults.x, false);
+
+    // The total x vector used in benchmarking
+    std::vector<VT> total_dummy_x(scs.n_rows);
+
+    if(config->mode == "solver"){
+        // TODO: make modifications for solver mode
+        // the object "returned" will be the gathered results vector
+    }
+    else if(config->mode == "bench"){
+        // TODO: make modifications for bench mode
+        // the object returned will be the benchmark results
+    }
+
+    // x_out not used?
+    // x_out = std::move(local_x_scs);
+    // total_x = std::move(x_scs);
+    local_y.resize(scs.n_rows);
+
+    // Really want these as standard vectors, not Vector custom object
+    std::vector<VT> local_x_scs_vec(local_x_scs.data(), local_x_scs.data() + local_x_scs.n_rows);
+    std::vector<VT> local_y_scs_vec(local_y_scs.data(), local_y_scs.data() + local_y_scs.n_rows);
+
+
+    // // What I really want here, is to be able to do all the swapping locally,
+    // // and then collect only once before returning result
+    // // (but then all processes have full y... is this what I want?)
+    for (int i = 0; i < config->n_repetitions; ++i)
+    {    
+        // Do the actual multiplication
+        // TODO: store .data() members locally as const
+        spmv_omp_scs_c<VT, IT>( scs.C, scs.n_chunks, scs.chunk_ptrs.data(), 
+                                scs.chunk_lengths.data(),scs.col_idxs.data(), 
+                                scs.values.data(), &(local_x_scs_vec)[0], &(local_y_scs_vec)[0]);
+                                // change last 2 arguements to std::vectors, not Vectors
+
+        // swap pointer
+        // only using full x_scs not for size of vector concerns 
+
+        // TODO: double check sizes here!!
+        // std::swap(total_dummy_x, local_y_scs);
+        // std::swap(local_x_scs,local_y_scs);
+        std::cout << "repetition: " << i << std::endl;
+    }
+
+    // TODO: use a pragma parallel for?
+    // Reformat. Only take the useful (non-padded) elements from the scs formatted local_y
+    for (int i = 0; i < scs.old_to_new_idx.n_rows; ++i)
+    {
+        local_y[i] = local_y_scs_vec[scs.old_to_new_idx[i]];
+    }
+
+    // NOTE: only for collecting local results.
+    // i.e. wont be apart of actual loop after halo comm implemented
     for (int i = 0; i < comm_size; ++i)
     {
         counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
         displ_arr_bk[i] = work_sharing_arr[i];
+        std::cout << counts_arr[i] << ", " << displ_arr_bk[i] << std::endl;    
     }
+
+    // std::cout << local_y.size() << std::endl;
+    // std::cout << &local_y[0] << std::endl;
+    // std::cout << &total_y[0] << std::endl;
 
     // Must use Allgatherv to collect results from each proc to y_total,
     // since messages are of varying size
     if (typeid(VT) == typeid(double))
     {
-        MPI_Allgatherv(&y_out[0],
-                       y_out.size(),
-                       MPI_DOUBLE,
-                       &(*y_total)[0],
-                       counts_arr,
-                       displ_arr_bk,
-                       MPI_DOUBLE,
-                       MPI_COMM_WORLD);
+        MPI_Allgatherv(&local_y[0],
+                    local_y.size(),
+                    MPI_DOUBLE,
+                    &(*total_y)[0],
+                    counts_arr,
+                    displ_arr_bk,
+                    MPI_DOUBLE,
+                    MPI_COMM_WORLD);
     }
     else if (typeid(VT) == typeid(float))
     {
-        MPI_Allgatherv(&y_out[0],
-                       y_out.size(),
-                       MPI_FLOAT,
-                       &(*y_total)[0],
-                       counts_arr,
-                       displ_arr_bk,
-                       MPI_FLOAT,
-                       MPI_COMM_WORLD);
+        MPI_Allgatherv(&local_y[0],
+                    local_y.size(),
+                    MPI_FLOAT,
+                    &(*total_y)[0],
+                    counts_arr,
+                    displ_arr_bk,
+                    MPI_FLOAT,
+                    MPI_COMM_WORLD);
     }
+
+    // total_y = std::move(local_x_scs);    // x_out = std::move(local_x_scs);
 
     // std::cout << "\n" << "Proc: " << my_rank << " | Original x_vec length: " << mtx.n_cols
     // << ", Shortened x_vec length: " << x_col_upper - x_col_lower + 1 << std::endl;
@@ -2088,7 +1586,7 @@ bench_spmv_scs(
     delete[] counts_arr;
     delete[] displ_arr_bk;
 
-    return r;
+    // return total_y;
 }
 
 /**
@@ -2096,74 +1594,74 @@ bench_spmv_scs(
  * \p n_cols.  If \p mmr is not NULL, then the matrix is read via the provided
  * MatrixMarketReader from file.
  */
-template <typename VT, typename IT>
-static BenchmarkResult
- bench_spmv(const std::string &kernel_name,
-           const Config &config,
-           const Kernel::entry_t &k_entry,
-           const MtxData<VT, IT> &mtx,
-           const int *work_sharing_arr,
-           std::vector<VT> *y_total, // IDK if this is const
-           DefaultValues<VT, IT> *defaults = nullptr,
-           const std::vector<VT> *x_in = nullptr,
-           std::vector<VT> *y_out_opt = nullptr)
-{
+// template <typename VT, typename IT>
+// static BenchmarkResult
+//  bench_spmv(const std::string &kernel_name,
+//            const Config &config,
+//            const Kernel::entry_t &k_entry,
+//            const MtxData<VT, IT> &mtx,
+//            const int *work_sharing_arr,
+//            std::vector<VT> *y_total, // IDK if this is const
+//            DefaultValues<VT, IT> *defaults = nullptr,
+//            const std::vector<VT> *x_in = nullptr,
+//            std::vector<VT> *y_out_opt = nullptr)
+// {
 
-    BenchmarkResult r;
+//     BenchmarkResult r;
 
-    // How are these involved with swapping?
-    std::vector<VT> y_out;
-    std::vector<VT> x_out;
+//     // How are these involved with swapping?
+//     std::vector<VT> y_out;
+//     std::vector<VT> x_out;
 
-    DefaultValues<VT, IT> default_values;
+//     DefaultValues<VT, IT> default_values;
 
-    if (!defaults)
-    {
-        defaults = &default_values;
-    }
+//     if (!defaults)
+//     {
+//         defaults = &default_values;
+//     }
 
-    switch (k_entry.format)
-    {
-    case MatrixFormat::Csr:
-        r = bench_spmv_csr<VT, IT>(config,
-                                   mtx,
-                                   k_entry, *defaults,
-                                   x_out, y_out, x_in);
-        break;
-    case MatrixFormat::EllRm:
-    case MatrixFormat::EllCm:
-        r = bench_spmv_ell<VT, IT>(config,
-                                   mtx,
-                                   k_entry, *defaults,
-                                   x_out, y_out, x_in);
-        break;
-    case MatrixFormat::SellCSigma:
-        r = bench_spmv_scs<VT, IT>(config,
-                                   mtx,
-                                   work_sharing_arr, y_total,
-                                   k_entry, *defaults,
-                                   x_out, y_out, x_in);
-        break;
-    default:
-        fprintf(stderr, "ERROR: SpMV format for kernel %s is not implemented.\n", kernel_name.c_str());
-        return r;
-    }
+//     switch (k_entry.format)
+//     {
+//     case MatrixFormat::Csr:
+//         r = bench_spmv_csr<VT, IT>(config,
+//                                    mtx,
+//                                    k_entry, *defaults,
+//                                    x_out, y_out, x_in);
+//         break;
+//     case MatrixFormat::EllRm:
+//     case MatrixFormat::EllCm:
+//         r = bench_spmv_ell<VT, IT>(config,
+//                                    mtx,
+//                                    k_entry, *defaults,
+//                                    x_out, y_out, x_in);
+//         break;
+//     case MatrixFormat::SellCSigma:
+//         r = bench_spmv_scs<VT, IT>(config,
+//                                    mtx,
+//                                    work_sharing_arr, y_total,
+//                                    k_entry, *defaults,
+//                                    x_out, y_out, x_in);
+//         break;
+//     default:
+//         fprintf(stderr, "ERROR: SpMV format for kernel %s is not implemented.\n", kernel_name.c_str());
+//         return r;
+//     }
 
-    if (y_out_opt)
-        *y_out_opt = std::move(y_out);
+//     if (y_out_opt)
+//         *y_out_opt = std::move(y_out);
 
-    // if (print_matrices) {
-    //     printf("Matrices for kernel: %s\n", kernel_name.c_str());
-    //     printf("A, is_col_major: %d\n", A.is_col_major);
-    //     print(A);
-    //     printf("b\n");
-    //     print(b);
-    //     printf("x\n");
-    //     print(x);
-    // }
+//     // if (print_matrices) {
+//     //     printf("Matrices for kernel: %s\n", kernel_name.c_str());
+//     //     printf("A, is_col_major: %d\n", A.is_col_major);
+//     //     print(A);
+//     //     printf("b\n");
+//     //     print(b);
+//     //     printf("x\n");
+//     //     print(x);
+//     // }
 
-    return r;
-}
+//     return r;
+// }
 
 /**
  * @brief Return the file base name without an extension, empty if base name
@@ -2277,96 +1775,6 @@ print_matrix_statistics(
     print_histogram("#mstats-bws", matrix_stats.bandwidths.hist);
 }
 
-static void
-print_results(bool print_as_list,
-              const std::string &name,
-              const MatrixStats<double> &matrix_stats,
-              const BenchmarkResult &r,
-              int n_threads,
-              int print_details)
-{
-
-    auto &rls = matrix_stats.row_lengths;
-    auto &cls = matrix_stats.col_lengths;
-    auto &bws = matrix_stats.bandwidths;
-
-    if (print_as_list)
-    {
-        printf("%2s %5s %7ld %7ld %9ld  %9.3e  %9.3e  %7.2e %7.2e  %8lu %-5s %-10s %3d "
-               "%6.1f %3ld %2ld %2ld  "
-               "%8.2e",
-               r.value_type_str.c_str(),
-               r.index_type_str.c_str(),
-               (long)r.n_rows, (long)r.n_cols, (long)r.nnz,
-               r.perf_gflops, r.mem_mb, r.duration_total_s,
-               r.duration_kernel_s, r.n_calls,
-               r.is_result_valid ? "OK" : "ERROR",
-               name.c_str(),
-               n_threads,
-               r.fill_in_percent, (long)r.nzr, (long)r.C, (long)r.sigma,
-               r.beta);
-
-        if (print_details)
-        {
-
-            printf("  %1lu %1lu  %f %f  "
-                   "%8.2e  "
-                   "%8.2e %8.2e %8.2e %8.2e %8.2e %8.2e  "
-                   "%8.2e %8.2e %8.2e %8.2e %8.2e %8.2e  "
-                   "%8.2e %8.2e %8.2e",
-                   r.value_type_size, r.index_type_size,
-                   r.cb_a_0, r.cb_a_nzc,
-                   matrix_stats.densitiy,
-                   rls.avg, rls.std_dev, rls.cv, rls.min, rls.median, rls.max,
-                   cls.avg, cls.std_dev, cls.cv, cls.min, cls.median, cls.max,
-                   r.mem_m_mb, r.mem_x_mb, r.mem_y_mb);
-        }
-        printf("\n");
-    }
-    else
-    {
-        printf("matrix\n");
-        printf("  dimensions     :  %ld x %ld\n", (long)r.n_rows, (long)r.n_cols);
-        printf("  nnz            :  %lu\n", matrix_stats.nnz);
-        printf("  density        :  %e\n", matrix_stats.densitiy);
-        printf("  symmetric      :  %s (%d)\n",
-               matrix_stats.is_symmetric ? "yes" : "no", matrix_stats.is_symmetric);
-        printf("  sorted         :  %s (%d)\n",
-               matrix_stats.is_sorted ? "yes" : "no", matrix_stats.is_sorted);
-        printf("  nzr            :  avg: %8.2e s: %8.2e cv: %8.2e min: %8.2e median: %8.2e max %8.2e\n",
-               rls.avg, rls.std_dev, rls.cv, rls.min, rls.median, rls.max);
-        printf("  nzc            :  avg: %8.2e s: %8.2e cv: %8.2e min: %8.2e median: %8.2e max %8.2e\n",
-               cls.avg, cls.std_dev, cls.cv, cls.min, cls.median, cls.max);
-        printf("  bw             :  avg: %8.2e s: %8.2e cv: %8.2e min: %8.2e median: %8.2e max %8.2e\n",
-               bws.avg, bws.std_dev, bws.cv, bws.min, bws.median, bws.max);
-
-        printf("\n");
-        printf("kernel\n");
-        printf("name             :  %s\n", name.c_str());
-        printf("data type        :  %-5s  size: %lu b\n",
-               r.value_type_str.c_str(), r.value_type_size);
-        printf("index type       :  %-5s  size: %lu b\n",
-               r.index_type_str.c_str(), r.index_type_size);
-        printf("nnz              :  %ld\n", (long)r.nnz);
-        printf("performance      :  %9.3e GFLOP/s\n", r.perf_gflops);
-        printf("memory           :  %9.3e MB  M: %9.3e MB  x: %9.3e MB  y: %9.3eMB\n",
-               r.mem_mb, r.mem_m_mb, r.mem_x_mb, r.mem_y_mb);
-        printf("duration total   :  %9.3e s\n", r.duration_total_s);
-        printf("duration kernel  :  %9.3e s\n", r.duration_kernel_s);
-        printf("repetitions      :  %lu\n", r.n_calls);
-        printf("no. of threads   :  %d\n", n_threads);
-        printf("fill-in          :  %.1f %%   beta: %f\n",
-               r.fill_in_percent, r.beta);
-        printf("nzr              :  %ld\n", r.nzr);
-        printf("C                :  %ld\n", r.C);
-        printf("sigma            :  %ld\n", r.sigma);
-        printf("matrix sorted    :  %s\n", r.was_matrix_sorted ? "true" : "false");
-        printf("solution         :  %s\n", r.is_result_valid ? "OK" : "ERROR");
-        printf("code balance     :  a=0: %f b/flop a=1/nzc: %f b/flop\n",
-               r.cb_a_0, r.cb_a_nzc);
-        printf("\n");
-    }
-}
 
 // #include "test.cpp"
 
@@ -2394,6 +1802,13 @@ struct MtxDataBookkeeping
     bool is_symmetric{};
 };
 
+// template <typename IT, VT>
+// struct Results
+// {
+//     std::vector<VT> final_y;
+//     int 
+// }
+
 template <typename IT>
 IT get_index(std::vector<IT> v, int K)
 {
@@ -2420,13 +1835,13 @@ IT get_index(std::vector<IT> v, int K)
 }
 
 template <typename VT, typename IT>
-void segwork_sharing_arr(const MtxData<VT, IT> &mtx, int *work_sharing_arr, const char *seg_method, int comm_size)
+void seg_work_sharing_arr(const MtxData<VT, IT> &mtx, int *work_sharing_arr, std::string seg_method, int comm_size)
 {
     work_sharing_arr[0] = 0;
 
     int segment;
 
-    if (!strcmp("seg-by-rows", seg_method))
+    if ("seg-by-rows" == seg_method)
     {
         int rowsPerProc;
 
@@ -2446,7 +1861,7 @@ void segwork_sharing_arr(const MtxData<VT, IT> &mtx, int *work_sharing_arr, cons
             }
         }
     }
-    else if (!strcmp("seg-by-nnz", seg_method))
+    else if ("seg-by-nnz" == seg_method)
     {
         int nnzPerProc; //, remainderNnz;
 
@@ -2478,7 +1893,7 @@ void segwork_sharing_arr(const MtxData<VT, IT> &mtx, int *work_sharing_arr, cons
 }
 
 template <typename VT, typename IT>
-void segMtxStruct(const MtxData<VT, IT> &mtx, std::vector<IT> *proc_loc_I, std::vector<IT> *proc_loc_J, std::vector<VT> *proc_loc_vals, int *work_sharing_arr, int loop_rank)
+void segMtxStruct(const MtxData<VT, IT> &mtx, std::vector<IT> *local_I, std::vector<IT> *local_J, std::vector<VT> *local_vals, int *work_sharing_arr, int loop_rank)
 {
     int start_idx, run_idx, finish_idx;
     int next_row;
@@ -2508,9 +1923,9 @@ void segMtxStruct(const MtxData<VT, IT> &mtx, std::vector<IT> *proc_loc_I, std::
         // TODO: is this better than a while loop here?
         do
         {
-            proc_loc_I->push_back(mtx.I[run_idx]);
-            proc_loc_J->push_back(mtx.J[run_idx]);
-            proc_loc_vals->push_back(mtx.values[run_idx]);
+            local_I->push_back(mtx.I[run_idx]);
+            local_J->push_back(mtx.J[run_idx]);
+            local_vals->push_back(mtx.values[run_idx]);
             ++run_idx;
         } while (run_idx != finish_idx);
     }
@@ -2538,7 +1953,7 @@ void define_bookkeeping_type(MtxDataBookkeeping<long int> *send_bk, MPI_Datatype
 }
 
 template <typename VT, typename IT, typename ST>
-void seg_and_send_data(MtxData<VT, IT> &proc_loc_mtx, Config config, const char *seg_method, const char *file_name, int *work_sharing_arr, int my_rank, int comm_size)
+void seg_and_send_data(MtxData<VT, IT> &local_mtx, Config config, std::string seg_method, std::string file_name_str, int *work_sharing_arr, int my_rank, int comm_size)
 {
 
     // Declare functions to be used locally
@@ -2558,46 +1973,46 @@ void seg_and_send_data(MtxData<VT, IT> &proc_loc_mtx, Config config, const char 
     {
         // NOTE: Matrix will be read in as SORTED by default
         // Only root proc will read entire matrix
-        MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name, config.sort_matrix);
+        MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str.c_str(), config.sort_matrix);
 
         // Segment global row pointers, and place into an array
         // int *work_sharing_arr = new int[comm_size + 1];
-        segwork_sharing_arr<VT, IT>(mtx, work_sharing_arr, seg_method, comm_size);
+        seg_work_sharing_arr<VT, IT>(mtx, work_sharing_arr, seg_method, comm_size);
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
         for (int loop_rank = 0; loop_rank < comm_size; ++loop_rank)
         { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
-            std::vector<IT> proc_loc_I;
-            std::vector<IT> proc_loc_J;
-            std::vector<VT> proc_loc_vals;
+            std::vector<IT> local_I;
+            std::vector<IT> local_J;
+            std::vector<VT> local_vals;
 
             // Assign rows, columns, and values to process local vectors
-            segMtxStruct<VT, IT>(mtx, &proc_loc_I, &proc_loc_J, &proc_loc_vals, work_sharing_arr, loop_rank);
+            segMtxStruct<VT, IT>(mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
 
             // Count the number of rows in each processes
-            int proc_loc_row_cnt = std::set<IT>(proc_loc_I.begin(), proc_loc_I.end()).size();
+            int local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();
 
             // Here, we segment data for the root process
             if (loop_rank == 0)
             {
-                proc_loc_mtx = {
-                    proc_loc_row_cnt,
+                local_mtx = {
+                    local_row_cnt,
                     mtx.n_cols,
-                    proc_loc_vals.size(),
+                    local_vals.size(),
                     config.sort_matrix,
                     0,          // NOTE: These "sub matricies" will (almost) never be symmetric
-                    proc_loc_I, // should work as both local and global row ptr
-                    proc_loc_J,
-                    proc_loc_vals};
+                    local_I, // should work as both local and global row ptr
+                    local_J,
+                    local_vals};
             }
             // Here, we segment and send data to another proc
             else
             {
                 send_bk = {
-                    proc_loc_row_cnt,
+                    local_row_cnt,
                     mtx.n_cols, // TODO: Actually constant, do dont need to send to each proc
-                    proc_loc_vals.size(),
+                    local_vals.size(),
                     config.sort_matrix,
                     0};
 
@@ -2605,15 +2020,15 @@ void seg_and_send_data(MtxData<VT, IT> &proc_loc_mtx, Config config, const char 
                 MPI_Send(&send_bk, 1, bk_type, loop_rank, 99, MPI_COMM_WORLD);
 
                 // Next, send three arrays
-                MPI_Send(&proc_loc_I[0], proc_loc_I.size(), MPI_INT, loop_rank, 42, MPI_COMM_WORLD);
-                MPI_Send(&proc_loc_J[0], proc_loc_J.size(), MPI_INT, loop_rank, 43, MPI_COMM_WORLD);
+                MPI_Send(&local_I[0], local_I.size(), MPI_INT, loop_rank, 42, MPI_COMM_WORLD);
+                MPI_Send(&local_J[0], local_J.size(), MPI_INT, loop_rank, 43, MPI_COMM_WORLD);
                 if (typeid(VT) == typeid(double))
                 {
-                    MPI_Send(&proc_loc_vals[0], proc_loc_vals.size(), MPI_DOUBLE, loop_rank, 44, MPI_COMM_WORLD);
+                    MPI_Send(&local_vals[0], local_vals.size(), MPI_DOUBLE, loop_rank, 44, MPI_COMM_WORLD);
                 }
                 else if (typeid(VT) == typeid(float))
                 {
-                    MPI_Send(&proc_loc_vals[0], proc_loc_vals.size(), MPI_FLOAT, loop_rank, 44, MPI_COMM_WORLD);
+                    MPI_Send(&local_vals[0], local_vals.size(), MPI_FLOAT, loop_rank, 44, MPI_COMM_WORLD);
                 }
             }
         }
@@ -2646,7 +2061,7 @@ void seg_and_send_data(MtxData<VT, IT> &proc_loc_mtx, Config config, const char 
         std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
         std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
 
-        proc_loc_mtx = {
+        local_mtx = {
             recv_bk.n_rows,
             recv_bk.n_cols,
             recv_bk.nnz,
@@ -2664,23 +2079,23 @@ void seg_and_send_data(MtxData<VT, IT> &proc_loc_mtx, Config config, const char 
     }
 
     // Each process exchanges it's global row ptrs for local row ptrs
-    IT first_global_row = proc_loc_mtx.I[0];
-    IT *global_row_coords = new IT[proc_loc_mtx.nnz];
-    IT *local_row_coords = new IT[proc_loc_mtx.nnz];
+    IT first_global_row = local_mtx.I[0];
+    IT *global_row_coords = new IT[local_mtx.nnz];
+    IT *local_row_coords = new IT[local_mtx.nnz];
 
-    for (int nz = 0; nz < proc_loc_mtx.nnz; ++nz)
+    for (int nz = 0; nz < local_mtx.nnz; ++nz)
     {
         // save proc's global row ptr
         global_row_coords[nz] = local_row_coords[nz];
 
         // subtract first pointer from the rest, to make them process local
-        local_row_coords[nz] = proc_loc_mtx.I[nz] - first_global_row;
+        local_row_coords[nz] = local_mtx.I[nz] - first_global_row;
     }
 
-    std::vector<IT> loc_rows_vec(local_row_coords, local_row_coords + proc_loc_mtx.nnz);
+    std::vector<IT> loc_rows_vec(local_row_coords, local_row_coords + local_mtx.nnz);
 
     // assign local row ptrs to struct
-    proc_loc_mtx.I = loc_rows_vec;
+    local_mtx.I = loc_rows_vec;
 
     // Broadcast work sharing array to other processes
     MPI_Bcast(work_sharing_arr,
@@ -2712,185 +2127,142 @@ void check_if_result_valid(const char *file_name, std::vector<VT> *y_total, cons
     // TODO: Only works since seed is same. Not flexible to swapping.
     init_std_vec_with_ptr_or_value<VT>(x_total, mtx.n_cols, nullptr, defaults.x);
 
-    bool is_result_valid = spmv_verify<VT, IT>(name, mtx, x_total, *y_total);
+    // bool is_result_valid = spmv_verify<VT, IT>(name, mtx, x_total, *y_total);
 
     // std::cout << result_valid << std::endl;
 
-    if (is_result_valid)
-    {
-        printf("Results valid.\n");
-    }
-    else
-    {
-        printf("Results NOT valid.\n");
-    }
+    // TODO: come back to validity checking later
+    // if (is_result_valid)
+    // {
+    //     printf("Results valid.\n");
+    // }
+    // else
+    // {
+    //     printf("Results NOT valid.\n");
+    // }
 }
 
 template <typename VT, typename IT>
-void compute_and_verify_result(const char *file_name, const char *seg_method, Config config, const std::string name, Kernel::entry_t &k_entry, int print_details, int n_cpu_threads, bool print_list, bool print_proc_local_stats)
+void compute_result(std::string file_name, std::string seg_method, Config config)
 {
-    BenchmarkResult result;
+    // BenchmarkResult result;
 
-    MatrixStats<double> matrix_stats;
-    bool matrix_stats_computed = false;
+    // MatrixStats<double> matrix_stats;
+    // bool matrix_stats_computed = false;
 
     // Initialize MPI variables
     int my_rank, comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     // Declare struct on each process
-    MtxData<VT, IT> proc_loc_mtx;
+    MtxData<VT, IT> local_mtx;
 
     // Allocate space for work sharing array. Is populated in seg_and_send_data function
     IT *work_sharing_arr = new IT[comm_size + 1];
 
-    seg_and_send_data<VT, IT, ST>(proc_loc_mtx, config, seg_method, file_name, work_sharing_arr, my_rank, comm_size);
+    seg_and_send_data<VT, IT, ST>(local_mtx, config, seg_method, file_name, work_sharing_arr, my_rank, comm_size);
 
-    if (!matrix_stats_computed)
-    {
-        matrix_stats = get_matrix_stats(proc_loc_mtx);
-        matrix_stats_computed = true;
-    }
+    // if (!matrix_stats_computed)
+    // {
+    //     matrix_stats = get_matrix_stats(local_mtx);
+    //     matrix_stats_computed = true;
+    // }
 
     // Each process must allocate space for total y vector
-    std::vector<VT> y_total(work_sharing_arr[comm_size]);
+    // Will these just be the same, i.e. dont need to return anything?
+    std::vector<VT> total_y(work_sharing_arr[comm_size]);
+    std::vector<VT> result(work_sharing_arr[comm_size]);
 
-    result = bench_spmv<VT, IT>(name, config, k_entry, proc_loc_mtx, work_sharing_arr, &y_total);
+    // result = bench_spmv<VT, IT>(name, config, k_entry, local_mtx, work_sharing_arr, &y_total);
+//  bench_spmv(const std::string &kernel_name,
+//            const Config &config,
+//            const Kernel::entry_t &k_entry,
+//            const MtxData<VT, IT> &mtx,
+//            const int *work_sharing_arr,
+//            std::vector<VT> *y_total, // IDK if this is const
+//            DefaultValues<VT, IT> *defaults = nullptr,
+//            const std::vector<VT> *x_in = nullptr,
+//            std::vector<VT> *y_out_opt = nullptr)
+
+
+    // TODO: whats the best way to handle defaults? Just throw in config struct?
+    DefaultValues<VT, IT> default_values;
+        // if (!defaults) {
+        //     defaults = &default_values;
+        // }
+
+    bench_spmv_scs<VT, IT>(&config,
+                                   local_mtx,
+                                   work_sharing_arr, &total_y,
+                                   default_values);
+
+    for (auto res: total_y)
+        std::cout << res << std::endl;
 
     delete[] work_sharing_arr;
 
     // Every process prints it's mtx-local statistics
-    if (print_proc_local_stats)
-    {
-        print_results(print_list, name, matrix_stats, result, n_cpu_threads, print_details);
-    }
-    if (config.verify_result)
-    {
-        // But have root proc check results, because all processes have the same y_total
-        if (my_rank == 0)
-        {
-            check_if_result_valid<VT, IT>(file_name, &y_total, name, config.sort_matrix);
-        }
-    }
+    // if (print_proc_local_stats)
+    // {
+    //     print_results(print_list, name, matrix_stats, result, n_cpu_threads, print_details);
+    // }
+    // if (config.verify_result)
+    // {
+    //     // But have root proc check results, because all processes have the same y_total
+    //     if (my_rank == 0)
+    //     {
+    //         check_if_result_valid<VT, IT>(file_name, &y_total, name, config.sort_matrix);
+    //     }
+    // }
 }
 
-int main(int argc, char *argv[])
-{
-    Config config;
-    bool print_list = false;
-    bool print_proc_local_stats = false;
-    int print_details = 0;
-    int print_matrix_stats = 0;
-    
-
-    const char *file_name{};
-    const char *seg_method{"seg-by-rows"};
-    std::string kernel_to_benchmark{"csr"};
-    std::string value_type = {"dp"};
-
-    MARKER_INIT();
-
-    if (argc < 2)
-    {
-        fprintf(stderr,
-                "Usage: %s [martix-market-filename] [matrix-format] "
-                "[max-elems-per-row]\n",
-                argv[0]);
+void verifyAndAssignInputs(int argc, char *argv[], std::string &file_name_str, std::string &seg_method, std::string &value_type, bool *random_init_x, Config *config){
+    if (argc < 2){
+        fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+            "options [defaults]: -c[%li], -s[%li], -rev[%li], -rand-x[%i], -sp/dp[%s], -seg-nnz/seg-rows[%s], -bench/solver[%s]\n",
+            argv[0], config->chunk_size, config->sigma, config->n_repetitions, *random_init_x, value_type.c_str(), seg_method.c_str(), config->mode);
         exit(1);
     }
 
-    file_name = argv[1];
-
-    if (!strcmp("test", file_name))
-    {
-        // test::run(Kernel::kernels());
-        return 0;
-    }
-    else if (!strcmp("list", file_name))
-    {
-        for (const auto &it : Kernel::kernels())
-        {
-            const std::string &name = it.first;
-            printf("%s\n", name.c_str());
-        }
-        return 0;
-    }
+    file_name_str = argv[1];
 
     int args_start_index = 2;
-
-    if (argc > 2)
-    {
-        std::string kernel_to_search = argv[2];
-
-        auto &kernels = Kernel::kernels();
-
-        bool kernel_exists = kernel_to_search == "all" ||
-                             std::any_of(begin(kernels), end(kernels),
-                                         [&](const auto &it)
-                                         {
-                                             return it.first == kernel_to_search;
-                                         });
-
-        if (kernel_exists)
-        {
-            kernel_to_benchmark = kernel_to_search;
-            args_start_index = 3;
-        }
-    }
-
-    for (int i = args_start_index; i < argc; ++i)
-    {
+    for (int i = args_start_index; i < argc; ++i){
         std::string arg = argv[i];
-        if (arg == "-nzr")
+        if (arg == "-c")
         {
-            if (i + 1 < argc)
-            {
-                config.n_els_per_row = atol(argv[++i]);
+            config->chunk_size = atoi(argv[++i]);
 
-                if (config.n_els_per_row < 1)
-                {
-                    fprintf(stderr, "ERROR: no. of elements per row must be >= 1.\n");
-                    exit(1);
-                }
-            }
-        }
-        else if (arg == "-c")
-        {
-            if (i + 1 < argc)
+            if (config->chunk_size < 1)
             {
-                config.chunk_size = atol(argv[++i]);
-
-                if (config.chunk_size < 1)
-                {
-                    fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
-                    exit(1);
-                }
+                fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
+                exit(1);
             }
         }
         else if (arg == "-s")
         {
-            if (i + 1 < argc)
-            {
-                config.sigma = atol(argv[++i]);
 
-                if (config.sigma < 1)
-                { // || config.sigma < config.chunk_size) {
-                    fprintf(stderr, "ERROR: sigma must be >= 1.\n");
-                    exit(1);
-                }
+            config->sigma = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->sigma < 1)
+            {
+                fprintf(stderr, "ERROR: sigma must be >= 1.\n");
+                exit(1);
+            }
+        }
+        else if (arg == "-rev")
+        {
+            config->n_repetitions = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->n_repetitions < 1)
+            {
+                fprintf(stderr, "ERROR: revisions must be >= 1.\n");
+                exit(1);
             }
         }
         else if (arg == "-rand-x")
         {
-            config.random_init_x = true;
-        }
-        else if (arg == "-list")
-        {
-            print_list = true;
-        }
-        else if (arg == "-log")
-        {
-            g_log = true;
+            *random_init_x = true;
         }
         else if (arg == "-dp")
         {
@@ -2900,207 +2272,66 @@ int main(int argc, char *argv[])
         {
             value_type = "sp";
         }
-        else if (arg == "-all")
+        else if (arg == "-seg-rows")
         {
-            value_type = "all";
+            seg_method = "seg-rows";
         }
-        else if (arg == "-sort")
+        else if (arg == "-seg-nnz")
         {
-            config.sort_matrix = true;
+            seg_method = "seg-nnz";
         }
-        else if (arg == "-no-sort")
+        else if (arg == "-bench")
         {
-            config.sort_matrix = false;
+            config->mode = "bench";
         }
-        else if (arg == "-verify")
+        else if (arg == "-solver")
         {
-            config.verify_result = true;
-        }
-        else if (arg == "-no-verify")
-        {
-            config.verify_result = false;
-        }
-        else if (arg == "-v")
-        {
-            ++print_details;
-        }
-        else if (arg == "-print-matrix-stats")
-        {
-            print_matrix_stats = 1;
-        }
-        else if (arg == "-seg-by-rows")
-        {
-            seg_method = "seg-by-rows";
-        }
-        else if (arg == "-seg-by-nnz")
-        {
-            seg_method = "seg-by-nnz";
+            config->mode = "solver";
         }
         else
         {
             fprintf(stderr, "ERROR: unknown argument.\n");
-            // usage();
             exit(1);
         }
     }
-
-    // TODO: print current configuration
-
-    {
-        uint64_t n_rows{};
-        uint64_t n_cols{};
-        uint64_t nnz{};
-
-        get_mtx_dimensions(file_name, n_rows, n_cols, nnz);
-
-        if (n_rows <= 0 || n_cols <= 0 || nnz <= 0)
-        {
-            fprintf(stderr, "Number of rows/columns/nnz in mtx file must be > 0.\n");
-            return 1;
-        }
-
-        if (!is_type_large_enough_for_mtx_sizes<ST>(file_name))
-        {
-            fprintf(stderr, "ERROR: size type is not large enough for matrix dimensions/nonzeros.\n");
-            return 1;
-        }
+    
+    if (config->sigma > config->chunk_size){
+            fprintf(stderr, "ERROR: sigma must be smaller than chunk size.\n");
+            exit(1);
     }
-
-    if (print_matrix_stats)
-    {
-        std::string matrix_name = file_base_name(file_name);
-
-        // TODO: what to do about this?
-        MtxData<double, int> mtx = read_mtx_data<double, int>(file_name, config.sort_matrix);
-        MatrixStats<double> matrix_stats = get_matrix_stats(mtx);
-        print_matrix_statistics(matrix_stats, matrix_name);
-        return 0;
-    }
-
-    int n_cpu_threads = 1;
-#ifdef _OPENMP
-#pragma omp parallel
-    {
-#pragma omp single
-        n_cpu_threads = omp_get_max_threads();
-    }
-#endif
-
-#if 0
-    BenchmarkResult res;
-    res = bench_spmv<VT, IT>(fstream, n_rows, n_cols, nnz,
-                                           &nelems_per_row, alignment, k);
-
-    ST n_fill_in = k == KernelType::ell ? n_rows * nelems_per_row - nnz : 0;
-    double fill_in_fraction = ((double)n_fill_in / (double)nnz) * 100.0;
+}
 
 
-     std::printf(
-         "%5ld %5ld sp: %9.3e GFLOP/s  (%9.3e MB)  "
-         "kernel: %s, cpu-threads: %d, reps: %ld  dur: %e s\n",
-         (long)n_rows, (long)n_cols, res.perf_gflops, res.memory_used_mb, k_type.c_str(),
-         n_cpu_threads, res.num_spmv_calls, res.duration_s
-                 );
-
-     std::printf(
-         "%8ld %8ld  nnz: %10ld  fill-in: %10ld  %.3f %%  max_el_per_row: %4ld\n",
-         (long)n_rows, (long)n_cols,
-         (long)nnz, (long)n_fill_in, fill_in_fraction, (long)nelems_per_row
-                 );
-
-    std::fflush(stdout);
-#endif
-#ifdef BENCHMARK_COMPLEX
-    std::printf("#rows cols   sp: %7s %7s  dp: %7s %7s   csp: %7s %7s  cdp: %7s %7s  "
-                "kernel          layout #threads\n",
-                "GFLOP/s", "MB",
-                "GFLOP/s", "MB",
-                "GFLOP/s", "MB",
-                "GFLOP/s", "MB");
-#else
-    if (print_list)
-    {
-        printf("#%s %-4s %-7s %-7s %-9s  "
-               "%-10s %-9s  %-7s  %-7s  %-8s  %-5s %-10s "
-               "%-3s %-6s %-3s %-2s %-2s %-8s",
-               "fp", "idxt", "rows", "cols", "nnz",
-               "p(GFLOP/s)", "MB", "t (s)", "k (s)", "reps", "ver", "name",
-               "#th", "fi(%)", "nzr", "C", "S", "beta");
-        if (print_details)
-        {
-            printf(" %s %s  %s %s  "
-                   "%-8s  "
-                   " %-8s %-8s %-8s %-8s %-8s %-8s  "
-                   " %-8s %-8s %-8s %-8s %-8s %-8s  "
-                   " %-8s %-8s %-8s",
-                   "svt", "sit", "B(a=0)", "B(a=1/nzc)",
-                   "dens.",
-                   "rows-avg", "sd", "cv", "min", "mean", "max",
-                   "cols-avg", "sd", "cv", "min", "mean", "max",
-                   "memM(MB)", "memX(MB)", "memY(MB)");
-        }
-        printf("\n");
-    }
-#endif
-
+int main(int argc, char *argv[])
+{
     MPI_Init(&argc, &argv);
 
-    // long file_pos = ftell(f);
+    Config config;
+    std::string file_name_str{};
 
-    for (auto &it : Kernel::kernels())
+    // Set defaults for cl inputs
+    std::string seg_method{"seg-by-rows"};
+    // std::string kernel_to_benchmark{"csr"}; still needed?
+    std::string value_type = {"dp"};
+    int C = config.chunk_size;
+    int sigma = config.sigma;
+    int revisions = config.n_repetitions;
+    bool random_init_x = false;
+
+    MARKER_INIT();
+
+    verifyAndAssignInputs(argc, argv, file_name_str,  seg_method, value_type, &random_init_x, &config);
+
+    if (value_type == "sp" )
     {
-        const std::string &name = it.first;
-
-        if (name != kernel_to_benchmark && kernel_to_benchmark != "all")
-        {
-            continue;
-        }
-
-        for (auto &it2 : it.second)
-        {
-            std::type_index k_float_type = std::get<0>(it2.first);
-            std::type_index k_index_type = std::get<1>(it2.first);
-
-            Kernel::entry_t &k_entry = it2.second;
-
-            // bool result_valid = true;
-
-            log("benchmarking kernel: %s\n", name.c_str());
-
-            if (k_float_type == std::type_index(typeid(float)) &&
-                k_index_type == std::type_index(typeid(int)) &&
-                (value_type == "sp" || value_type == "all"))
-            {
-                if (!is_type_large_enough_for_mtx_sizes<int>(file_name))
-                {
-                    fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
-                    continue;
-                }
-                compute_and_verify_result<float, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list, print_proc_local_stats);
-            }
-            else if (k_float_type == std::type_index(typeid(double)) &&
-                     k_index_type == std::type_index(typeid(int)) &&
-                     (value_type == "dp" || value_type == "all"))
-            {
-
-                if (!is_type_large_enough_for_mtx_sizes<int>(file_name))
-                {
-                    fprintf(stderr, "ERROR: matrix dimensions/nnz exceed size of index type int\n");
-                    continue;
-                }
-                compute_and_verify_result<double, int>(file_name, seg_method, config, name, k_entry, print_details, n_cpu_threads, print_list, print_proc_local_stats);
-            }
-            // #ifdef BENCHMARK_COMPLEX
-            //             else if (k_float_type == std::type_index(typeid(std::complex<float>))) {
-            //                 results[2] = bench_gemv<std::complex<float>>(name, n_rows, n_cols, k_entry, file_name);
-            //             }
-            //             else if (k_float_type == std::type_index(typeid(std::complex<double>))) {
-            //                 results[3] = bench_gemv<std::complex<double>>(name, n_rows, n_cols, k_entry, file_name);
-            //             }
-            // #endif
-            log("benchmarking kernel: %s end\n", name.c_str());
-        }
+        compute_result<float, int>(file_name_str, seg_method, config);
     }
+    else if (value_type == "dp")
+    {
+        compute_result<double, int>(file_name_str, seg_method, config);
+    }
+    
+    log("benchmarking kernel: scs end\n");
 
     MPI_Finalize();
 

@@ -48,7 +48,7 @@ omp: spmv-omp
 # .PHONY: omp-adv
 # omp-adv: spmv-omp-adv
 
-spmv-omp: main-omp.o spmv-ompOG.o splitSendMtxData.o $(REBUILD_DEPS)
+spmv-omp: main-omp.o spmv-omp-adv.o splitSendMtxData.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 # spmv-omp-adv: main-omp.o spmv-omp-adv.o splitSendMtxData.o $(REBUILD_DEPS)
