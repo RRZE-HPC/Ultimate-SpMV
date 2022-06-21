@@ -1,9 +1,9 @@
-%%MatrixMarket matrix coordinate real general
+%%MatrixMarket matrix coordinate integer general
 5 5 7
-1 1  2.8322685185200e+06
-2 2  2.8322685185200e+06
-3 1  2.8322685185200e+06
-3 2  2.8322685185200e+06
-3 3  2.8322685185200e+06
-4 4  2.8322685185200e+06
-5 5  2.8322685185200e+06
+1 1  11
+2 2  22
+3 1  31
+3 2  32
+3 3  33
+4 4  44
+5 5  55

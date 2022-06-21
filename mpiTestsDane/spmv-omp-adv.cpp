@@ -79,4 +79,4 @@ spmv_omp_scs_c(
 }
 
 //          name     function        is_gpu  format
-REG_KERNELS("scs-c", spmv_omp_scs_c, false, MatrixFormat::SellCSigma);
+// REG_KERNELS("scs-c", spmv_omp_scs_c, false, MatrixFormat::SellCSigma);

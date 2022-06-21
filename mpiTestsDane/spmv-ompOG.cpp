@@ -119,7 +119,7 @@ spmv_omp_scs(const ST C,
 
 
 //          name      function         is_gpu format
-REG_KERNELS("scs",    spmv_omp_scs,    false, MatrixFormat::SellCSigma);
-REG_KERNELS("ell-rm", spmv_omp_ell_rm, false, MatrixFormat::EllRm);
-REG_KERNELS("ell-cm", spmv_omp_ell_cm, false, MatrixFormat::EllCm);
-REG_KERNELS("csr",    spmv_omp_csr,    false, MatrixFormat::Csr);
+// REG_KERNELS("scs",    spmv_omp_scs,    false, MatrixFormat::SellCSigma);
+// REG_KERNELS("ell-rm", spmv_omp_ell_rm, false, MatrixFormat::EllRm);
+// REG_KERNELS("ell-cm", spmv_omp_ell_cm, false, MatrixFormat::EllCm);
+// REG_KERNELS("csr",    spmv_omp_csr,    false, MatrixFormat::Csr);
