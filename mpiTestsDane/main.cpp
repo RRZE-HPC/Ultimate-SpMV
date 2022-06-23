@@ -1,7 +1,6 @@
 #include "spmv.h"
 #include "mtx-reader.h"
 #include "vectors.h"
-#include "splitSendMtxData.h"
 
 #include <typeinfo>
 #include <algorithm>
@@ -1313,7 +1312,6 @@ init_std_vec_with_ptr_or_value(std::vector<VT> &x,
     }
 }
 
-// TODO: remove VT, only needed for debugging?
 template <typename VT, typename IT>
 void collect_local_needed_heri(
     std::vector<IT> *local_needed_heri, 
@@ -1329,14 +1327,6 @@ void collect_local_needed_heri(
     int my_rank, comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-    // if(my_rank == 0){
-    //     for(int j = 0; j < comm_size + 1; ++j)
-    //         printf("%i\n", work_sharing_arr[j]);
-    // //         std::cout << values.size() << std::endl;
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    //nnz and values.size() should be the same
-    // printf("%i ==? %i\n", *nnz, *values);
 
     IT from_proc, total_x_row_idx, remote_elem_candidate_col, remote_elem_col;
     // std::vector<std::tuple<IT, IT, IT>> global_needed_heri;
@@ -1368,55 +1358,42 @@ void collect_local_needed_heri(
 }
 
 // TODO: remove VT, only needed for debugging?
-template <typename VT, typename IT>
+template <typename IT>
 void collect_to_send_heri(
     std::vector<IT> *to_send_heri, 
     std::vector<IT> *local_needed_heri, 
-    int *all_local_needed_heri_sizes,
-    int *global_needed_heri,
-    int *global_needed_heri_size,
-    int *global_needed_heri_displ_arr, 
-    const MtxData<VT, IT> &local_mtx, 
-    const int *work_sharing_arr){
-
+    int *global_needed_heri
+    ){
     int my_rank, comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
+    int *all_local_needed_heri_sizes = new int[comm_size];
+    int *global_needed_heri_displ_arr = new int[comm_size]; //not needed anymore?
 
-    // if(my_rank == 2){std::cout << global_needed_heri_size << std::endl;}
-    // Alternatively, Allreduce the local sizes
-    // MPI_Allreduce(&local_needed_heri_size,
-    //               &global_needed_heri_size,
-    //               1,
-    //               MPI_INT,
-    //               MPI_SUM,
-    //               MPI_COMM_WORLD);
-
-
-    // if(my_rank == 2){
-    //     for(int i = 0; i < comm_size; ++i){
-    //         std::cout << global_needed_heri_displ_arr[i] << std::endl; //displacements
-    //     }
-    // }
-    // // printf("\n");
-    // exit(0);
-
-    // if(my_rank == 2){
-    //     for(int i = 0; i < comm_size; ++i){
-    //         std::cout << all_local_needed_heri_sizes[i] << std::endl; //counts
-    //     }
-    // }
-    // printf("\n");
-
-
-    // std::cout << "Proc: " << my_rank << " has " << local_needed_heri_size << std::endl;
-
-    // if(my_rank == 2){std::cout << all_local_needed_heri_sizes[0] + all_local_needed_heri_sizes[1] + all_local_needed_heri_sizes[2] << std::endl;}
-    // exit(0);
-    // Third, collect all local_needed_heri arrays to every process
-    // std::vector<IT> local_needed_heriTEST = &local_needed_heri[0];
     int local_needed_heri_size = local_needed_heri->size();
+    
+    // First, gather the sizes of messages for the Allgatherv later
+    MPI_Allgather(&local_needed_heri_size,
+                1,
+                MPI_INT,
+                all_local_needed_heri_sizes,
+                1,
+                MPI_INT,
+                MPI_COMM_WORLD);
+
+    int intermediate_size = 0;
+
+    // TODO: sort of extra work, since the global_needed_heri_size already calculated? Maybe rename.
+    // Second, sum this array, which will be the size of the global_needed_heri_size
+    for(int i = 0; i < comm_size; ++i){
+        global_needed_heri_displ_arr[i] = intermediate_size;
+
+        // TODO: what are the causes and implications of global_needed_heri_size?
+        intermediate_size += all_local_needed_heri_sizes[i];
+    }
+    // TODO: Incorporate this remainder into the loop somehow
+    global_needed_heri_displ_arr[comm_size] = intermediate_size;
 
     MPI_Allgatherv(&(*local_needed_heri)[0],
                 local_needed_heri_size,
@@ -1427,48 +1404,22 @@ void collect_to_send_heri(
                 MPI_INT,
                 MPI_COMM_WORLD);
 
-    // exit(0);
-
-    // Then, sort the global_needed_heri into "to_send_heri" 
-    for(int from_proc_idx = 1; from_proc_idx < *global_needed_heri_size; from_proc_idx += 3){
+    // Finally, sort the global_needed_heri into "to_send_heri". Encoded 3-tuples as array
+    for(int from_proc_idx = 1; from_proc_idx < intermediate_size; from_proc_idx += 3){
         if(global_needed_heri[from_proc_idx] == my_rank){
             to_send_heri->push_back(global_needed_heri[from_proc_idx - 1]);
             to_send_heri->push_back(global_needed_heri[from_proc_idx]);
             to_send_heri->push_back(global_needed_heri[from_proc_idx + 1]);
         }
     }
+    delete[] all_local_needed_heri_sizes;
+    delete[] global_needed_heri_displ_arr;
 }
 
-//     // Lastly, keep a record of how many halo elems each process sends to each other proc
-
-//     // TODO: probably very inefficent
-//     // tuples of the form (proc_to, proc_from, number_halo_elems)
-//     // fill vector with tuples
-//     int count, to_proc;
-//     for(int to_rank = 0; to_rank < comm_size; ++to_rank){
-//         for(int from_rank = 0; from_rank < comm_size; ++from_rank){
-//             count = 0;
-//             if(from_rank == to_rank){continue;}
-//             for(int from_proc_idx = 1; from_proc_idx < global_needed_heri_size; from_proc_idx += 3){
-//                 to_proc = from_proc_idx - 1;
-//                 if(from_proc_idx == from_rank && to_proc == to_rank){++count;}
-//             }
-//             global_heri_counts->push_back(std::make_tuple(to_rank, from_rank, count));
-//         }
-//     }
-
-//     // Do all processes need at least a view of the COUNT of each process's halo elements on each process?
-
-//     delete[] all_local_needed_heri_sizes;
-//     delete[] global_needed_heri;
-// }
-
-template <typename VT, typename IT>
+template <typename IT>
 void calc_heri_shifts(int *global_needed_heri, int *global_needed_heri_size, int *shift_arr, int *incidence_arr){
     /* We pre-calculate the shift for each given proc_to and proc_from, to look it up quickly in the benchmark loop later */
-    // for(auto tup : *global_heri_counts){
-    //     global_heri_shifts->push_back(std::make_tuple(std::get<0>(tup), std::get<1>(tup), 0));
-    // }
+
     int comm_size, my_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
@@ -1503,14 +1454,11 @@ void communicate_halo_elements(
     std::vector<IT> *to_send_heri, 
     std::vector<VT> *local_x_scs_vec, 
     int *shift_arr, 
-    int *global_needed_heri_displ_arr, 
-    const int *work_sharing_arr){//, int *commed_elems){
+    const int *work_sharing_arr){
     /* The purpose of this function, is to allow each process to exchange it's proc-local "remote elements"
     with the other respective processes. For now, elements are sent one at a time. 
     Recall, tuple elements in needed_heri are formatted (proc to, proc from, global x idx). 
-    Since this function is in the benchmark loop, need to do as little work possible, ideally.
-    
-    The global index WITH PADDING is unique, and used as the tag for communication. */
+    Since this function is in the benchmark loop, need to do as little work possible, ideally.*/
 
     // TODO: better to pass as args to function?
     int my_rank, comm_size;
@@ -1521,8 +1469,7 @@ void communicate_halo_elements(
 
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-    MPI_Request request; // what does this do lol
-    // ++(*commed_elems);
+    MPI_Request request; // TODO: What does this do?
 
     // Declare and populate arrays to keep track of number of elements already
     // recieved or sent to respective procs
@@ -1533,21 +1480,10 @@ void communicate_halo_elements(
         send_counts[i] = 0;
     }
 
-    // IT local_x_idx = global_x_idx - work_sharing_arr[my_rank];
-    // VT val_to_send;
-
-
     // // TODO: DRY
     if(typeid(VT) == typeid(float)){
-        // printf("I get inside\n");
-        // Since local_needed_heri already sorted for this local proc, all "to_proc" will be this rank
-
-        // In order to place incoming elements in padded region of local_x
+        // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
         rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-
-        // Establishes a consistent offset using the expected number of elements to generate a unique tag
-        // recv_offset = global_needed_heri_displ_arr[my_rank] / 3;
-        // std::cout << recv_offset << std::endl;
 
         // TODO: definetly OpenMP this loop
         for(int from_proc_idx = 1; from_proc_idx < local_needed_heri->size(); from_proc_idx += 3){
@@ -1659,15 +1595,6 @@ void communicate_halo_elements(
             //     &request);
 
             // ++send_counts[to_proc];
-
-
-            // TODO: Not efficient, rethink tag idea
-            // Update global view of number of elements communicated to the process "to_proc"
-            // ++known_heri_elems_counter[to_proc];
-            // MPI_Bcast(&known_heri_elems_counter, comm_size, my_rank, MPI_COMM_WORLD)
-
-            // ++sent_elems; // I dont think how many elements a process has sent has any bearing on a tag...
-            // maybe how many elements it has sent to a specific process? but even then, no.
         }
     // MPI_Barrier(MPI_COMM_WORLD); // temporary
     // exit(0);
@@ -1698,6 +1625,8 @@ void communicate_halo_elements(
     //         }
         // }
     }
+    delete[] recv_counts;
+    delete[] send_counts;
     // std::cout << "Proc: " << my_rank << "has recieved: " << recieved_elems << std::endl;
 }
 
@@ -1724,8 +1653,9 @@ void bench_spmv_scs(
 
     log("allocate and place CPU matrices start\n");
 
+    // TODO: what to do with the benchmark object?
     // BenchmarkResult r;
-    // gathered y can be allocated here?
+
     ScsData<VT, IT> scs;
 
     log("allocate and place CPU matrices end\n");
@@ -1733,14 +1663,8 @@ void bench_spmv_scs(
 
     // IT x_col_upper = IT{}, x_col_lower = IT{};
 
-    // TODO: fuse potentially
+    // TODO: fuse with x idx adjustments potentially
     convert_to_scs<VT, IT>(local_mtx, config->chunk_size, config->sigma, scs);
-    // convert_to_scs<VT, IT>(mtx, config.chunk_size, config.sigma, scs, &x_col_upper, &x_col_lower);
-
-    // std::vector<VT> total_x;
-    // std::vector<VT> total_y(scs.n_rows);
-
-    // std::vector<VT> local_x;
 
     log("converting to scs format end\n");
 
@@ -1772,10 +1696,6 @@ void bench_spmv_scs(
     IT x_row_lower = work_sharing_arr[my_rank];
     IT x_row_upper = work_sharing_arr[my_rank + 1] - 1;
 
-    // std::cout << x_row_upper << std::endl;
-    // std::cout << x_row_lower << std::endl;
-    // exit(0);
-
     IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
 
     // Shift local column indices
@@ -1791,8 +1711,6 @@ void bench_spmv_scs(
         }
     }
 
-    // V<VT, IT> x_scs(scs.n_cols);
-    // The local_x SHOULD only be as large as the number of rows in the local matrix
     V<VT, IT> local_x_scs(x_row_upper - x_row_lower + 1);
 
     // Boolean value in last arguement determines if x is random, or taken from default values
@@ -1800,24 +1718,6 @@ void bench_spmv_scs(
     // Just replace with a standard vector?
     init_with_ptr_or_value(local_x_scs, local_x_scs.n_rows, x_in,
                             defaults.x, false);
-    // init_with_ptr_or_value(x_scs, x_scs.n_rows, x_in,
-    //                     defaults.x, false);
-
-    // This vector is used to locate the non-padded elements of a collected/global x vector
-    // for use in halo communication. gnp := global NO PADDING
-    // std::vector<IT> gnp_idx(local_x_scs.n_rows);
-    // for(int i = 0; i < local_x_scs.n_rows; ++i){
-    //     gnp_idx[i] = work_sharing_arr[my_rank] + i;
-    // }
-
-    // for(int i = 0; i < gnp_idx.size(); ++i){
-    //     std::cout << "Proc: " << my_rank << ", gnp idx: " << gnp_idx[i] << std::endl;
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-
-    // The total x vector used in benchmarking
-    // std::vector<VT> total_dummy_x(scs.n_rows);
 
     if(config->mode == "solver"){
         // TODO: make modifications for solver mode
@@ -1828,118 +1728,51 @@ void bench_spmv_scs(
         // the object returned will be the benchmark results
     }
 
-    // x_out not used?
-    // x_out = std::move(local_x_scs);
-    // total_x = std::move(x_scs);
-    // local_y.resize(scs.n_rows);
-
     // Really want these as standard vectors, not Vector custom object
     // TODO: How bad is this for scalability? Is there a way around this?
     std::vector<VT> local_x_scs_vec(local_x_scs.data(), local_x_scs.data() + local_x_scs.n_rows);
     std::vector<VT> local_y_scs_vec(local_y_scs.data(), local_y_scs.data() + local_y_scs.n_rows);
 
     // heri := halo element row indices
-    std::vector<IT> local_needed_heri;
-    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr);
     // "local_needed_heri" is all the halo elements that this process needs
+    std::vector<IT> local_needed_heri;
+
+    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr);
+
     // "to_send_heri" are all halo elements that this process is to send
-
-    // for(int i = 0; i < local_needed_heri.size(); i += 3){
-    //     std::cout << "Proc: " << my_rank << " => " <<
-    //     local_needed_heri[i] << ", " << local_needed_heri[i+1] << ", " << local_needed_heri[i+2] << std::endl;
-    // }
-    // printf("\n");
-    // if(my_rank == 0){
-    //     std::cout << local_mtx.nnz << std::endl;
-    //     for(int i = 0; i < local_mtx.nnz; ++i){
-    //         std::cout << local_mtx.values[i] << " => row: " << local_mtx.I[i] <<
-    //         ", col: " << local_mtx.J[i] << std::endl;
-    //     }
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-
     std::vector<IT> to_send_heri;
 
-    // Also used to create unique send/recv tags in the benchmark loop
-    int *global_needed_heri_displ_arr = new int[comm_size]; //not needed anymore?
-    // std::vector<std::tuple<IT, IT, IT>> global_heri_counts;
-    // TODO: what are the causes and implications of global_needed_heri_size?
-
-        // Make every process aware of the size of the global_needed_heri array
     int local_needed_heri_size = local_needed_heri.size();
-    int global_needed_heri_size = 0;
+    int global_needed_heri_size;
 
-    // std::cout << local_needed_heri_size << std::endl;
-    // exit(0);
-
-    // First, gather the sizes of messages for the Allgetherv
-    // NOTE: This assumes that the order of ranks is maintained
-    int *all_local_needed_heri_sizes = new int[comm_size];
-
-    MPI_Allgather(&local_needed_heri_size,
+    // TODO: Is this actually necessary?
+    MPI_Allreduce(&local_needed_heri_size,
+                &global_needed_heri_size,
                 1,
                 MPI_INT,
-                all_local_needed_heri_sizes,
-                1,
-                MPI_INT,
+                MPI_SUM,
                 MPI_COMM_WORLD);
 
-    // Second, sum this array, which will be the size of the global_needed_heri_size
-    for(int i = 0; i < comm_size; ++i){
-        global_needed_heri_displ_arr[i] = global_needed_heri_size;
-        // global_needed_heri_displ_arr[i] = 0;
-
-        // if(my_rank == 2){std::cout << global_needed_heri_size << std::endl;}
-        global_needed_heri_size += all_local_needed_heri_sizes[i];
-    }
-    global_needed_heri_displ_arr[comm_size] = global_needed_heri_size; //I need this?
     int *global_needed_heri = new int[global_needed_heri_size];
 
-    // FIX THIS MONSTER
-    collect_to_send_heri<VT, IT>(
+    collect_to_send_heri<IT>(
         &to_send_heri, 
         &local_needed_heri, 
-        all_local_needed_heri_sizes,
-        global_needed_heri, 
-        &global_needed_heri_size,
-        global_needed_heri_displ_arr, 
-        local_mtx, 
-        work_sharing_arr);
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // printf("\n");
-
-    // for(int i = 0; i < to_send_heri.size(); i += 3){
-    //     std::cout << "Proc: " << my_rank << " => " <<
-    //     to_send_heri[i] << ", " << to_send_heri[i+1] << ", " << to_send_heri[i+2] << std::endl;
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-    // if(my_rank == 0){
-    //     for(int i = 0; i < comm_size + 1; ++i){
-    //         std::cout << work_sharing_arr[i] << std::endl;
-    //     }      
-    // }
-    // exit(0);
-
-    // std::vector<std::tuple<IT, IT, IT>> global_heri_shifts;
-    // calc_heri_shifts<VT, IT>(&global_heri_counts, &global_heri_shifts);
+        global_needed_heri
+        );
 
     // The shift array is used in the tag-generation scheme in halo communication.
-    // the row idx is the from_proc, the column is the to_proc, and the element is the shift
+    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
     // after the local element index to make for the incoming halo elements
     int *shift_arr = new int[comm_size * comm_size];
-    // TODO: fix this double free issue
     int *incidence_arr = new int[comm_size * comm_size]; 
 
     for(int i = 0; i < comm_size * comm_size; ++i){
         shift_arr[i] = 0;
         incidence_arr[i] = 0;
     }
-    // std::cout << "Proc: " << my_rank << " => global_needed_heri_size: " << global_needed_heri_size << std::endl;
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-    calc_heri_shifts<VT, IT>(global_needed_heri, &global_needed_heri_size, shift_arr, incidence_arr); //NOTE: always symmetric?
+
+    calc_heri_shifts<IT>(global_needed_heri, &global_needed_heri_size, shift_arr, incidence_arr); //NOTE: always symmetric?
 
     if(my_rank == 0){
         local_x_scs_vec[0] = 0;    
@@ -1953,39 +1786,9 @@ void bench_spmv_scs(
         local_x_scs_vec[2] = 4;    
     }
 
-    // Pad the end of x-vector for incoming halo elements
-    // if(my_rank == 2){
-    //     for(int i = 0; i < local_x_scs_vec.size(); ++i){
-    //         std::cout << local_x_scs_vec[i] << std::endl;
-    //     }
-    // }
-
-    //     // std::cout << local_x_scs.n_rows << std::endl;
-    //     // std::cout << local_needed_heri.size() << std::endl;
-    // }
-
-    // will this always hold true with the current configuration of heri?
     int local_x_padding = local_needed_heri.size() / 3;
 
     local_x_scs_vec.resize(local_x_scs.n_rows + local_x_padding);
-    // printf("\n");
-
-    // if(my_rank == 2){
-    //     for(int i = 0; i < local_x_scs_vec.size(); ++i){
-    //         std::cout << local_x_scs_vec[i] << std::endl;
-    //     }
-    // }
-    // if(my_rank == 2){
-    //     for(int i = 0; i < local_x_scs_vec.size(); ++i){
-    //         std::cout << local_x_scs_vec[i] << std::endl;
-    //     }
-    // }
-
-    // }
-    // std::cout << local_needed_heri.size() << std::endl;
-    // std::cout << local_x_scs_vec.size() << " and " << local_mtx.n_rows << std::endl;
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 
     for (int i = 0; i < config->n_repetitions; ++i)
     {    
@@ -2006,7 +1809,7 @@ void bench_spmv_scs(
         // MPI_Barrier(MPI_COMM_WORLD); // temporary
         // printf("\n");
 
-        communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x_scs_vec, shift_arr, global_needed_heri_displ_arr, work_sharing_arr);//, &commed_elems);
+        communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x_scs_vec, shift_arr, work_sharing_arr);
         // printf("\n");
         // MPI_Barrier(MPI_COMM_WORLD); 
         // if(my_rank == test_rank){
@@ -2084,7 +1887,7 @@ void bench_spmv_scs(
     // Reformat proc-local result vectors. Only take the useful (non-padded) elements 
     // from the scs formatted local_y_scs, and assign to local_y
     std::vector<VT> local_y(scs.n_rows, 0);
-    // local_y.resize(scs.n_rows);
+    // local_y.resize(scs.n_rows); // TODO: What is the purpose of this?
 
     for (int i = 0; i < scs.old_to_new_idx.n_rows; ++i)
     {
@@ -2097,15 +1900,9 @@ void bench_spmv_scs(
     {
         counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
         displ_arr_bk[i] = work_sharing_arr[i];
-        // std::cout << counts_arr[i] << ", " << displ_arr_bk[i] << std::endl;    
     }
 
-    // std::cout << local_y.size() << std::endl;
-    // std::cout << &local_y[0] << std::endl;
-    // std::cout << &total_y[0] << std::endl;
-
-    // Can use Allgatherv to collect results from each proc to y_total,
-    // since messages are of varying size
+    // Collect results from each proc to y_total
     if (typeid(VT) == typeid(double))
     {
         MPI_Allgatherv(&local_y[0],
@@ -2129,20 +1926,18 @@ void bench_spmv_scs(
                     MPI_COMM_WORLD);
     }
 
-    // total_y = std::move(local_x_scs);    // x_out = std::move(local_x_scs);
+    // total_y = std::move(local_x_scs);    // TODO: What is the purpose of this?
+    // x_out = std::move(local_x_scs);  // TODO: What is the purpose of this?
 
-    // std::cout << "\n" << "Proc: " << my_rank << " | Original x_vec length: " << mtx.n_cols
-    // << ", Shortened x_vec length: " << x_col_upper - x_col_lower + 1 << std::endl;
-    // MPI_Barrier(MPI_COMM_WORLD); // temporary
-    // exit(0);
-
-    // delete[] incidence_arr;
-    delete[] global_needed_heri_displ_arr;
     delete[] counts_arr;
     delete[] displ_arr_bk;
-
+    delete[] shift_arr;  
+    // delete[] incidence_arr;  // TODO: why does deletion give error code 6?
+    delete[] global_needed_heri;
 
     // return total_y;
+
+
     MPI_Barrier(MPI_COMM_WORLD); // temporary
     if(my_rank == 0){
         printf("\n");
