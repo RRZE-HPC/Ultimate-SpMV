@@ -20,6 +20,26 @@ ifeq ($(COMPILER),gcc)
   endif
 endif
 
+ifeq ($(COMPILER),icc)
+  CXX       = icpc
+  MPICXX     = mpiicpc
+
+  # OPT_LEVEL = -O0 -g -ggdb3
+  # OPT_LEVEL = -Ofast -g -ggdb3
+  OPT_LEVEL = -Ofast
+  OPT_ARCH  = -march=native
+
+  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(OPT_ARCH)
+
+  ifeq ($(ASAN),1)
+    CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
+  endif
+
+  ifeq ($(UBSAN),1)
+    CXXFLAGS += -fsanitize=undefined -g
+  endif
+endif
+
 ifeq ($(LISTINGS),1)
   CXXFLAGS_LISTINGS += -Wa,-alnds=$@.lst -g
   ifeq ($(COMPILER),clang)
