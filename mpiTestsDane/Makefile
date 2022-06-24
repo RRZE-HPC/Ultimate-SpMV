@@ -37,7 +37,7 @@ ifeq ($(USE_LIKWID),1)
 endif
 
 # Also rebuild when following files change.
-REBUILD_DEPS = $(MAKEFILE_LIST) spmv.h vectors.h mtx-reader.h
+REBUILD_DEPS = $(MAKEFILE_LIST) spmv.h vectors.h mtx-reader.h utilities.hpp kernels.hpp results.hpp
 
 .PHONY: all
 all: omp

@@ -6,4 +6,4 @@ spmv-omp-adv
 .vscode/
 
 *.o
-
+*.gch
