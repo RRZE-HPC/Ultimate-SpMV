@@ -4,6 +4,7 @@ verifyResults.txt
 spmv-omp
 spmv-omp-adv
 .vscode/
+valgrind_output.txt
 
 *.o
 *.gch

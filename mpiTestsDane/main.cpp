@@ -318,23 +318,40 @@ void collect_to_send_heri(
     std::vector<IT> *local_needed_heri, 
     int *global_needed_heri
     ){
+
     int my_rank, comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    int *all_local_needed_heri_sizes = new int[comm_size];
-    int *global_needed_heri_displ_arr = new int[comm_size]; //not needed anymore?
+    // int *all_local_needed_heri_sizes = new int[comm_size];
+    int all_local_needed_heri_sizes[comm_size] = {0}; // Do these need to be on the heap?
+    // int *global_needed_heri_displ_arr = new int[comm_size]; //not needed anymore?
+    int global_needed_heri_displ_arr[comm_size] = {0};
 
     int local_needed_heri_size = local_needed_heri->size();
+    // if(my_rank == 0){
+    //     for(int i = 0; i < comm_size; ++i){
+    //         std::cout << all_local_needed_heri_sizes[i] << std::endl;
+    //     }
+    // }
     
     // First, gather the sizes of messages for the Allgatherv later
     MPI_Allgather(&local_needed_heri_size,
                 1,
                 MPI_INT,
-                all_local_needed_heri_sizes,
+                all_local_needed_heri_sizes, //should be an array of length "comm size"
                 1,
                 MPI_INT,
                 MPI_COMM_WORLD);
+    // ordering of elements consistant with rank number?
+    // Is this allgather doing what you want? do you really have exactly "comm_size" elements?
+
+    // if(my_rank == 0){
+    //     for(int i = 0; i < comm_size; ++i){
+    //         std::cout << all_local_needed_heri_sizes[i] << std::endl;
+    //     }
+    // }
+    // exit(0);
 
     int intermediate_size = 0;
 
@@ -366,8 +383,8 @@ void collect_to_send_heri(
             to_send_heri->push_back(global_needed_heri[from_proc_idx + 1]);
         }
     }
-    delete[] all_local_needed_heri_sizes;
-    delete[] global_needed_heri_displ_arr;
+    // delete[] all_local_needed_heri_sizes;
+    // delete[] global_needed_heri_displ_arr;
 }
 
 template <typename IT>
@@ -387,18 +404,62 @@ void calc_heri_shifts(int *global_needed_heri, int *global_needed_heri_size, int
         incidence_arr[comm_size * from_proc + to_proc] += 1;
     }
 
+    if(my_rank == 0){
+        for(int i = 0; i < comm_size; ++i){
+            for(int j = 0; j < comm_size; ++j){
+                printf("%i, ", incidence_arr[comm_size * i + j]);
+            }
+            printf("\n");
+        }
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+    printf("\n");
+
 
     // We lose the last row information of incidence_arr when calculating shift
+    // for(int row = 1; row < comm_size; ++row){
+    //     for(int col = 0; col < comm_size; ++col){
+    //         shift_arr[comm_size * row + col] += incidence_arr[comm_size * (row - 1) + col];
+    //     } // update all rows below. TODO: make smarter
+    //     for(int lower_rows = comm_size - row; lower_rows > 0; --lower_rows){
+    //         for(int col = 0; col < comm_size; ++col){
+    //             shift_arr[comm_size * (row + lower_rows) + col] += shift_arr[comm_size * row + col];
+    //         }
+    //     }
+    // }
+    // std::cout << "idx cannot exceed: " << comm_size * comm_size << std::endl;
+    // // for(int shift = 0; shift < comm_size - 1; ++shift){
+    //     for(int row = 1; row < comm_size; ++row){
+    //         for(int col = 0; col < comm_size; ++col){
+    //             shift_arr[comm_size * (row + shift) + col] += incidence_arr[comm_size * (row - 1) + col];
+    //             std::cout << "shift idx: " << comm_size * row + col << ", incidence idx: " << comm_size * (row - 1) + col << std::endl;
+    //         } // update all rows below. TODO: make smarter
+    //     }
+    // // }
+
+    // std::cout << "idx cannot exceed: " << comm_size * comm_size << std::endl;
     for(int row = 1; row < comm_size; ++row){
-        for(int col = 0; col < comm_size; ++col){
-            shift_arr[comm_size * row + col] += incidence_arr[comm_size * (row - 1) + col];
-        } // update all rows below. TODO: make smarter
-        for(int lower_rows = comm_size - row; lower_rows > 0; --lower_rows){
+        int rows_remaining = comm_size - row;
+        for(int i = 0; i < rows_remaining; ++i){
             for(int col = 0; col < comm_size; ++col){
-                shift_arr[comm_size * (row + lower_rows) + col] += shift_arr[comm_size * row + col];
+                shift_arr[comm_size * (row + i) + col] += incidence_arr[comm_size * (row - 1) + col];
+                // std::cout << "shift idx: " << comm_size * row + col << ", incidence idx: " << comm_size * (row - 1) + col << std::endl;
             }
         }
     }
+
+    if(my_rank == 0){
+        for(int i = 0; i < comm_size; ++i){
+            for(int j = 0; j < comm_size; ++j){
+                printf("%i, ", shift_arr[comm_size * i + j]);
+            }
+            printf("\n");
+        }
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
 }
 
 // TODO: Best to pass pointers explicitly? Make consistent
@@ -419,7 +480,7 @@ void communicate_halo_elements(
     int rows_in_to_proc, rows_in_from_proc, to_proc, from_proc, global_row_idx, num_local_elems;
     int recv_shift = 0, send_shift = 0; // TODO: calculate more efficiently
     int recieved_elems = 0, sent_elems = 0;
-    int test_rank = 2;
+    // int test_rank = 2;
 
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
@@ -427,12 +488,12 @@ void communicate_halo_elements(
 
     // Declare and populate arrays to keep track of number of elements already
     // recieved or sent to respective procs
-    int *recv_counts = new int[comm_size];
-    int *send_counts = new int[comm_size];
-    for(int i = 0; i < comm_size; ++i){
-        recv_counts[i] = 0;
-        send_counts[i] = 0;
-    }
+    int recv_counts[comm_size] = {0};
+    int send_counts[comm_size] = {0};
+    // for(int i = 0; i < comm_size; ++i){
+    //     recv_counts[i] = 0;
+    //     send_counts[i] = 0;
+    // }
 
     // // TODO: DRY
     if(typeid(VT) == typeid(float)){
@@ -521,7 +582,7 @@ void communicate_halo_elements(
             //     " with data " << (*local_x_scs_vec)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]] << " to Proc: " << to_proc << std::endl;
             // } 
            // TODO: replace with Isend
-            MPI_Ssend(
+            MPI_Send(
                 &(*local_x_scs_vec)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]], // assume this is the correct data to send for now
                 1,
                 MPI_FLOAT,
@@ -579,8 +640,8 @@ void communicate_halo_elements(
     //         }
         // }
     }
-    delete[] recv_counts;
-    delete[] send_counts;
+    // delete[] recv_counts;
+    // delete[] send_counts;
     // std::cout << "Proc: " << my_rank << "has recieved: " << recieved_elems << std::endl;
 }
 
@@ -627,10 +688,9 @@ void bench_spmv_scs(
     V<VT, IT> local_y_scs = V<VT, IT>(scs.n_rows_padded);
     std::uninitialized_fill_n(local_y_scs.data(), local_y_scs.n_rows, defaults.y);
 
-    // TODO: How often is this allocated? Every swap, or only once?
-    // Every processes needs counts array
-    int *counts_arr = new int[comm_size];
-    int *displ_arr_bk = new int[comm_size];
+    // NOTE: Every processes needs counts array
+    int counts_arr[comm_size] = {0};
+    int displ_arr_bk[comm_size] = {0};
 
     // Set upper and lower bounds for local x vector
     // IT x_col_upper = *max_element(local_mtx.J.begin(), local_mtx.J.end());
@@ -647,8 +707,8 @@ void bench_spmv_scs(
     // IT x_row_upper = local_mtx.I[local_first_row];
     // IT x_row_lower = local_mtx.I[local_last_row];
 
-    IT x_row_lower = work_sharing_arr[my_rank];
-    IT x_row_upper = work_sharing_arr[my_rank + 1] - 1;
+    // IT x_row_lower = work_sharing_arr[my_rank];
+    // IT x_row_upper = work_sharing_arr[my_rank + 1] - 1;
 
     IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
 
@@ -665,13 +725,28 @@ void bench_spmv_scs(
         }
     }
 
-    V<VT, IT> local_x_scs(x_row_upper - x_row_lower + 1);
+    // V<VT, IT> local_x_scs(x_row_upper - x_row_lower + 1);
+    // Pretty sure this is right?
+    std::vector<VT> local_x(work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank], 0);
 
     // Boolean value in last arguement determines if x is random, or taken from default values
     // NOTE: may be important for swapping
     // Just replace with a standard vector?
-    init_with_ptr_or_value(local_x_scs, local_x_scs.n_rows, x_in,
+    // if(my_rank == 0){
+    //     for(int i = 0; i < local_x.size(); ++i){
+    //         std::cout << local_x[i] << std::endl;
+    //     }
+    // }
+    init_std_vec_with_ptr_or_value(local_x, local_x.size(), x_in,
                             defaults.x, false);
+    // printf("\n");
+    // if(my_rank == 0){
+    //     for(int i = 0; i < local_x.size(); ++i){
+    //         std::cout << local_x[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
     if(config->mode == "solver"){
         // TODO: make modifications for solver mode
@@ -684,14 +759,16 @@ void bench_spmv_scs(
 
     // Really want these as standard vectors, not Vector custom object
     // TODO: How bad is this for scalability? Is there a way around this?
-    std::vector<VT> local_x_scs_vec(local_x_scs.data(), local_x_scs.data() + local_x_scs.n_rows);
+    // std::vector<VT> local_x_scs_vec(local_x_scs.data(), local_x_scs.data() + local_x_scs.n_rows);
     std::vector<VT> local_y_scs_vec(local_y_scs.data(), local_y_scs.data() + local_y_scs.n_rows);
+    // free(local_y_scs.data()); Not the problem
 
     // heri := halo element row indices
     // "local_needed_heri" is all the halo elements that this process needs
     std::vector<IT> local_needed_heri;
 
     collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr);
+    // MPI_Barrier(MPI_COMM_WORLD);
 
     // "to_send_heri" are all halo elements that this process is to send
     std::vector<IT> to_send_heri;
@@ -708,6 +785,10 @@ void bench_spmv_scs(
                 MPI_COMM_WORLD);
 
     int *global_needed_heri = new int[global_needed_heri_size];
+
+    for(int i = 0; i < global_needed_heri_size; ++i){
+        global_needed_heri[i] = 0;
+    }
 
     collect_to_send_heri<IT>(
         &to_send_heri, 
@@ -728,33 +809,48 @@ void bench_spmv_scs(
 
     calc_heri_shifts<IT>(global_needed_heri, &global_needed_heri_size, shift_arr, incidence_arr); //NOTE: always symmetric?
 
-    if(my_rank == 0){
-        local_x_scs_vec[0] = 0;    
-    }
-    if(my_rank == 1){
-        local_x_scs_vec[0] = 1;    
-    }
-    if(my_rank == 2){
-        local_x_scs_vec[0] = 2;
-        local_x_scs_vec[1] = 3;
-        local_x_scs_vec[2] = 4;    
-    }
+    // if(my_rank == 0){
+    //     local_x_scs_vec[0] = 0;    
+    // }
+    // if(my_rank == 1){
+    //     local_x_scs_vec[0] = 1;    
+    // }
+    // if(my_rank == 2){
+    //     local_x_scs_vec[0] = 2;
+    //     local_x_scs_vec[1] = 3;
+    //     local_x_scs_vec[2] = 4;    
+    // }
 
+    // NOTE: should always be a multiple of 3
+    // std::cout << local_needed_heri.size() << std::endl;
+    // exit(0);
     int local_x_padding = local_needed_heri.size() / 3;
+    // std::cout << local_x_padding << std::endl;
+    // exit(0);
 
-    local_x_scs_vec.resize(local_x_scs.n_rows + local_x_padding);
+    // Prepare buffers for communication. Needed?
+    local_x.resize(local_x.size() + local_x_padding);
 
+    // printf("\n");
+    // if(my_rank == 0){
+    //     for(int i = 0; i < local_x.size(); ++i){
+    //         std::cout << local_x[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+    
     for (int i = 0; i < config->n_repetitions; ++i)
     {    
         int test_rank = 0;
 
-        // MPI_Barrier(MPI_COMM_WORLD); 
-        // if(my_rank == test_rank){
-        //     std::cout << "local_x before comm, before SPMV, before swap: " << std::endl;
-        //     for(int i = 0; i < local_x_scs_vec.size(); ++i){
-        //         std::cout << local_x_scs_vec[i] << std::endl;
-        //     }
-        // }
+        MPI_Barrier(MPI_COMM_WORLD); 
+        if(my_rank == test_rank){
+            std::cout << "local_x before comm, before SPMV, before swap: " << std::endl;
+            for(int i = 0; i < local_x.size(); ++i){
+                std::cout << local_x[i] << std::endl;
+            }
+        }
         // printf("\n");
         // if(my_rank == 2){
         //     std::cout << local_x_scs_vec[3] << std::endl;
@@ -763,7 +859,7 @@ void bench_spmv_scs(
         // MPI_Barrier(MPI_COMM_WORLD); // temporary
         // printf("\n");
 
-        communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x_scs_vec, shift_arr, work_sharing_arr);
+        communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
         // printf("\n");
         // MPI_Barrier(MPI_COMM_WORLD); 
         // if(my_rank == test_rank){
@@ -799,9 +895,25 @@ void bench_spmv_scs(
 
         // Do the actual multiplication
         // TODO: store .data() members locally as const
+        // std::cout << "C = " << scs.C << std::endl;
+        // std::cout << "n_chunks = " << scs.n_chunks << std::endl;
+        // std::cout << "chunk_ptrs = " << scs.chunk_ptrs.data() << std::endl;
+        // std::cout << "chunk_lengths = " << scs.chunk_lengths.data() << std::endl;
+        // std::cout << "col_idx = " << scs.col_idxs.data() << std::endl;
+        // std::cout << "values = " << scs.values.data() << std::endl;
+
+
+        // std::cout << "local_x: " << std::endl;
+        // for(int i = 0; i < local_x.size(); ++i){
+        //     std::cout << local_x[i] << std::endl;
+        // }
+        // std::cout << "local_y: " << std::endl;
+        // for(int i = 0; i < local_y_scs_vec.size(); ++i){
+        //     std::cout << local_y_scs_vec[i] << std::endl;
+        // }
         spmv_omp_scs_c<VT, IT>( scs.C, scs.n_chunks, scs.chunk_ptrs.data(), 
                                 scs.chunk_lengths.data(),scs.col_idxs.data(), 
-                                scs.values.data(), &(local_x_scs_vec)[0], &(local_y_scs_vec)[0]);
+                                scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
 
         // MPI_Barrier(MPI_COMM_WORLD);
         // if(my_rank == test_rank){
@@ -811,10 +923,9 @@ void bench_spmv_scs(
         //     }
         // }
 
-        // printf("\n");
-        //dont swap on last iteration?
+        // TODO: verify, dont swap on last iteration?
         if(i != config->n_repetitions - 1){
-            std::swap(local_x_scs_vec, local_y_scs_vec);
+            std::swap(local_x, local_y_scs_vec);
         }
         // MPI_Barrier(MPI_COMM_WORLD);
         // if(my_rank == test_rank){
@@ -824,13 +935,13 @@ void bench_spmv_scs(
         //     }
         // }
 
-        // MPI_Barrier(MPI_COMM_WORLD);
-        // if(my_rank == test_rank){
-        //     std::cout << "new local_y: " << std::endl;
-        //     for(int i = 0; i < local_y_scs_vec.size(); ++i){
-        //         std::cout << local_y_scs_vec[i] << std::endl;
-        //     }
-        // }
+        MPI_Barrier(MPI_COMM_WORLD);
+        if(my_rank == test_rank){
+            std::cout << "new local_y: " << std::endl;
+            for(int i = 0; i < local_y_scs_vec.size(); ++i){
+                std::cout << local_y_scs_vec[i] << std::endl;
+            }
+        }
 
     }
 
@@ -883,10 +994,12 @@ void bench_spmv_scs(
     // total_y = std::move(local_x_scs);    // TODO: What is the purpose of this?
     // x_out = std::move(local_x_scs);  // TODO: What is the purpose of this?
 
-    delete[] counts_arr;
-    delete[] displ_arr_bk;
     delete[] shift_arr;  
-    // delete[] incidence_arr;  // TODO: why does deletion give error code 6?
+    delete[] incidence_arr;
+
+    // delete[] counts_arr;
+    // delete[] displ_arr_bk;
+
     delete[] global_needed_heri;
 
     // return total_y;
@@ -900,8 +1013,8 @@ void bench_spmv_scs(
             std::cout << (*total_y)[i] << std::endl;
         }
     }
-    MPI_Barrier(MPI_COMM_WORLD); // temporary
-    exit(0);
+    // MPI_Barrier(MPI_COMM_WORLD); // temporary
+    // exit(0);
 }
 
 // Honestly, probably not necessary
@@ -1139,6 +1252,7 @@ void seg_and_send_data(MtxData<VT, IT> &local_mtx, Config config, std::string se
             MPI_Recv(recv_buf_vals, msg_length, MPI_FLOAT, 0, 44, MPI_COMM_WORLD, &status_vals);
         }
         // TODO: Just how bad is this?... Are we copying array -> vector?
+        // TODO: is this doing what you think it is?
         std::vector<IT> global_rows_vec(recv_buf_global_row_coords, recv_buf_global_row_coords + msg_length);
         std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
         std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
@@ -1155,9 +1269,9 @@ void seg_and_send_data(MtxData<VT, IT> &local_mtx, Config config, std::string se
 
         // Notice, recv_buf_global_row_coords not deleted, because each process needs to know
         // it's global row pointer for reconstruction later
-        delete[] recv_buf_global_row_coords;
-        delete[] recv_buf_col_coords;
-        delete[] recv_buf_vals;
+        // delete[] recv_buf_global_row_coords;
+        // delete[] recv_buf_col_coords;
+        // delete[] recv_buf_vals;
     }
 
     // Each process exchanges it's global row ptrs for local row ptrs
@@ -1201,7 +1315,7 @@ void check_if_result_valid(const char *file_name, std::vector<VT> *y_total, cons
     // Root proc reads all of mtx
     MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name, sort_matrix);
 
-    std::vector<VT> x_total(mtx.n_cols);
+    std::vector<VT> x_total(mtx.n_cols, 0);
     // std::uninitialized_fill_n(x_total.data(), x_total.n_rows, idk.y);
 
     // recreate_x_total()
@@ -1240,10 +1354,18 @@ void compute_result(std::string file_name, std::string seg_method, Config config
     MtxData<VT, IT> local_mtx;
 
     // Allocate space for work sharing array. Is populated in seg_and_send_data function
-    IT *work_sharing_arr = new IT[comm_size + 1];
+    int work_sharing_arr[comm_size + 1] = {0};// = new IT[comm_size + 1];
 
     seg_and_send_data<VT, IT, ST>(local_mtx, config, seg_method, file_name, work_sharing_arr, my_rank, comm_size);
 
+
+    // if(my_rank == 0){
+    //     for(int i = 0; i < comm_size + 1 ; ++i){
+    //         std::cout << work_sharing_arr[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
     // if (!matrix_stats_computed)
     // {
     //     matrix_stats = get_matrix_stats(local_mtx);
@@ -1252,8 +1374,8 @@ void compute_result(std::string file_name, std::string seg_method, Config config
 
     // Each process must allocate space for total y vector
     // Will these just be the same, i.e. dont need to return anything?
-    std::vector<VT> total_y(work_sharing_arr[comm_size]);
-    std::vector<VT> result(work_sharing_arr[comm_size]);
+    std::vector<VT> total_y(work_sharing_arr[comm_size], 0);
+    std::vector<VT> result(work_sharing_arr[comm_size], 0);
 
     // result = bench_spmv<VT, IT>(name, config, k_entry, local_mtx, work_sharing_arr, &y_total);
 //  bench_spmv(const std::string &kernel_name,
@@ -1282,7 +1404,10 @@ void compute_result(std::string file_name, std::string seg_method, Config config
     // for (auto res: total_y)
     //     std::cout << res << std::endl;
 
-    delete[] work_sharing_arr;
+    //     MPI_Barrier(MPI_COMM_WORLD); // temporary
+    // exit(0);
+
+    // delete[] work_sharing_arr;
 
     // Every process prints it's mtx-local statistics
     // if (print_proc_local_stats)

@@ -6,7 +6,7 @@ ifeq ($(COMPILER),gcc)
 
   # OPT_LEVEL = -O0 -g -ggdb3
   # OPT_LEVEL = -Ofast -g -ggdb3
-  OPT_LEVEL = -Ofast
+  OPT_LEVEL = -O1
   OPT_ARCH  = -march=native
 
   CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(OPT_ARCH)
