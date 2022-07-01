@@ -105,6 +105,8 @@ struct Config
     // converting it to a specific format.
     bool sort_matrix{true};
 
+    bool validate_result{true};
+
     // Configures if the code will be executed in bench mode or compute mode
     std::string mode = "bench"; 
 };
@@ -316,7 +318,8 @@ template <typename IT>
 void collect_to_send_heri(
     std::vector<IT> *to_send_heri, 
     std::vector<IT> *local_needed_heri, 
-    int *global_needed_heri
+    int *global_needed_heri,
+    int *global_needed_heri_size
     ){
 
     int my_rank, comm_size;
@@ -346,7 +349,7 @@ void collect_to_send_heri(
     // ordering of elements consistant with rank number?
     // Is this allgather doing what you want? do you really have exactly "comm_size" elements?
 
-    // if(my_rank == 0){
+    // if(my_rank == 3){
     //     for(int i = 0; i < comm_size; ++i){
     //         std::cout << all_local_needed_heri_sizes[i] << std::endl;
     //     }
@@ -366,6 +369,14 @@ void collect_to_send_heri(
     // TODO: Incorporate this remainder into the loop somehow
     global_needed_heri_displ_arr[comm_size] = intermediate_size;
 
+    // if(my_rank == 2){
+    //     std::cout << local_needed_heri_size << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         std::cout << global_needed_heri_displ_arr[i] << std::endl;
+    //     }
+    // }
+    // exit(0);
+
     MPI_Allgatherv(&(*local_needed_heri)[0],
                 local_needed_heri_size,
                 MPI_INT,
@@ -374,6 +385,26 @@ void collect_to_send_heri(
                 global_needed_heri_displ_arr, //displacements
                 MPI_INT,
                 MPI_COMM_WORLD);
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+
+    // TODO: This isn't necessary, since the allgatherv already collective
+    // remove in the future
+
+    // will overwrite other proc's "global_needed_heri"
+    MPI_Bcast(global_needed_heri,
+              *global_needed_heri_size,
+              MPI_INT,
+              0,
+              MPI_COMM_WORLD);
+
+    // if(my_rank == 3
+    // ){
+    //     for(int i = 0; i < *global_needed_heri_size; ++i){
+    //         std::cout << global_needed_heri[i] << std::endl;
+    //     }
+    // }
+    // exit(0);
 
     // Finally, sort the global_needed_heri into "to_send_heri". Encoded 3-tuples as array
     for(int from_proc_idx = 1; from_proc_idx < intermediate_size; from_proc_idx += 3){
@@ -404,17 +435,50 @@ void calc_heri_shifts(int *global_needed_heri, int *global_needed_heri_size, int
         incidence_arr[comm_size * from_proc + to_proc] += 1;
     }
 
-    if(my_rank == 0){
-        for(int i = 0; i < comm_size; ++i){
-            for(int j = 0; j < comm_size; ++j){
-                printf("%i, ", incidence_arr[comm_size * i + j]);
-            }
-            printf("\n");
-        }
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-    printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 0){
+    //     std::cout << "incidence array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", incidence_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 1){
+    //     std::cout << "incidence array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", incidence_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 2){
+    //     std::cout << "incidence array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", incidence_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 3){
+    //     std::cout << "incidence array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", incidence_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // // exit(0);
+    // printf("\n");
 
 
     // We lose the last row information of incidence_arr when calculating shift
@@ -448,16 +512,52 @@ void calc_heri_shifts(int *global_needed_heri, int *global_needed_heri_size, int
             }
         }
     }
+    // printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 0){
+    //     std::cout << "shift array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", shift_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // printf("\n");
 
-    if(my_rank == 0){
-        for(int i = 0; i < comm_size; ++i){
-            for(int j = 0; j < comm_size; ++j){
-                printf("%i, ", shift_arr[comm_size * i + j]);
-            }
-            printf("\n");
-        }
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 1){
+    //     std::cout << "shift array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", shift_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 2){
+    //     std::cout << "shift array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", shift_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 3){
+    //     std::cout << "shift array, " << "Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size; ++i){
+    //         for(int j = 0; j < comm_size; ++j){
+    //             printf("%i, ", shift_arr[comm_size * i + j]);
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
     // exit(0);
 
 }
@@ -468,7 +568,7 @@ void communicate_halo_elements(
     std::vector<IT> *local_needed_heri, 
     std::vector<IT> *to_send_heri, 
     std::vector<VT> *local_x_scs_vec, 
-    int *shift_arr, 
+    int const *shift_arr, 
     const int *work_sharing_arr){
     /* The purpose of this function, is to allow each process to exchange it's proc-local "remote elements"
     with the other respective processes. For now, elements are sent one at a time. 
@@ -480,7 +580,7 @@ void communicate_halo_elements(
     int rows_in_to_proc, rows_in_from_proc, to_proc, from_proc, global_row_idx, num_local_elems;
     int recv_shift = 0, send_shift = 0; // TODO: calculate more efficiently
     int recieved_elems = 0, sent_elems = 0;
-    // int test_rank = 2;
+    int test_rank = 3;
 
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
@@ -488,12 +588,12 @@ void communicate_halo_elements(
 
     // Declare and populate arrays to keep track of number of elements already
     // recieved or sent to respective procs
-    int recv_counts[comm_size] = {0};
-    int send_counts[comm_size] = {0};
-    // for(int i = 0; i < comm_size; ++i){
-    //     recv_counts[i] = 0;
-    //     send_counts[i] = 0;
-    // }
+    int recv_counts[comm_size];
+    int send_counts[comm_size];
+    for(int i = 0; i < comm_size; ++i){
+        recv_counts[i] = 0;
+        send_counts[i] = 0;
+    }
 
     // // TODO: DRY
     if(typeid(VT) == typeid(float)){
@@ -511,11 +611,19 @@ void communicate_halo_elements(
             // NOTE: Source of uniqueness for tag
             // NOTE: essentially "transpose" shift array here
             recv_shift = shift_arr[comm_size * from_proc + to_proc];
+            // if(my_rank == 0){ //I know this part is right
+            //     std::cout << from_proc << std::endl;
+            //     std::cout << to_proc << std::endl;
+            //     std::cout << comm_size * from_proc + to_proc << std::endl;
+            //     std::cout << recv_shift << std::endl;
+            // }
+            // MPI_Barrier(MPI_COMM_WORLD);
 
-            // if(my_rank == 0){
+            // if(my_rank == test_rank){
+            //     std::cout << "shift array" << std::endl;
             //     for(int i = 0; i < comm_size; ++i){
             //         for(int j = 0; j < comm_size; ++j){
-            //             printf("%i, ", shift_arr[comm_size * i + j]);
+            //             std::cout << shift_arr[comm_size * i + j] << ", ";
             //         }
             //         printf("\n");
             //     }
@@ -543,7 +651,7 @@ void communicate_halo_elements(
             // if(my_rank == test_rank){
             //     // std::cout << recv_shift << std::endl;
             //     std::cout << "Proc " << my_rank << " asks for tag " << recv_shift + recv_counts[from_proc] << " from " << from_proc << std::endl;
-            //     std::cout << rows_in_to_proc << " " << recv_shift << " " << recv_counts[from_proc] << std::endl;
+            //     // std::cout << rows_in_to_proc << " " << recv_shift << " " << recv_counts[from_proc] << std::endl;
             //     // std::cout << (*local_x_scs_vec)[rows_in_to_proc + recv_shift + recv_counts[from_proc]] << std::endl;
             // }
             // We place the recieved value in the first available location in local_x,
@@ -582,6 +690,15 @@ void communicate_halo_elements(
             //     " with data " << (*local_x_scs_vec)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]] << " to Proc: " << to_proc << std::endl;
             // } 
            // TODO: replace with Isend
+
+            // if(my_rank == 1){
+            //     std::cout << from_proc << std::endl;
+            //     std::cout << to_proc << std::endl;
+            //     std::cout << comm_size * from_proc + to_proc << std::endl;
+            //     std::cout << send_shift << std::endl;
+            //     std::cout << send_shift + send_counts[to_proc] << std::endl;
+            // }
+
             MPI_Send(
                 &(*local_x_scs_vec)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]], // assume this is the correct data to send for now
                 1,
@@ -645,6 +762,51 @@ void communicate_halo_elements(
     // std::cout << "Proc: " << my_rank << "has recieved: " << recieved_elems << std::endl;
 }
 
+// TODO: Only need col_idxs. So dont pass reference to entire struct?
+template <typename VT, typename IT>
+void adjust_halo_col_idxs(
+    ScsData<VT, IT> & scs,
+    int *amnt_local_elements,
+    const int *work_sharing_arr){
+
+    int my_rank, comm_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+    int remote_elem_count = 0;
+    int amnt_lhs_remote_elems = 0;
+
+    for(int i = 0; i < scs.n_elements; ++i){
+        if(scs.values[i] != 0){
+            if(scs.col_idxs[i] < work_sharing_arr[my_rank]){
+                ++amnt_lhs_remote_elems;
+            }
+        }
+    }
+
+    // if(my_rank==2){
+    //     std::cout << "Less than: " << work_sharing_arr[my_rank] << std::endl;
+    //     std::cout << "Greater than: " << work_sharing_arr[my_rank + 1] - 1 << std::endl;
+    // }
+
+    // if(my_rank == 2){
+    //     std::cout << amnt_lhs_remote_elems << std::endl;
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+
+    // exit(0);
+
+    for(int i = 0; i < scs.n_elements; ++i){
+        if(scs.values[i] != 0){
+            if(scs.col_idxs[i] < work_sharing_arr[my_rank] || scs.col_idxs[i] > work_sharing_arr[my_rank + 1] - 1){
+                scs.col_idxs[i] = *amnt_local_elements + remote_elem_count;
+                ++remote_elem_count;
+            }
+            else{
+                scs.col_idxs[i] -= amnt_lhs_remote_elems;
+            }
+        }
+    }
+}
 
 // TODO: what do I return for this?
 // NOTE: every process will return something...
@@ -724,10 +886,15 @@ void bench_spmv_scs(
             scs.col_idxs[i] = updated_col_idx;
         }
     }
+    int amnt_local_elements = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+
+
+    adjust_halo_col_idxs<VT, IT>(scs, &amnt_local_elements, work_sharing_arr);
+
 
     // V<VT, IT> local_x_scs(x_row_upper - x_row_lower + 1);
     // Pretty sure this is right?
-    std::vector<VT> local_x(work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank], 0);
+    std::vector<VT> local_x(amnt_local_elements, 0);
 
     // Boolean value in last arguement determines if x is random, or taken from default values
     // NOTE: may be important for swapping
@@ -793,7 +960,8 @@ void bench_spmv_scs(
     collect_to_send_heri<IT>(
         &to_send_heri, 
         &local_needed_heri, 
-        global_needed_heri
+        global_needed_heri,
+        &global_needed_heri_size
         );
 
     // The shift array is used in the tag-generation scheme in halo communication.
@@ -807,19 +975,72 @@ void bench_spmv_scs(
         incidence_arr[i] = 0;
     }
 
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 0){
+    //     std::cout << "globalneededheri, " << "Proc: " << my_rank << std::endl;
+    //     for(int j = 0; j < global_needed_heri_size; ++j){
+    //         printf("%i, ", global_needed_heri[j]);
+    //     }
+    // }
+    // printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 1){
+    //     std::cout << "globalneededheri, " << "Proc: " << my_rank << std::endl;
+    //     for(int j = 0; j < global_needed_heri_size; ++j){
+    //         printf("%i, ", global_needed_heri[j]);
+    //     }
+    // }
+    // printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 2){
+    //     std::cout << "globalneededheri, " << "Proc: " << my_rank << std::endl;
+    //     for(int j = 0; j < global_needed_heri_size; ++j){
+    //         printf("%i, ", global_needed_heri[j]);
+    //     }
+    // }
+    // printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 3){
+    //     std::cout << "globalneededheri, " << "Proc: " << my_rank << std::endl;
+    //     for(int j = 0; j < global_needed_heri_size; ++j){
+    //         printf("%i, ", global_needed_heri[j]);
+    //     }
+    // }
+    // printf("\n");
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
     calc_heri_shifts<IT>(global_needed_heri, &global_needed_heri_size, shift_arr, incidence_arr); //NOTE: always symmetric?
 
     // if(my_rank == 0){
-    //     local_x_scs_vec[0] = 0;    
+    //     local_x[0] = 1;
+    //     local_x[1] = 2;
     // }
     // if(my_rank == 1){
-    //     local_x_scs_vec[0] = 1;    
+    //     local_x[0] = 3;
+    //     local_x[1] = 4;
     // }
     // if(my_rank == 2){
-    //     local_x_scs_vec[0] = 2;
-    //     local_x_scs_vec[1] = 3;
-    //     local_x_scs_vec[2] = 4;    
+    //     local_x[0] = 5;
+    //     local_x[1] = 6;
     // }
+    // if(my_rank == 3){
+    //     local_x[0] = 7;
+    //     local_x[1] = 8;
+    //     local_x[2] = 9;
+    //     local_x[3] = 10;
+    // }
+
+    if(my_rank == 0){
+        local_x[0] = 1;
+    }
+    if(my_rank == 1){
+        local_x[0] = 2;
+    }
+    if(my_rank == 2){
+        local_x[0] = 3;
+        local_x[1] = 4;
+        local_x[2] = 5;
+    }
 
     // NOTE: should always be a multiple of 3
     // std::cout << local_needed_heri.size() << std::endl;
@@ -842,15 +1063,15 @@ void bench_spmv_scs(
     
     for (int i = 0; i < config->n_repetitions; ++i)
     {    
-        int test_rank = 0;
+        // int test_rank = 2;
 
-        MPI_Barrier(MPI_COMM_WORLD); 
-        if(my_rank == test_rank){
-            std::cout << "local_x before comm, before SPMV, before swap: " << std::endl;
-            for(int i = 0; i < local_x.size(); ++i){
-                std::cout << local_x[i] << std::endl;
-            }
-        }
+        // MPI_Barrier(MPI_COMM_WORLD); 
+        // if(my_rank == test_rank){
+        //     std::cout << "local_x before comm, before SPMV, before swap: " << std::endl;
+        //     for(int i = 0; i < local_x.size(); ++i){
+        //         std::cout << local_x[i] << std::endl;
+        //     }
+        // }
         // printf("\n");
         // if(my_rank == 2){
         //     std::cout << local_x_scs_vec[3] << std::endl;
@@ -864,10 +1085,12 @@ void bench_spmv_scs(
         // MPI_Barrier(MPI_COMM_WORLD); 
         // if(my_rank == test_rank){
         //     std::cout << "local_x AFTER comm, before SPMV, before swap: " << std::endl;
-        //     for(int i = 0; i < local_x_scs_vec.size(); ++i){
-        //         std::cout << local_x_scs_vec[i] << std::endl;
+        //     for(int i = 0; i < local_x.size(); ++i){
+        //         std::cout << local_x[i] << std::endl;
         //     }
         // }
+        // MPI_Barrier(MPI_COMM_WORLD); // temporary
+        // exit(0);
 
         // printf("\n");
 
@@ -887,7 +1110,7 @@ void bench_spmv_scs(
 
         // communicate_halo_elements(local_x_scs)
 
-        // if(my_rank == test_rank){
+        // if(my_rank ==  nk){
         //     for(int i = 0; i < local_x_scs_vec.size(); ++i){
         //         std::cout << local_x_scs_vec[i] << std::endl;
         //     }
@@ -911,8 +1134,48 @@ void bench_spmv_scs(
         // for(int i = 0; i < local_y_scs_vec.size(); ++i){
         //     std::cout << local_y_scs_vec[i] << std::endl;
         // }
+
+        // Adjust halo element col_idx
+        // if(my_rank == test_rank){
+        //     std::cout << "Col Idx: " << std::endl;
+        //     for(int idx = 0; idx < scs.n_elements; ++idx){
+        //         std::cout << scs.col_idxs[idx] << std::endl;
+        //     }
+        // }
+        // MPI_Barrier(MPI_COMM_WORLD); // temporary
+        // if(my_rank == test_rank){
+        //     std::cout << "vals: " << std::endl;
+        //     for(int idx = 0; idx < scs.n_elements; ++idx){
+        //         std::cout << scs.values[idx] << std::endl;
+        //     }
+        // }
+        // MPI_Barrier(MPI_COMM_WORLD); // temporary
+        // exit(0);
+
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // if(my_rank == test_rank){
+        //     std::cout << "col_idx before adjust: " << std::endl;
+        //     for(int i = 0; i < scs.n_elements; ++i){
+        //         std::cout << scs.col_idxs[i] << std::endl;
+        //     }
+        // }
+
+        // TODO: move out of loop
+
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // if(my_rank == test_rank){
+        //     std::cout << "col_idx after adjust: " << std::endl;
+        //     for(int i = 0; i < scs.n_elements; ++i){
+        //         std::cout << scs.col_idxs[i] << std::endl;
+        //     }
+        // }
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // exit(0);
+
+        MPI_Barrier(MPI_COMM_WORLD); 
+
         spmv_omp_scs_c<VT, IT>( scs.C, scs.n_chunks, scs.chunk_ptrs.data(), 
-                                scs.chunk_lengths.data(),scs.col_idxs.data(), 
+                                scs.chunk_lengths.data(), scs.col_idxs.data(), 
                                 scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
 
         // MPI_Barrier(MPI_COMM_WORLD);
@@ -922,6 +1185,7 @@ void bench_spmv_scs(
         //         std::cout << local_x_scs_vec[i] << std::endl;
         //     }
         // }
+        // MPI_Barrier(MPI_COMM_WORLD); 
 
         // TODO: verify, dont swap on last iteration?
         if(i != config->n_repetitions - 1){
@@ -935,13 +1199,13 @@ void bench_spmv_scs(
         //     }
         // }
 
-        MPI_Barrier(MPI_COMM_WORLD);
-        if(my_rank == test_rank){
-            std::cout << "new local_y: " << std::endl;
-            for(int i = 0; i < local_y_scs_vec.size(); ++i){
-                std::cout << local_y_scs_vec[i] << std::endl;
-            }
-        }
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // if(my_rank == test_rank){
+        //     std::cout << "new local_y: " << std::endl;
+        //     for(int i = 0; i < local_y_scs_vec.size(); ++i){
+        //         std::cout << local_y_scs_vec[i] << std::endl;
+        //     }
+        // }
 
     }
 
@@ -967,42 +1231,43 @@ void bench_spmv_scs(
         displ_arr_bk[i] = work_sharing_arr[i];
     }
 
-    // Collect results from each proc to y_total
-    if (typeid(VT) == typeid(double))
-    {
-        MPI_Allgatherv(&local_y[0],
-                    local_y.size(),
-                    MPI_DOUBLE,
-                    &(*total_y)[0],
-                    counts_arr,
-                    displ_arr_bk,
-                    MPI_DOUBLE,
-                    MPI_COMM_WORLD);
+    if(config->validate_result){
+        // Collect results from each proc to y_total
+        if (typeid(VT) == typeid(double))
+        {
+            MPI_Allgatherv(&local_y[0],
+                        local_y.size(),
+                        MPI_DOUBLE,
+                        &(*total_y)[0],
+                        counts_arr,
+                        displ_arr_bk,
+                        MPI_DOUBLE,
+                        MPI_COMM_WORLD);
+        }
+        else if (typeid(VT) == typeid(float))
+        {
+            MPI_Allgatherv(&local_y[0],
+                        local_y.size(),
+                        MPI_FLOAT,
+                        &(*total_y)[0],
+                        counts_arr,
+                        displ_arr_bk,
+                        MPI_FLOAT,
+                        MPI_COMM_WORLD);
+        }
     }
-    else if (typeid(VT) == typeid(float))
-    {
-        MPI_Allgatherv(&local_y[0],
-                    local_y.size(),
-                    MPI_FLOAT,
-                    &(*total_y)[0],
-                    counts_arr,
-                    displ_arr_bk,
-                    MPI_FLOAT,
-                    MPI_COMM_WORLD);
+    else{
+        // Dont collect local results to global, and just "return" local results
+        total_y->resize(local_y.size());
+        for (int i = 0; i < scs.old_to_new_idx.n_rows; ++i)
+        {
+            (*total_y)[i] = local_y[i];
+        }
     }
-
-    // total_y = std::move(local_x_scs);    // TODO: What is the purpose of this?
-    // x_out = std::move(local_x_scs);  // TODO: What is the purpose of this?
 
     delete[] shift_arr;  
     delete[] incidence_arr;
-
-    // delete[] counts_arr;
-    // delete[] displ_arr_bk;
-
     delete[] global_needed_heri;
-
-    // return total_y;
 
 
     MPI_Barrier(MPI_COMM_WORLD); // temporary
