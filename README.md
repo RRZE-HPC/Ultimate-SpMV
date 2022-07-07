@@ -1,10 +1,10 @@
 # Ultimate-SpMV
 MPI+X SpMV with SELL-C-sigma format
 
-In this second attempt, we've implemented two methods for the segmentation our sparse matrix. This is to act as a load balancing "top layer", to be performed before the benchmark bench_spmv call. The purpose of the segmentation is so that each MPI process does not read and store the entire sparse matrix, but only the "submatrix" with which it operates on.
+In this fourth attempt, we've achieved our first "working" halo element communication scheme for the local x vectors. This, along with the other advances, has given us a rough implementation of MPI+X SPMVM for the SELL-C-sigma data storage format. The support for crs, ell, and coo are not fully implemented as of yet. Even with scs, seg faults and double free'd errors are plentiful at the moment. But evenso, the code does what it is supposed to do in some cases.
 
-There is a "splitting" layer between the reading of the .mtx file, and actually using the spmv-omp on the matrix. This layer segment the MtxData struct into smaller structs, over which each process reads and then performs spMVM with. This splitting and disribution is done on the basis of rows (-seg-by-rows flag), or non-zero elements (-seg-by-nnz flag).
+Att3 using a different starting codebase did not work as planned, and so with this fourth attempt, we've pressed on with the original codebase. There have been major modifications to organization, and more effort has been made to modularize ideas into functions and headers.
 
-Also, we have a naïve optimization on the x-vector by which the proc-local matrix is multiplied, so that each process does not store an entire copy of x. We take the lowest and highest column index of the proc-local matrix, and only store values of the x-vector between these indicies.
+Optionally, we collect the proc-local results to every processes, essentailly reconstructing the entire result vector on each process. This is used used for validation against Intel's MKL library.
 
-An MPI_Allgatherv is then used to collect the proc-local results to every other processes, essentailly reconstructing the result vector on each process. The reason for this, is so that the full x and y vectors are of compatible size, so that we can have the option to "swap" them. We want to have this option so that can eventually embed Ultimate-SpMV into iterative solvers, such as Krylov subspace methods. Optionally, one can print the statistics of each proc-local matrix, the entire matrix, or merely if the computed result vector was correct (total solution vector verified against COO calculation).
+Moving forward, the plans are twofold. First, implement the following better and use it for benchmarking different kernels on different hardware. Then, use the accelerated SPMVM in existing frameworks/solvers.
