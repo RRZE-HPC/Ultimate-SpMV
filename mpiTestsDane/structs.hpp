@@ -1,18 +1,10 @@
 #ifndef STRUCTS
 #define STRUCTS
 
-#include "spmv.h"
-#include "mtx-reader.h"
 #include "vectors.h"
 
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
-
-// The default C to use for sell-c-sigma, when no C is specified.
-enum
-{
-    SCS_DEFAULT_C = 8
-};
 
 // Initialize all matrices and vectors the same.
 // Use -rand to initialize randomly.
@@ -41,7 +33,7 @@ struct ScsData
 struct Config
 {
     long n_els_per_row{-1}; // ell
-    long chunk_size{SCS_DEFAULT_C};    // sell-c-sigma
+    long chunk_size{8};    // sell-c-sigma
     long sigma{1};         // sell-c-sigma
 
     // Initialize rhs vector with random numbers.
@@ -75,6 +67,7 @@ struct Config
 template <typename VT, typename IT>
 struct DefaultValues
 {
+
     VT A{2.0};
     VT x{1.01};
     VT y{};
@@ -126,6 +119,18 @@ struct BenchmarkResult
 
     double cb_a_0{};
     double cb_a_nzc{};
+};
+
+// Honestly, probably not necessary
+template <typename ST>
+struct MtxDataBookkeeping
+{
+    ST n_rows{};
+    ST n_cols{};
+    ST nnz{};
+
+    bool is_sorted{};
+    bool is_symmetric{};
 };
 
 #endif

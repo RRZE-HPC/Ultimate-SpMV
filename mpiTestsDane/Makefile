@@ -57,7 +57,7 @@ ifeq ($(USE_LIKWID),1)
 endif
 
 # Also rebuild when following files change.
-REBUILD_DEPS = $(MAKEFILE_LIST) spmv.h vectors.h mtx-reader.h utilities.hpp kernels.hpp results.hpp
+REBUILD_DEPS = $(MAKEFILE_LIST) spmv.h vectors.h mtx-reader.h structs.hpp utilities.hpp kernels.hpp mpi_funcs.hpp format.hpp
 
 .PHONY: all
 all: omp
@@ -65,25 +65,11 @@ all: omp
 .PHONY: omp
 omp: spmv-omp
 
-# .PHONY: omp-adv
-# omp-adv: spmv-omp-adv
-
-spmv-omp: main-omp.o spmv-omp-adv.o $(REBUILD_DEPS)
+spmv-omp: main.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
-# spmv-omp-adv: main-omp.o spmv-omp-adv.o splitSendMtxData.o $(REBUILD_DEPS)
-# 	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
-
-main-omp.o: main.cpp $(REBUILD_DEPS)
+main.o: main.cpp $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
-
-
-spmv-omp.o: spmv-ompOG.cpp $(REBUILD_DEPS)
-	$(MPICXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
-
-spmv-omp-adv.o: spmv-omp-adv.cpp $(REBUILD_DEPS)
-	$(MPICXX) $(CXXFLAGS) -o $@ -c $< $(CXXFLAGS_LISTINGS)
-
 
 .PHONY: clean
 clean:
@@ -92,5 +78,4 @@ clean:
 .PHONY: rm
 rm:
 	-rm spmv-omp
-	-rm spmv-omp-adv
 

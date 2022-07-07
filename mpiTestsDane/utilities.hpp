@@ -3,14 +3,12 @@
 
 #include "spmv.h"
 #include "vectors.h"
+#include "structs.hpp"
 
 #include <cstdarg>
 #include <random>
 #include <iomanip>
-
 #include <limits>
-
-
 
 template <typename T>
 struct max_rel_error
@@ -44,13 +42,13 @@ struct max_rel_error<std::complex<double>>
 };
 
 // Log information.
-static bool g_log = false;
+bool g_log = false;
 
 void log(const char *format, ...)
 {
     if (g_log)
     {
-        static double log_started = get_time();
+        double log_started = get_time();
 
         va_list args;
         char buffer[1024];
@@ -68,8 +66,7 @@ template <typename VT, typename IT>
 using V = Vector<VT, IT>;
 
 template <typename VT>
-static void
-print_vector(const std::string &name,
+void print_vector(const std::string &name,
              const VT *begin,
              const VT *end)
 {
@@ -82,8 +79,7 @@ print_vector(const std::string &name,
 }
 
 template <typename VT, typename IT>
-static void
-print_vector(const std::string &name,
+void print_vector(const std::string &name,
              const V<VT, IT> &v)
 {
     print_vector(name, v.data(), v.data() + v.n_rows);
@@ -93,8 +89,7 @@ template <typename T,
           typename std::enable_if<
               std::is_integral<T>::value && std::is_signed<T>::value,
               bool>::type = true>
-static bool
-will_add_overflow(T a, T b)
+bool will_add_overflow(T a, T b)
 {
     if (a > 0 && b > 0)
     {
@@ -112,8 +107,7 @@ template <typename T,
           typename std::enable_if<
               std::is_integral<T>::value && std::is_unsigned<T>::value,
               bool>::type = true>
-static bool
-will_add_overflow(T a, T b)
+bool will_add_overflow(T a, T b)
 {
     return std::numeric_limits<T>::max() - a < b;
 }
@@ -122,8 +116,7 @@ template <typename T,
           typename std::enable_if<
               std::is_integral<T>::value && std::is_signed<T>::value,
               bool>::type = true>
-static bool
-will_mult_overflow(T a, T b)
+bool will_mult_overflow(T a, T b)
 {
     if (a == 0 || b == 0)
     {
@@ -169,8 +162,7 @@ template <typename T,
           typename std::enable_if<
               std::is_integral<T>::value && std::is_unsigned<T>::value,
               bool>::type = true>
-static bool
-will_mult_overflow(T a, T b)
+bool will_mult_overflow(T a, T b)
 {
     if (a == 0 || b == 0)
     {
@@ -180,7 +172,7 @@ will_mult_overflow(T a, T b)
     return std::numeric_limits<T>::max() / a < b;
 }
 
-static std::tuple<std::string, uint64_t>
+std::tuple<std::string, uint64_t>
 type_info_from_type_index(const std::type_index &ti)
 {
     static std::unordered_map<std::type_index, std::tuple<std::string, uint64_t>> type_map = {
@@ -207,14 +199,14 @@ type_info_from_type_index(const std::type_index &ti)
     return it->second;
 }
 
-static std::string
+std::string
 type_name_from_type_index(const std::type_index &ti)
 {
     return std::get<0>(type_info_from_type_index(ti));
 }
 
 template <typename T>
-static std::string
+std::string
 type_name_from_type()
 {
     return type_name_from_type_index(std::type_index(typeid(T)));
@@ -375,7 +367,7 @@ struct MatrixStats
 };
 
 template <typename T = double, typename U = double, typename F>
-static struct Statistics<T>
+struct Statistics<T>
 get_statistics(
     std::vector<U> &entries,
     F &getter,
@@ -445,7 +437,7 @@ get_statistics(
 
 // TODO: Make work for multiple procs
 template <typename VT, typename IT>
-static MatrixStats<double>
+MatrixStats<double>
 get_matrix_stats(const MtxData<VT, IT> &mtx)
 {
     // int my_rank;
@@ -564,7 +556,7 @@ get_matrix_stats(const MtxData<VT, IT> &mtx)
 }
 
 template <typename IT>
-static void
+void
 convert_idxs_to_ptrs(const std::vector<IT> &idxs,
                      V<IT, IT> &ptrs)
 {
@@ -588,8 +580,7 @@ convert_idxs_to_ptrs(const std::vector<IT> &idxs,
  * \p row_indices: Array with row indices.
  */
 template <typename IT>
-static IT
-calculate_max_nnz_per_row(
+IT calculate_max_nnz_per_row(
     ST num_rows, ST nnz,
     const IT *row_indices)
 {
@@ -612,8 +603,7 @@ calculate_max_nnz_per_row(
  * differ.
  */
 template <typename VT>
-static ST
-compare_arrays(const VT *reference,
+ST compare_arrays(const VT *reference,
                const VT *actual, const ST n,
                const bool verbose,
                const VT max_rel_error,
@@ -653,8 +643,7 @@ compare_arrays(const VT *reference,
 }
 
 template <typename VT>
-static bool
-spmv_verify(
+bool spmv_verify(
     const VT *y_ref,
     const VT *y_actual,
     const ST n,
@@ -685,9 +674,8 @@ spmv_verify(
 }
 
 template <typename VT, typename IT>
-static bool
-spmv_verify(const std::string &kernel_name,
-            const MtxData<VT, IT> &mtx,
+bool spmv_verify(const std::string *matrix_format,
+            const MtxData<VT, IT> *mtx,
             const std::vector<VT> &x,
             const std::vector<VT> &y_actual)
 {
@@ -708,103 +696,6 @@ spmv_verify(const std::string &kernel_name,
     return spmv_verify(y_ref.data(), y_actual.data(),
                        y_actual.size(), /*verbose*/ true);
 }
-
-// template <typename VT, typename IT, typename FN>
-// static BenchmarkResult
-// spmv(FN &&kernel, bool is_gpu_kernel, const Config &config)
-// {
-//     log("running kernel begin\n");
-
-//     log("warmup begin\n"); // what is the purpose of this warm-up?
-
-//     kernel();
-
-//     if (is_gpu_kernel)
-//     {
-// #ifdef __NVCC__
-//         assert_gpu(cudaDeviceSynchronize());
-// #endif
-//     }
-
-//     log("warmup end\n");
-
-//     double t_kernel_start = 0.0;
-//     double t_kernel_end = 0.0;
-//     double duration = 0.0;
-
-//     // Indicate if result is invalid, e.g., duration of >1s was not reached.
-//     bool is_result_valid = true;
-
-//     unsigned long n_repetitions = config.n_repetitions > 0 ? config.n_repetitions : 5;
-//     int repeate_measurement;
-
-//     do
-//     {
-//         log("running kernel with %ld repetitions\n", n_repetitions);
-//         repeate_measurement = 0;
-
-//         t_kernel_start = get_time();
-
-//         /* M AND P */
-//         // If wa want to hard-code number of iterations, it would be done here
-//         // n_repetitions = 10;
-//         for (unsigned long r = 0; r < n_repetitions; ++r)
-//         {
-//             // i.e. do kernel() for every repetition
-//             // std::cout << "Kernal run: " << r << std::endl;
-//             kernel();
-//             // this is where swapping goes!
-//             // swap(x,y), but where are x and y?
-//         }
-//         if (is_gpu_kernel)
-//         {
-// #ifdef __NVCC__
-//             assert_gpu(cudaDeviceSynchronize());
-// #endif
-//         }
-
-//         t_kernel_end = get_time();
-
-//         duration = t_kernel_end - t_kernel_start;
-
-//         if (duration < 1.0 && config.n_repetitions == 0)
-//         {
-//             unsigned long prev_n_repetitions = n_repetitions;
-//             n_repetitions = std::ceil(n_repetitions / duration * 1.1);
-
-//             if (prev_n_repetitions == n_repetitions)
-//             {
-//                 ++n_repetitions;
-//             }
-
-//             if (n_repetitions < prev_n_repetitions)
-//             {
-//                 // This typically happens if type ulong is too small to hold the
-//                 // number of repetitions we would need for a duration > 1s.
-//                 // We use the time we measured and flag the result.
-//                 log("cannot increase no. of repetitions any further to reach a duration of >1s\n");
-//                 log("aborting measurement for this kernel\n");
-//                 n_repetitions = prev_n_repetitions;
-//                 repeate_measurement = 0;
-//                 is_result_valid = false;
-//             }
-//             else
-//             {
-//                 repeate_measurement = 1;
-//             }
-//         }
-//     } while (repeate_measurement);
-
-//     BenchmarkResult r;
-
-//     r.is_result_valid = is_result_valid;
-//     r.n_calls = n_repetitions;
-//     r.duration_total_s = duration;
-
-//     log("running kernel end\n");
-
-//     return r;
-// }
 
 template <typename T, typename DIST, typename ENGINE>
 struct random_number
@@ -843,8 +734,7 @@ struct random_number<std::complex<double>, DIST, ENGINE>
  * @return the base name of the file or an empty string if it cannot be
  *         extracted.
  */
-static std::string
-file_base_name(const char *file_name)
+std::string file_base_name(const char *file_name)
 {
     if (file_name == nullptr)
     {
@@ -877,8 +767,7 @@ file_base_name(const char *file_name)
     }
 }
 
-static void
-print_histogram(const char *name, const Histogram &hist)
+void print_histogram(const char *name, const Histogram &hist)
 {
     size_t n_buckets = hist.bucket_counts().size();
 
@@ -893,8 +782,7 @@ print_histogram(const char *name, const Histogram &hist)
 }
 
 template <typename T>
-static std::string
-to_string(const Statistics<T> &stats)
+std::string to_string(const Statistics<T> &stats)
 {
     std::stringstream stream;
 
@@ -909,8 +797,7 @@ to_string(const Statistics<T> &stats)
 }
 
 template <typename T>
-static void
-print_matrix_statistics(
+void print_matrix_statistics(
     const MatrixStats<T> &matrix_stats,
     const std::string &matrix_name)
 {
@@ -970,6 +857,103 @@ IT get_index(std::vector<IT> v, int K)
         // If the element is not
         // present in the vector
         return -1; // TODO: implement better error
+    }
+}
+
+template <typename VT>
+void random_init(VT *begin, VT *end)
+{
+    std::mt19937 engine;
+
+    if (!g_same_seed_for_every_vector)
+    {
+        std::random_device rnd_device;
+        engine.seed(rnd_device());
+    }
+
+    std::uniform_real_distribution<double> dist(0.1, 2.0);
+
+    for (VT *it = begin; it != end; ++it)
+    {
+        *it = random_number<VT, decltype(dist), decltype(engine)>::get(dist, engine);
+    }
+}
+
+template <typename VT, typename IT>
+void random_init(V<VT, IT> &v)
+{
+    random_init(v.data(), v.data() + v.n_rows);
+}
+
+template <typename VT, typename IT>
+void init_with_ptr_or_value(V<VT, IT> &x,
+                       ST n_x,
+                       const std::vector<VT> *x_in,
+                       VT default_value,
+                       bool init_with_random_numbers = false)
+{
+    if (!init_with_random_numbers)
+    {
+        if (x_in)
+        {
+            if (x_in->size() != size_t(n_x))
+            {
+                fprintf(stderr, "ERROR: x_in has incorrect size.\n");
+                exit(1);
+            }
+
+            for (ST i = 0; i < n_x; ++i)
+            {
+                x[i] = (*x_in)[i];
+            }
+        }
+        else
+        {
+            for (ST i = 0; i < n_x; ++i)
+            {
+                x[i] = default_value;
+            }
+        }
+    }
+    else
+    {
+        random_init(x);
+    }
+}
+
+template <typename VT>
+void init_std_vec_with_ptr_or_value(std::vector<VT> &x,
+                               ST n_x,
+                               const std::vector<VT> *x_in,
+                               VT default_value,
+                               bool init_with_random_numbers = false)
+{
+    if (!init_with_random_numbers)
+    {
+        if (x_in)
+        {
+            if (x_in->size() != size_t(n_x))
+            {
+                fprintf(stderr, "ERROR: x_in has incorrect size.\n");
+                exit(1);
+            }
+
+            for (ST i = 0; i < n_x; ++i)
+            {
+                x[i] = (*x_in)[i];
+            }
+        }
+        else
+        {
+            for (ST i = 0; i < n_x; ++i)
+            {
+                x[i] = default_value;
+            }
+        }
+    }
+    else
+    {
+        random_init(&(*x.begin()), &(*x.end()));
     }
 }
 
