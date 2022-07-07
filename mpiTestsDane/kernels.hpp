@@ -23,58 +23,90 @@ struct ScsData
     V<IT, IT> old_to_new_idx;
 };
 
-template <ST C, typename VT, typename IT>
-static void
-scs_impl(const ST n_chunks,
-         const IT * RESTRICT chunk_ptrs,
-         const IT * RESTRICT chunk_lengths,
-         const IT * RESTRICT col_idxs,
-         const VT * RESTRICT values,
-         const VT * RESTRICT x,
-         VT * RESTRICT y)
-{
-    // int comm_size;
-    // int my_rank;
-    // MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-    // MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    // if(my_rank == 2){
-    //     for(int i = 0; i < x.size(); ++i){
-    //         std::cout << x[i] << std::endl;
-    //     }
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD); // temporary
-    // exit(0);
+// template <ST C, typename VT, typename IT>
+// static void
+// scs_impl(const ST n_chunks,
+//          const IT * RESTRICT chunk_ptrs,
+//          const IT * RESTRICT chunk_lengths,
+//          const IT * RESTRICT col_idxs,
+//          const VT * RESTRICT values,
+//          const VT * RESTRICT x,
+//          VT * RESTRICT y)
+// {
+//     // int comm_size;
+//     // int my_rank;
+//     // MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+//     // MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+//     // if(my_rank == 2){
+//     //     for(int i = 0; i < x.size(); ++i){
+//     //         std::cout << x[i] << std::endl;
+//     //     }
+//     // }
+//     // MPI_Barrier(MPI_COMM_WORLD); // temporary
+//     // exit(0);
 
-    #pragma omp parallel for schedule(static)
-    for (ST c = 0; c < n_chunks; ++c) {
-        VT tmp[C]{};
+//     #pragma omp parallel for schedule(static)
+//     for (ST c = 0; c < n_chunks; ++c) {
+//         VT tmp[C]{};
 
-        IT cs = chunk_ptrs[c];
+//         IT cs = chunk_ptrs[c];
 
-        for (IT j = 0; j < chunk_lengths[c]; ++j) {
-            #pragma omp simd
-            for (IT i = 0; i < C; ++i) {
-                tmp[i] += values[cs + j * C + i] * x[col_idxs[cs + j * C + i]];
-            }
-        }
+//         for (IT j = 0; j < chunk_lengths[c]; ++j) {
+//             #pragma omp simd
+//             for (IT i = 0; i < C; ++i) {
+//                 tmp[i] += values[cs + j * C + i] * x[col_idxs[cs + j * C + i]];
+//             }
+//         }
 
-        #pragma omp simd
-        for (IT i = 0; i < C; ++i) {
-            y[c * C + i] = tmp[i];
-        }
-    }
-}
+//         #pragma omp simd
+//         for (IT i = 0; i < C; ++i) {
+//             y[c * C + i] = tmp[i];
+//         }
+//     }
+// }
 
 
-/**
- * Dispatch to Sell-C-sigma kernels templated by C.
- *
- * Note: only works for selected Cs, see INSTANTIATE_CS.
- */
+// /**
+//  * Dispatch to Sell-C-sigma kernels templated by C.
+//  *
+//  * Note: only works for selected Cs, see INSTANTIATE_CS.
+//  */
+// template <typename VT, typename IT>
+// static void
+// spmv_omp_scs_c(
+//              const ST C,
+//              const ST n_chunks,
+//              const IT * RESTRICT chunk_ptrs,
+//              const IT * RESTRICT chunk_lengths,
+//              const IT * RESTRICT col_idxs,
+//              const VT * RESTRICT values,
+//              const VT * RESTRICT x,
+//              VT * RESTRICT y)
+// {
+//     switch (C)
+//     {
+//         #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64)
+
+//         #define X(CC) case CC: scs_impl<CC>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); break;
+//         INSTANTIATE_CS
+//         #undef X
+
+// #ifdef SCS_C
+//     case SCS_C:
+//         case SCS_C: scs_impl<SCS_C>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y);
+//         break;
+// #endif
+//     default:
+//         fprintf(stderr,
+//                 "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
+//                 long(C));
+//         exit(1);
+//     }
+// }
+
 template <typename VT, typename IT>
 static void
-spmv_omp_scs_c(
-             const ST C,
+spmv_omp_scs(const ST C,
              const ST n_chunks,
              const IT * RESTRICT chunk_ptrs,
              const IT * RESTRICT chunk_lengths,
@@ -83,24 +115,32 @@ spmv_omp_scs_c(
              const VT * RESTRICT x,
              VT * RESTRICT y)
 {
-    switch (C)
-    {
-        #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64)
+    // for(int i = 0; i < 14; ++i){
+    //     std::cout << "x: " << x[i] << std::endl;
+    // }
+    // // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
-        #define X(CC) case CC: scs_impl<CC>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); break;
-        INSTANTIATE_CS
-        #undef X
+    #pragma omp parallel for schedule(static)
+    for (ST c = 0; c < n_chunks; ++c) {
+        VT tmp[C];
+        for (ST i = 0; i < C; ++i) {
+            tmp[i] = VT{};
+        }
 
-#ifdef SCS_C
-    case SCS_C:
-        case SCS_C: scs_impl<SCS_C>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y);
-        break;
-#endif
-    default:
-        fprintf(stderr,
-                "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
-                long(C));
-        exit(1);
+        IT cs = chunk_ptrs[c];
+
+        // TODO: use IT wherever possible
+        for (IT j = 0; j < chunk_lengths[c]; ++j) {
+            for (IT i = 0; i < (IT)C; ++i) {
+                tmp[i] += values[cs + j * (IT)C + i] * x[col_idxs[cs + j * (IT)C + i]];
+                // std::cout << tmp[i] << " += " << values[cs + j * (IT)C + i] << std::endl;
+            }
+        }
+
+        for (ST i = 0; i < C; ++i) {
+            y[c * C + i] = tmp[i];
+        }
     }
 }
 
@@ -113,59 +153,58 @@ spmv_omp_scs_c(
  * Note: the matrix entries in \p mtx don't need to be sorted.
  */
 template <typename VT, typename IT>
-static bool
-convert_to_scs(const MtxData<VT, IT> & mtx,
+void convert_to_scs(const MtxData<VT, IT> * mtx,
                ST C, ST sigma,
-               ScsData<VT, IT> & d)
+               ScsData<VT, IT> * d)
 {
-    d.nnz    = mtx.nnz;
-    d.n_rows = mtx.n_rows;
-    d.n_cols = mtx.n_cols;
+    d->nnz    = mtx->nnz;
+    d->n_rows = mtx->n_rows;
+    d->n_cols = mtx->n_cols;
 
-    d.C = C;
-    d.sigma = sigma;
+    d->C = C;
+    d->sigma = sigma;
 
-    if (d.sigma % d.C != 0 && d.sigma != 1) {
+    if (d->sigma % d->C != 0 && d->sigma != 1) {
         fprintf(stderr, "NOTE: sigma is not a multiple of C\n");
     }
 
-    if (will_add_overflow(d.n_rows, d.C)) {
+    if (will_add_overflow(d->n_rows, d->C)) {
         fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
-        return false;
+        // return false;
     }
-    d.n_chunks      = (mtx.n_rows + d.C - 1) / d.C;
+    d->n_chunks      = (mtx->n_rows + d->C - 1) / d->C;
 
-    if (will_mult_overflow(d.n_chunks, d.C)) {
+    if (will_mult_overflow(d->n_chunks, d->C)) {
         fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
-        return false;
+        // return false;
     }
-    d.n_rows_padded = d.n_chunks * d.C;
+    d->n_rows_padded = d->n_chunks * d->C;
 
     // first enty: original row index
     // second entry: population count of row
     using index_and_els_per_row = std::pair<ST, ST>;
 
-    std::vector<index_and_els_per_row> n_els_per_row(d.n_rows_padded);
+    std::vector<index_and_els_per_row> n_els_per_row(d->n_rows_padded);
 
-    for (ST i = 0; i < d.n_rows_padded; ++i) {
+    for (ST i = 0; i < d->n_rows_padded; ++i) {
         n_els_per_row[i].first = i;
     }
 
-    for (ST i = 0; i < mtx.nnz; ++i) {
-        ++n_els_per_row[mtx.I[i]].second;
+    for (ST i = 0; i < mtx->nnz; ++i) {
+        ++n_els_per_row[mtx->I[i]].second;
     }
 
     // sort rows in the scope of sigma
-    if (will_add_overflow(d.n_rows_padded, d.sigma)) {
+    if (will_add_overflow(d->n_rows_padded, d->sigma)) {
         fprintf(stderr, "ERROR: no. of padded rows + sigma exceeds size type.\n");
-        return false;
+        // return false;
     }
 
-    for (ST i = 0; i < d.n_rows_padded; i += d.sigma) {
+    for (ST i = 0; i < d->n_rows_padded; i += d->sigma) {
         auto begin = &n_els_per_row[i];
-        auto end   = (i + d.sigma) < d.n_rows_padded
-                        ? &n_els_per_row[i + d.sigma]
-                        : &n_els_per_row[d.n_rows_padded];
+        auto end   = (i + d->sigma) < d->n_rows_padded
+                        ? &n_els_per_row[i + d->sigma]
+                        : &n_els_per_row[d->n_rows_padded];
 
         std::sort(begin, end,
                   // sort longer rows first
@@ -178,81 +217,90 @@ convert_to_scs(const MtxData<VT, IT> & mtx,
 
     // TODO: check chunk_ptrs can overflow
     // std::cout << d.n_chunks << std::endl;
-    d.chunk_lengths = V<IT, IT>(d.n_chunks); // init a vector of length d.n_chunks
-    d.chunk_ptrs    = V<IT, IT>(d.n_chunks + 1);
+    d->chunk_lengths = V<IT, IT>(d->n_chunks); // init a vector of length d.n_chunks
+    d->chunk_ptrs    = V<IT, IT>(d->n_chunks + 1);
 
     IT cur_chunk_ptr = 0;
     
-    for (ST i = 0; i < d.n_chunks; ++i) {
-        auto begin = &n_els_per_row[i * d.C];
-        auto end   = &n_els_per_row[i * d.C + d.C];
+    for (ST i = 0; i < d->n_chunks; ++i) {
+        auto begin = &n_els_per_row[i * d->C];
+        auto end   = &n_els_per_row[i * d->C + d->C];
 
-        d.chunk_lengths[i] =
+        d->chunk_lengths[i] =
                 std::max_element(begin, end,
                     [](const auto & a, const auto & b) {
                         return a.second < b.second;
                     })->second;
 
-        if (will_add_overflow(cur_chunk_ptr, d.chunk_lengths[i] * (IT)d.C)) {
+        if (will_add_overflow(cur_chunk_ptr, d->chunk_lengths[i] * (IT)d->C)) {
             fprintf(stderr, "ERROR: chunck_ptrs exceed index type.\n");
-            return false;
+            // return false;
         }
 
-        d.chunk_ptrs[i] = cur_chunk_ptr;
-        cur_chunk_ptr += d.chunk_lengths[i] * d.C;
+        d->chunk_ptrs[i] = cur_chunk_ptr;
+        cur_chunk_ptr += d->chunk_lengths[i] * d->C;
     }
 
     
 
-    ST n_scs_elements = d.chunk_ptrs[d.n_chunks - 1]
-                        + d.chunk_lengths[d.n_chunks - 1] * d.C;
-    d.chunk_ptrs[d.n_chunks] = n_scs_elements;
+    ST n_scs_elements = d->chunk_ptrs[d->n_chunks - 1]
+                        + d->chunk_lengths[d->n_chunks - 1] * d->C;
+    d->chunk_ptrs[d->n_chunks] = n_scs_elements;
 
     // construct permutation vector
 
-    d.old_to_new_idx = V<IT, IT>(d.n_rows);
+    d->old_to_new_idx = V<IT, IT>(d->n_rows);
 
-    for (ST i = 0; i < d.n_rows_padded; ++i) {
+    for (ST i = 0; i < d->n_rows_padded; ++i) {
         IT old_row_idx = n_els_per_row[i].first;
 
-        if (old_row_idx < d.n_rows) {
-            d.old_to_new_idx[old_row_idx] = i;
+        if (old_row_idx < d->n_rows) {
+            d->old_to_new_idx[old_row_idx] = i;
         }
+        // std::cout << i << std::endl;
     }
 
+    // for(int i = 0; i < d.n_rows; ++i){
+    //     std::cout << d.old_to_new_idx[i] << std::endl;
+    // }
+    // exit(0);
     
 
-    d.values   = V<VT, IT>(n_scs_elements);
-    d.col_idxs = V<IT, IT>(n_scs_elements);
+    d->values   = V<VT, IT>(n_scs_elements);
+    d->col_idxs = V<IT, IT>(n_scs_elements);
 
     for (ST i = 0; i < n_scs_elements; ++i) {
-        d.values[i]   = VT{};
-        d.col_idxs[i] = IT{};
+        d->values[i]   = VT{};
+        d->col_idxs[i] = IT{};
     }
 
-    std::vector<IT> col_idx_in_row(d.n_rows_padded);
+    std::vector<IT> col_idx_in_row(d->n_rows_padded);
 
     // fill values and col_idxs
-    for (ST i = 0; i < d.nnz; ++i) {
-        IT row_old = mtx.I[i];
-        IT row = d.old_to_new_idx[row_old];
+    for (ST i = 0; i < d->nnz; ++i) {
+        IT row_old = mtx->I[i];
 
-        ST chunk_index = row / d.C;
+        IT row = d->old_to_new_idx[row_old];
 
-        IT chunk_start = d.chunk_ptrs[chunk_index];
-        IT chunk_row   = row % d.C;
+        // std::cout << "new row: " << row << ", old row: " << row_old << std::endl;
+        // std::cout << d.C << std::endl;
 
-        IT idx = chunk_start + col_idx_in_row[row] * d.C + chunk_row;
+        ST chunk_index = row / d->C;
 
-        d.col_idxs[idx] = mtx.J[i];
-        d.values[idx]   = mtx.values[i];
+        IT chunk_start = d->chunk_ptrs[chunk_index];
+        IT chunk_row   = row % d->C;
+
+        IT idx = chunk_start + col_idx_in_row[row] * d->C + chunk_row;
+
+        d->col_idxs[idx] = mtx->J[i];
+        d->values[idx]   = mtx->values[i];
 
         col_idx_in_row[row]++;
     }
 
-    d.n_elements = n_scs_elements;
+    d->n_elements = n_scs_elements;
 
-    return true;
+    // return true;
 }
 // TODO: include functionality for other 2 storage formats
 // /////////////////////////////////////////////////////////////////////////////////////////////////
