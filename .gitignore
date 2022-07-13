@@ -1,10 +1,11 @@
 test.cpp
 verify.sh
-verifyResults.txt
+verify_results.txt
 spmv-omp
 spmv-omp-adv
 .vscode/
 valgrind_output.txt
+spmv_mkl_compare.txt
 
 *.o
 *.gch

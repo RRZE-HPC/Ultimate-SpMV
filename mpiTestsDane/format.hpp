@@ -177,6 +177,7 @@ void convert_to_scs(
     @param *local_mtx : 
     @param *work_sharing_arr : 
     @param *y_out : 
+    @param *x_out : 
     @param *defaults : 
     @param *x_in : 
     @return
@@ -187,8 +188,10 @@ void bench_spmv_scs(
     MtxData<VT, IT> *local_mtx,
     const IT *work_sharing_arr,
     std::vector<VT> *y_out,
+    std::vector<VT> *x_out,
     DefaultValues<VT, IT> *defaults,
-    const std::vector<VT> *x_in = nullptr)
+    BenchmarkResult<VT, IT> *r,
+    const std::vector<VT> *x_in)
 {
     // TODO: More efficient just to deduce this from worksharingArr size?
     IT comm_size;
@@ -207,24 +210,28 @@ void bench_spmv_scs(
     log("allocate and place CPU matrices end\n");
     log("converting to scs format start\n");
 
+    // std::cout << "Do I get here?1" << std::endl;
+
     // TODO: fuse with x idx adjustments potentially
     convert_to_scs<VT, IT>(local_mtx, config->chunk_size, config->sigma, &scs);
+
+    // Print scs formatted values to verify padding at the end is done correctly
+    // if(my_rank == 1){
+    //     for(int i = 0; i < scs.n_elements; ++i){
+    //         std::cout << scs.values[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
 
     log("converting to scs format end\n");
 
     // This y is only process local. Need an Allgather for each proc to have
     // all of the solution segments
     V<VT, IT> local_y_scs = V<VT, IT>(scs.n_rows_padded);
+
     std::uninitialized_fill_n(local_y_scs.data(), local_y_scs.n_rows, defaults->y);
-
-    // NOTE: Every processes needs counts array
-    IT counts_arr[comm_size];
-    IT displ_arr_bk[comm_size];
-
-    for(IT i = 0; i < comm_size; ++i){
-        counts_arr[i] = IT{};
-        displ_arr_bk[i] = IT{};
-    }
 
     IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
 
@@ -233,68 +240,16 @@ void bench_spmv_scs(
     adjust_halo_col_idxs<VT, IT>(&scs, &amnt_local_elements, work_sharing_arr);
 
     std::vector<VT> local_x(amnt_local_elements, 0);
+    std::vector<VT> temp_vec(amnt_local_elements, 0);
 
+    // Did I write this function?
     init_std_vec_with_ptr_or_value(local_x, local_x.size(), x_in,
-                                   defaults->x, false);
+                                   defaults->x, config->random_init_x);
 
-    // if(config->mode == "solver"){
-    //     // TODO: make modifications for solver mode
-    //     // the object "returned" will be the gathered results vector
-    // }
-    // else if(config->mode == "bench"){
-    //     // TODO: make modifications for bench mode
-    //     // the object returned will be the benchmark results
-    // }
-
-    // TODO: How bad is this for scalability? Is there a way around this?
-    std::vector<VT> local_y_scs_vec(local_y_scs.data(), local_y_scs.data() + local_y_scs.n_rows);
-
-    // heri := halo element row indices
-    // "local_needed_heri" is all the halo elements that this process needs
-    std::vector<IT> local_needed_heri;
-
-    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr);
-
-    // "to_send_heri" are all halo elements that this process is to send
-    std::vector<IT> to_send_heri;
-
-    IT local_needed_heri_size = local_needed_heri.size();
-    IT global_needed_heri_size;
-
-    // TODO: Is this actually necessary?
-    MPI_Allreduce(&local_needed_heri_size,
-                  &global_needed_heri_size,
-                  1,
-                  MPI_INT,
-                  MPI_SUM,
-                  MPI_COMM_WORLD);
-
-    IT *global_needed_heri = new IT[global_needed_heri_size];
-
-    for (IT i = 0; i < global_needed_heri_size; ++i)
-    {
-        global_needed_heri[i] = IT{};
-    }
-
-    collect_to_send_heri<IT>(
-        &to_send_heri,
-        &local_needed_heri,
-        global_needed_heri);
-
-    // The shift array is used in the tag-generation scheme in halo communication.
-    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
-    // after the local element index to make for the incoming halo elements
-    IT *shift_arr = new IT[comm_size * comm_size];
-    IT *incidence_arr = new IT[comm_size * comm_size];
-
-    for (IT i = 0; i < comm_size * comm_size; ++i)
-    {
-        shift_arr[i] = IT{};
-        incidence_arr[i] = IT{};
-    }
-
-    calc_heri_shifts<IT>(global_needed_heri, &global_needed_heri_size, shift_arr, incidence_arr); // NOTE: always symmetric?
-
+    // init_std_vec_with_ptr_or_value(local_x, local_x.size(), x_in,
+    //                                defaults->x, false);
+    
+    
     // Test with 1 proc
     // if(my_rank == 0){
     //     local_x[0] = 1;
@@ -342,36 +297,141 @@ void bench_spmv_scs(
     //     local_x[0] = 4;
     //     local_x[1] = 5;
     // }
+    // local_x[0] = 1;
+    // local_x[1] = 2;
+    // local_x[2] = 3;
+    // local_x[3] = 4;
+    // local_x[4] = 5;
+    // local_x[5] = 6;
+    // local_x[6] = 7;
+    // local_x[7] = 8;
+    // local_x[8] = 9;
+    // local_x[9] = 10;
+
+
+    // Copy local_x to x_out for (optional) validation against mkl later
+    for(IT i = 0; i < local_x.size(); ++i){
+        (*x_out)[i] = local_x[i];
+    }
+
+    // if(config->mode == "solver"){
+    //     // TODO: make modifications for solver mode
+    //     // the object "returned" will be the gathered results vector
+    // }
+    // else if(config->mode == "bench"){
+    //     // TODO: make modifications for bench mode
+    //     // the object returned will be the benchmark results
+    // }
+
+    // TODO: How bad is this for scalability? Is there a way around this?
+    std::vector<VT> local_y_scs_vec(local_y_scs.data(), local_y_scs.data() + local_y_scs.n_rows);
+
+    // heri := halo element row indices
+    // "local_needed_heri" is all the halo elements that this process needs
+    std::vector<IT> local_needed_heri;
+
+    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr);
+
+    // "to_send_heri" are all halo elements that this process is to send
+    std::vector<IT> to_send_heri;
+
+    IT local_needed_heri_size = local_needed_heri.size();
+    IT global_needed_heri_size;
+
+    // TODO: Is this actually necessary?
+    MPI_Allreduce(&local_needed_heri_size,
+                  &global_needed_heri_size,
+                  1,
+                  MPI_INT,
+                  MPI_SUM,
+                  MPI_COMM_WORLD);
+
+    // IT *global_needed_heri = new IT[global_needed_heri_size];
+    IT global_needed_heri[global_needed_heri_size];
+
+    for (IT i = 0; i < global_needed_heri_size; ++i)
+    {
+        global_needed_heri[i] = IT{};
+    }
+
+    collect_to_send_heri<IT>(
+        &to_send_heri,
+        &local_needed_heri,
+        global_needed_heri);
+
+    // The shift array is used in the tag-generation scheme in halo communication.
+    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
+    // after the local element index to make for the incoming halo elements
+    // IT *shift_arr = new IT[comm_size * comm_size];
+    // IT *incidence_arr = new IT[comm_size * comm_size];
+    IT shift_arr[comm_size * comm_size];
+    IT incidence_arr[comm_size * comm_size];
+
+    for (IT i = 0; i < comm_size * comm_size; ++i)
+    {
+        shift_arr[i] = IT{};
+        incidence_arr[i] = IT{};
+    }
+
+    calc_heri_shifts<IT>(global_needed_heri, &global_needed_heri_size, shift_arr, incidence_arr); // NOTE: always symmetric?
 
     // NOTE: should always be a multiple of 3
     IT local_x_padding = local_needed_heri.size() / 3;
 
     // Prepare buffers for communication
+    int local_x_original_size = local_x.size();
     local_x.resize(local_x.size() + local_x_padding);
+    int local_x_padded_size = local_x.size();
 
+    // std::cout << "Do I get here?2" << std::endl;
+    // std::cout.precision(17);
+
+    int show_steps = 1;
     // Enter main loop
     for (IT i = 0; i < config->n_repetitions; ++i)
     {
-        // int test_rank = 1;
-
-        // MPI_Barrier(MPI_COMM_WORLD);
+        int test_rank = 0;
         // if(my_rank == test_rank){
-        //     std::cout << "local_x before comm, before SPMV, before swap: " << std::endl;
-        //     for(int i = 0; i < local_x.size(); ++i){
-        //         std::cout << local_x[i] << std::endl;
+        //     for(int i = 0; i < local_needed_heri.size(); ++i){
+        //         std::cout << local_needed_heri[i] << std::endl;
         //     }
         // }
+
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // exit(0);
+        if(show_steps){
+            if(my_rank == test_rank){
+                std::cout << "local_x before comm, before SPMV, before swap: " << std::endl;
+                for(int i = 0; i < local_x.size(); ++i){
+                    std::cout << local_x[i] << std::endl;
+                }
+                printf("\n");
+                std::cout << "local_y before comm, before SPMV, before swap: " << std::endl;
+                for(int i = 0; i < local_y_scs_vec.size(); ++i){
+                    std::cout << local_y_scs_vec[i] << std::endl;
+                }
+                printf("\n");
+            }
+        }
 
         communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
         // printf("\n");
         MPI_Barrier(MPI_COMM_WORLD);
 
-        // if(my_rank == test_rank){
-        //     std::cout << "local_x AFTER comm, before SPMV, before swap: " << std::endl;
-        //     for(int i = 0; i < local_x.size(); ++i){
-        //         std::cout << local_x[i] << std::endl;
-        //     }
-        // }
+        if(show_steps){
+            if(my_rank == test_rank){
+                std::cout << "local_x AFTER comm, before SPMV, before swap: " << std::endl;
+                for(int i = 0; i < local_x.size(); ++i){
+                    std::cout << local_x[i] << std::endl;
+                }
+                printf("\n");
+                std::cout << "local_y AFTER comm, before SPMV, before swap: " << std::endl;
+                for(int i = 0; i < local_y_scs_vec.size(); ++i){
+                    std::cout << local_y_scs_vec[i] << std::endl;
+                }
+                printf("\n");
+            }
+        }
         // MPI_Barrier(MPI_COMM_WORLD); // temporary
         // exit(0);
 
@@ -384,72 +444,118 @@ void bench_spmv_scs(
         spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
                              scs.chunk_lengths.data(), scs.col_idxs.data(),
                              scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
+
+        if(show_steps){
+            MPI_Barrier(MPI_COMM_WORLD);
+            if(my_rank == test_rank){
+                std::cout << "local_x AFTER comm, AFTER SPMV, before swap: " << std::endl;
+                for(int i = 0; i < local_x.size(); ++i){
+                    std::cout << local_x[i] << std::endl;
+                }
+                printf("\n");
+                std::cout << "local_y AFTER comm, AFTER SPMV, before swap: " << std::endl;
+                for(int i = 0; i < local_y_scs_vec.size(); ++i){
+                    std::cout << local_y_scs_vec[i] << std::endl;
+                }
+                printf("\n");
+            }
+        }
         // exit(0);
 
-        // TODO: verify, dont swap on last iteration?
-        if (i != config->n_repetitions - 1)
-        {
-            std::swap(local_x, local_y_scs_vec);
+        std::swap(local_x, local_y_scs_vec);
+
+        if(show_steps){
+            MPI_Barrier(MPI_COMM_WORLD);
+            if(my_rank == test_rank){
+                std::cout << "local_x AFTER comm, AFTER SPMV, AFTER swap: " << std::endl;
+                for(int i = 0; i < local_x.size(); ++i){
+                    std::cout << local_x[i] << std::endl;
+                }
+                printf("\n");
+                std::cout << "local_y AFTER comm, AFTER SPMV, AFTER swap: " << std::endl;
+                for(int i = 0; i < local_y_scs_vec.size(); ++i){
+                    std::cout << local_y_scs_vec[i] << std::endl;
+                }
+                printf("\n");
+            }
+        }
+        // TODO: I think theres a way around this...
+        // if(i != config->n_repetitions - 1){
+        // MPI_Barrier(MPI_COMM_WORLD);
+
+        local_y_scs_vec.resize(local_x.size(), 0);
+        local_x.resize(local_x_padded_size);
+
+        if(show_steps){
+            if(my_rank == test_rank){
+                std::cout << "local_x AFTER comm, AFTER SPMV, AFTER swap, AFTER size adjust: " << std::endl;
+                for(int i = 0; i < local_x.size(); ++i){
+                    std::cout << local_x[i] << std::endl;
+                }
+                printf("\n");
+                std::cout << "local_y AFTER comm, AFTER SPMV, AFTER swap, AFTER size adjust: " << std::endl;
+                for(int i = 0; i < local_y_scs_vec.size(); ++i){
+                    std::cout << local_y_scs_vec[i] << std::endl;
+                }
+                printf("\n");
+            }
         }
     }
+
+    // exit(0);
 
     // TODO: use a pragma parallel for?
     // Reformat proc-local result vectors. Only take the useful (non-padded) elements
     // from the scs formatted local_y_scs, and assign to local_y
-    std::vector<VT> local_y(scs.n_rows, 0);
+    // std::vector<VT> local_y(scs.n_rows, 0);
 
+    // TODO: uncomment
     for (IT i = 0; i < scs.old_to_new_idx.n_rows; ++i)
     {
-        local_y[i] = local_y_scs_vec[scs.old_to_new_idx[i]];
+        (*y_out)[i] = local_x[scs.old_to_new_idx[i]];
     }
 
-    // NOTE: only for collecting local results.
-    // i.e. wont be apart of actual loop after halo comm implemented
-    for (IT i = 0; i < comm_size; ++i)
-    {
-        counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
-        displ_arr_bk[i] = work_sharing_arr[i];
-    }
+    // TODO: move to the heap
+    // delete[] shift_arr;
+    // delete[] incidence_arr;
+    // delete[] global_needed_heri;
 
-    if (config->verify_result)
-    {
-        // Collect results from each proc to y_total
-        if (typeid(VT) == typeid(double))
-        {
-            MPI_Allgatherv(&local_y[0],
-                           local_y.size(),
-                           MPI_DOUBLE,
-                           &(*y_out)[0],
-                           counts_arr,
-                           displ_arr_bk,
-                           MPI_DOUBLE,
-                           MPI_COMM_WORLD);
-        }
-        else if (typeid(VT) == typeid(float))
-        {
-            MPI_Allgatherv(&local_y[0],
-                           local_y.size(),
-                           MPI_FLOAT,
-                           &(*y_out)[0],
-                           counts_arr,
-                           displ_arr_bk,
-                           MPI_FLOAT,
-                           MPI_COMM_WORLD);
-        }
-    }
-    else
-    {
-        // Dont collect local results to global, and just "return" local results
-        y_out->resize(local_y.size());
-        for (IT i = 0; i < scs.old_to_new_idx.n_rows; ++i)
-        {
-            (*y_out)[i] = local_y[i];
-        }
-    }
+    double mem_matrix_b =
+            (double)sizeof(VT) * scs.n_elements     // values
+        + (double)sizeof(IT) * scs.n_chunks       // chunk_ptrs
+        + (double)sizeof(IT) * scs.n_chunks       // chunk_lengths
+        + (double)sizeof(IT) * scs.n_elements;    // col_idxs
 
-    delete[] shift_arr;
-    delete[] incidence_arr;
-    delete[] global_needed_heri;
+    double mem_x_b = (double)sizeof(VT) * scs.n_cols;
+    double mem_y_b = (double)sizeof(VT) * scs.n_rows_padded;
+    double mem_b   = mem_matrix_b + mem_x_b + mem_y_b;
+
+    r->mem_mb   = mem_b / 1e6;
+    r->mem_m_mb = mem_matrix_b / 1e6;
+    r->mem_x_mb  = mem_x_b / 1e6;
+    r->mem_y_mb  = mem_y_b / 1e6;
+
+    r->n_rows = local_mtx->n_rows;
+    r->n_cols = local_mtx->n_cols;
+    r->nnz    = scs.nnz;
+
+    r->duration_kernel_s = r->duration_total_s/ r->n_calls;
+    r->perf_gflops       = (double)scs.nnz * 2.0
+                          / r->duration_kernel_s
+                          / 1e9;                   // Only count usefull flops
+
+    r->value_type_str = type_name_from_type<VT>();
+    r->index_type_str = type_name_from_type<IT>();
+    r->value_type_size = sizeof(VT);
+    r->index_type_size = sizeof(IT);
+
+    r->was_matrix_sorted = local_mtx->is_sorted;
+
+    r->fill_in_percent = ((double)scs.n_elements / scs.nnz - 1.0) * 100.0;
+    r->C               = scs.C;
+    r->sigma           = scs.sigma;
+
+    // TODO: compute code balances
 }
 
 
@@ -664,32 +770,32 @@ void bench_spmv_scs(
 // }
 
 // //////////////////////////////////////////////////////////////////////////////////////////////////
-// template <typename VT, typename IT>
-// static void
-// convert_to_csr(const MtxData<VT, IT> &mtx,
-//                V<IT, IT> &row_ptrs,
-//                V<IT, IT> &col_idxs,
-//                V<VT, IT> &values)
-// {
-//     values = V<VT, IT>(mtx.nnz);
-//     col_idxs = V<IT, IT>(mtx.nnz);
-//     row_ptrs = V<IT, IT>(mtx.n_rows + 1);
+template <typename VT, typename IT>
+static void
+convert_to_csr(const MtxData<VT, IT> &mtx,
+               V<IT, IT> &row_ptrs,
+               V<IT, IT> &col_idxs,
+               V<VT, IT> &values)
+{
+    values = V<VT, IT>(mtx.nnz);
+    col_idxs = V<IT, IT>(mtx.nnz);
+    row_ptrs = V<IT, IT>(mtx.n_rows + 1);
 
-//     std::vector<IT> col_offset_in_row(mtx.n_rows);
+    std::vector<IT> col_offset_in_row(mtx.n_rows);
 
-//     convert_idxs_to_ptrs(mtx.I, row_ptrs);
+    convert_idxs_to_ptrs(mtx.I, row_ptrs);
 
-//     for (ST i = 0; i < mtx.nnz; ++i) {
-//         IT row = mtx.I[i];
+    for (ST i = 0; i < mtx.nnz; ++i) {
+        IT row = mtx.I[i];
 
-//         IT idx = row_ptrs[row] + col_offset_in_row[row];
+        IT idx = row_ptrs[row] + col_offset_in_row[row];
 
-//         col_idxs[idx] = mtx.J[i];
-//         values[idx]   = mtx.values[i];
+        col_idxs[idx] = mtx.J[i];
+        values[idx]   = mtx.values[i];
 
-//         col_offset_in_row[row]++;
-//     }
-// }
+        col_offset_in_row[row]++;
+    }
+}
 
 
 // template <typename VT, typename IT>

@@ -1,11 +1,14 @@
 #include "spmv.h"
 #include "mtx-reader.h"
 #include "vectors.h"
+#include "mkl.h"
+
 #include "utilities.hpp"
 #include "structs.hpp"
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "format.hpp"
+
 
 #include <typeinfo>
 #include <algorithm>
@@ -27,6 +30,7 @@
 #include <vector>
 #include <set>
 #include <mpi.h>
+#include <fstream>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -89,10 +93,12 @@ template <typename VT, typename IT>
 static void
 bench_spmv(
     Config *config,
-    MtxData<VT, IT> *mtx,
-    int *work_sharing_arr,
+    MtxData<VT, IT> *local_mtx,
+    const int *work_sharing_arr,
     std::vector<VT> *y_out,
+    std::vector<VT> *x_out,
     DefaultValues<VT, IT> *defaults,
+    BenchmarkResult<VT, IT> *r,
     const std::vector<VT> *x_in = nullptr
 )
 {
@@ -129,16 +135,21 @@ bench_spmv(
         //                            x_out, y_out, x_in);
         bench_spmv_scs<VT, IT>(
             config,
-            mtx,
+            local_mtx,
             work_sharing_arr,
             y_out,
+            x_out,
             defaults,
+            r,
             x_in
         );
     }
     else{
         fprintf(stderr, "ERROR: SpMV format for kernel %s is not implemented.\n", config->matrix_format.c_str());
     }
+
+        // std::cout << "Do I get here?4" << std::endl;
+
         // return r;
 
     // if (y_out_opt)
@@ -157,6 +168,111 @@ bench_spmv(
     // return r;
 }
 
+template<typename VT, typename IT>
+void write_results_to_file(
+    const std::string *file_name_str,
+    Config *config,
+    BenchmarkResult<VT, IT> *r,
+    std::vector<double> x
+){
+    IT comm_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+    
+    char filename[] = "spmv_mkl_compare.txt";
+    int width = 16;
+    std::fstream appendFileToWorkWith;
+
+    std::cout.precision(10);
+
+    appendFileToWorkWith.open(filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    appendFileToWorkWith << *file_name_str << " with C = " << config->chunk_size << " and dt = " << typeid(VT).name() << " and rev = " << config->n_repetitions << std::endl;
+    appendFileToWorkWith << "Number of processes: " << comm_size << "\n" << std::endl;
+
+    // relative difference := (final_val - initial_val) / final_val
+    appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
+                << std::left << std::setw(width) << "spmv results:"
+                << std::left << std::setw(width) << "relative diff:" << std::endl;
+
+    appendFileToWorkWith << std::left << std::setw(width) << "-----------"
+                << std::left << std::setw(width) << "------------"
+                << std::left << std::setw(width) << "-------------" << std::endl;
+
+    for(IT i = 0; i < r->total_spmvm_result.size(); ++i){
+        appendFileToWorkWith << std::left << std::setw(width) << x[i]
+                    << std::left << std::setw(width) << r->total_spmvm_result[i]
+                    << std::left  << 100 * (x[i] - r->total_spmvm_result[i])/x[i] << std::left << "%"
+                    << std::endl;
+    }
+    appendFileToWorkWith << "\n";
+    appendFileToWorkWith.close();
+}
+
+template<typename VT, typename IT>
+void validate_mkl(
+    const std::string *file_name_str,
+    Config *config,
+    BenchmarkResult<VT, IT> *r
+){
+    // NOTE: Really have to read in this whole thing?
+    MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str->c_str(), config->sort_matrix);
+
+    // Promote datatype to double
+    std::vector<double> x(mtx.n_rows, 0);
+    std::vector<double> y(mtx.n_rows, 0);
+
+    V<VT, IT> values;
+    V<IT, IT> col_idxs;
+    V<IT, IT> row_ptrs;
+
+    convert_to_csr(mtx, row_ptrs, col_idxs, values);
+
+    // Promote values to doubles
+    std::vector<double> values_vec(values.data(), values.data() + values.n_rows);
+        
+    for (IT i = 0; i < mtx.n_rows; i++) {
+        x[i] = (double)(r->total_x)[i];
+    }
+
+    // std::cout << "Total x?:" << std::endl;
+    // for (i = 0; i < mtx.n_rows; i++) {
+    //     std::cout << x[i] << std::endl;
+    // }
+    // printf("\n");
+
+    for (IT i = 0; i < mtx.n_rows; i++) {
+        y[i] = 0.0;
+    }
+
+    char transa = 'n';
+    int num_rows = mtx.n_rows;
+    int num_cols = mtx.n_cols;
+    double alpha = 1.0;
+    double beta = 0.0; 
+    char matdescra [4] = {
+        'G', // general matrix
+        ' ', // ignored
+        ' ', // ignored
+        'C'}; // zero-based indexing (C-style)
+
+    // // Computes y := alpha*A*x + beta*y, for A -> m * k, 
+    // // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
+
+    for(IT i = 0; i < config->n_repetitions; ++i){
+        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], &values_vec[0], &(col_idxs.data())[0], &(row_ptrs.data())[0], &(row_ptrs.data())[1], &x[0], &beta, &y[0]);
+
+        // NOTE: no need to resize, due to crs format
+        std::swap(x, y);
+    }
+
+    // std::cout << "MKL spmvm output: " << std::endl;
+    // for (IT i = 0; i < mtx.n_rows; i++) {
+    //     std::cout << x[i] << std::endl;
+    // }
+
+    // output comparison with r object
+    write_results_to_file<VT, IT>(file_name_str, config, r, x);
+}
+
 
 /**
     Description...
@@ -169,7 +285,8 @@ template <typename VT, typename IT>
 void compute_result(
     const std::string *file_name,
     const std::string *seg_method,
-    Config *config)
+    Config *config,
+    BenchmarkResult<VT, IT> *r)
 {
     // BenchmarkResult result;
 
@@ -186,14 +303,43 @@ void compute_result(
 
     // Allocate space for work sharing array. Is populated in seg_and_send_data function
     IT work_sharing_arr[comm_size + 1];
+
     for(IT i = 0; i < comm_size + 1; ++i){
         work_sharing_arr[i] = IT{};
     }
 
-    seg_and_send_data<VT, IT, ST>(&local_mtx, config, seg_method, file_name, work_sharing_arr, my_rank, comm_size);
+    seg_and_send_data<VT, IT>(&local_mtx, config, seg_method, file_name, work_sharing_arr, my_rank, comm_size);
+
+    // if(my_rank == 0){
+    //     for(IT i = 0; i < comm_size + 1; ++i){
+    //         std::cout << work_sharing_arr[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
+    // if(my_rank == 0){
+    //     std::cout << "My rank is: " << my_rank << " and my symm matrix part is:" << std::endl;
+    //     print_mtx(local_mtx);
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+
+    // if(my_rank == 1){
+    //     std::cout << "My rank is: " << my_rank << " and my symm matrix part is:"<< std::endl;
+    //     print_mtx(local_mtx);
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+    // std::cout << "Printing WSA before" << std::endl;
+    // for(IT i = 0; i < comm_size + 1; ++i){
+    //     std::cout << work_sharing_arr[i] << std::endl;
+    // }
 
     // Each process must initially allocate space for total y vector, eventhough it is potentially resized later
-    std::vector<VT> y_out(work_sharing_arr[comm_size], 0);
+    std::vector<VT> y_out(work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank], 0);
+
+    // Each process needs to return the original local_x vector it uses in the multiplication, for optional validation 
+    std::vector<VT> x_out(work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank], 0);
     // std::vector<VT> result(work_sharing_arr[comm_size], 0);
 
     DefaultValues<VT, IT> default_values;
@@ -204,26 +350,108 @@ void compute_result(
         &local_mtx,
         work_sharing_arr,
         &y_out,
-        &default_values
+        &x_out,
+        &default_values,
+        r
     );
 
+    // Assign proc local x and y to benchmark result object
+    r->x_out = x_out;
+    r->y_out = y_out;
+
+    // std::cout << "Printing WSA after" << std::endl;
+    // for(IT i = 0; i < comm_size + 1; ++i){
+    //     std::cout << work_sharing_arr[i] << std::endl;
+    // }
+    // config -? verify_result (?)
     if (config->verify_result)
     {
-        log("verify begin\n");
-        if(my_rank == 0){
-            printf("\n");
-            std::cout << "Resulting vector with: " << config->n_repetitions << " revisions" << std::endl; 
-            for(IT i = 0; i < y_out.size(); ++i){
-                std::cout << y_out[i] << std::endl;
-            }
+        // TODO: is the size correct here?
+        std::vector<VT> total_spmvm_result(work_sharing_arr[comm_size], 0);
+        std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
+        // float* total_x = new float[4884];
+        // std::cout << "comm_size: " << comm_size << ", rank: " << my_rank << std::endl;
+        // log("verify begin\n");
+        IT counts_arr[comm_size];
+        IT displ_arr_bk[comm_size];
+
+        // #pragma omp parallel
+        // std::cout << omp_get_num_threads() << std::endl;
+
+        for(IT i = 0; i < comm_size; ++i){
+            counts_arr[i] = IT{};
+            displ_arr_bk[i] = IT{};
+        }
+        
+        for (IT i = 0; i < comm_size; ++i){
+            counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
+            displ_arr_bk[i] = work_sharing_arr[i];
         }
 
-            // MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name.c_str(), config.sort_matrix);
-        
-            // bool ok = spmv_verify(config.matrix_format, &mtx, x_out, y_out);
-            // r.is_result_valid = ok;
+        // Collect each of the process local x and y vectors to a global/total vector for validation
+        if (typeid(VT) == typeid(double)){
+            MPI_Allgatherv(&y_out[0],
+                            y_out.size(),
+                            MPI_DOUBLE,
+                            &total_spmvm_result[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_DOUBLE,
+                            MPI_COMM_WORLD);
 
-        log("verify end\n");
+            MPI_Allgatherv(&x_out[0],
+                            x_out.size(),
+                            MPI_DOUBLE,
+                            &total_x[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_DOUBLE,
+                            MPI_COMM_WORLD);
+        }
+        else if (typeid(VT) == typeid(float)){
+            MPI_Allgatherv(&y_out[0],
+                            y_out.size(),
+                            MPI_FLOAT,
+                            &total_spmvm_result[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_FLOAT,
+                            MPI_COMM_WORLD);
+
+            MPI_Allgatherv(&x_out[0],
+                            x_out.size(),
+                            MPI_FLOAT,
+                            &total_x[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_FLOAT,
+                            MPI_COMM_WORLD);
+        }
+
+        // If we're verifying results, assign total vectors to benchmark result object
+        r->total_x = total_x;
+        r->total_spmvm_result = total_spmvm_result;
+
+        // if(my_rank == 0){
+        //     std::cout.precision(17);
+        // // if(false){
+        //     // printf("\n");
+        //     // std::cout << "My rank: " << my_rank << std::endl;
+        //     printf("\n");
+        //     std::cout << "Total result vector with: " << config->n_repetitions << " revisions" << std::endl; 
+        //     for(IT i = 0; i < total_spmvm_result.size(); ++i){
+        //         std::cout << total_spmvm_result[i] << std::endl;
+        //     }
+        //     printf("\n");
+
+        //     std::cout << "Original x vector: " << std::endl; 
+        //     for(IT i = 0; i < total_x.size(); ++i){
+        //         std::cout << total_x[i] << std::endl;
+        //     }
+        //     printf("\n");
+
+        // }
+
     }
 
     // TODO: verify results
@@ -239,6 +467,8 @@ void compute_result(
     //         check_if_result_valid<VT, IT>(file_name, &y_total, name, config.sort_matrix);
     //     }
     // }
+
+
 }
 
 /**
@@ -361,24 +591,38 @@ int main(int argc, char *argv[])
     int revisions = config.n_repetitions;
     bool random_init_x = false;
 
+    int my_rank, comm_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
     MARKER_INIT();
 
     verifyAndAssignInputs(argc, argv, &file_name_str, &seg_method, &value_type, &random_init_x, &config);
 
     if (value_type == "sp")
     {
-        compute_result<float, int>(&file_name_str, &seg_method, &config);
+        BenchmarkResult<float, int> r;
+        compute_result<float, int>(&file_name_str, &seg_method, &config, &r);
+
+        if(my_rank == 0){
+            if(config.verify_result){
+                validate_mkl<float, int>(&file_name_str, &config, &r);
+            }
+        }
     }
     else if (value_type == "dp")
     {
-        compute_result<double, int>(&file_name_str, &seg_method, &config);
+        BenchmarkResult<double, int> r;
+        compute_result<double, int>(&file_name_str, &seg_method, &config, &r);
+
+        if(my_rank == 0){
+            if(config.verify_result){
+                validate_mkl<double, int>(&file_name_str, &config, &r);
+            }
+        }
     }
 
-    log("benchmarking kernel: scs end\n");
-
     MPI_Finalize();
-
-    log("main end\n");
 
     MARKER_DEINIT();
 

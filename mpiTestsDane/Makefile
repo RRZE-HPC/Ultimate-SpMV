@@ -1,4 +1,4 @@
-COMPILER ?= gcc
+COMPILER ?= icc
 
 ifeq ($(COMPILER),gcc)
   CXX       = g++
@@ -66,10 +66,13 @@ all: omp
 omp: spmv-omp
 
 spmv-omp: main.o $(REBUILD_DEPS)
-	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+	$(MPICXX) $(CXXFLAGS) -qmkl -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS) 
 
 main.o: main.cpp $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
+
+# main.o: main.cpp $(REBUILD_DEPS)
+# 	$(MPICXX) $(CXXFLAGS) $(MKLLINKS)-o $@ -c $<
 
 .PHONY: clean
 clean:

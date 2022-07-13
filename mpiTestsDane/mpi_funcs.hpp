@@ -197,7 +197,8 @@ void communicate_halo_elements(
 
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-    MPI_Request request; // TODO: What does this do?
+    // MPI_Request request; // TODO: What does this do?
+    MPI_Status status;
 
     // Declare and populate arrays to keep track of number of elements already
     // recieved or sent to respective procs
@@ -214,7 +215,30 @@ void communicate_halo_elements(
     {
         // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
         rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+        for (IT to_proc_idx = 0; to_proc_idx < to_send_heri->size(); to_proc_idx += 3)
+        {
+            global_row_idx = to_proc_idx + 2;
+            to_proc = (*to_send_heri)[to_proc_idx];
+            from_proc = my_rank;
 
+            send_shift = shift_arr[comm_size * from_proc + to_proc];
+
+            // std::cout << "Sending: " << (*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]] << " to " <<to_proc << std::endl;
+
+            MPI_Send(
+                &(*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
+                1,
+                MPI_FLOAT,
+                to_proc,
+                send_shift + send_counts[to_proc],
+                MPI_COMM_WORLD);
+
+            if(my_rank == test_rank){
+                // float data =  (*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]]; // assume this is the correct data to send for now
+                // std::cout << "Proc: " << my_rank << " sends to " << to_proc << " the data " << data << " with a tag of " << send_shift + send_counts[to_proc] << std::endl;
+            }
+            ++send_counts[to_proc];
+        }
         // TODO: definetly OpenMP this loop? Improve somehow
         for (IT from_proc_idx = 1; from_proc_idx < local_needed_heri->size(); from_proc_idx += 3)
         {
@@ -228,14 +252,14 @@ void communicate_halo_elements(
             // NOTE: essentially "transpose" shift array here
             recv_shift = shift_arr[comm_size * from_proc + to_proc];
 
-            MPI_Irecv(
+            MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
                 1,
                 MPI_FLOAT,
                 from_proc,
                 recv_shift + recv_counts[from_proc],
                 MPI_COMM_WORLD,
-                &request);
+                &status);
 
             // if(my_rank == test_rank){
             //     std::cout << "Proc " << my_rank << " asks for tag " << recv_shift + recv_counts[from_proc] << " from " << from_proc << std::endl;
@@ -243,6 +267,12 @@ void communicate_halo_elements(
 
             ++recv_counts[from_proc];
         }
+
+    }
+    else if (typeid(VT) == typeid(double))
+    {
+        rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+
         for (IT to_proc_idx = 0; to_proc_idx < to_send_heri->size(); to_proc_idx += 3)
         {
             global_row_idx = to_proc_idx + 2;
@@ -254,21 +284,13 @@ void communicate_halo_elements(
             MPI_Send(
                 &(*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
                 1,
-                MPI_FLOAT,
+                MPI_DOUBLE,
                 to_proc,
                 send_shift + send_counts[to_proc],
                 MPI_COMM_WORLD);
 
-            // if(my_rank == test_rank){
-            //     float data =  (*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]]; // assume this is the correct data to send for now
-            //     std::cout << "Proc: " << my_rank << " sends to " << to_proc << " the data " << data << " with a tag of " << send_shift + send_counts[to_proc] << std::endl;
-            // }
             ++send_counts[to_proc];
         }
-    }
-    else if (typeid(VT) == typeid(double))
-    {
-        rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
         for (IT from_proc_idx = 1; from_proc_idx < local_needed_heri->size(); from_proc_idx += 3)
         {
@@ -279,36 +301,38 @@ void communicate_halo_elements(
 
             recv_shift = shift_arr[comm_size * from_proc + to_proc];
 
-            MPI_Irecv(
+            // MPI_Irecv(
+            //     &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
+            //     1,
+            //     MPI_DOUBLE,
+            //     from_proc,
+            //     recv_shift + recv_counts[from_proc],
+            //     MPI_COMM_WORLD,
+            //     &request);
+
+            MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
                 1,
                 MPI_DOUBLE,
                 from_proc,
                 recv_shift + recv_counts[from_proc],
                 MPI_COMM_WORLD,
-                &request);
+                &status);
 
             ++recv_counts[from_proc];
         }
-        for (IT to_proc_idx = 0; to_proc_idx < to_send_heri->size(); to_proc_idx += 3)
-        {
-            global_row_idx = to_proc_idx + 2;
-            to_proc = (*to_send_heri)[to_proc_idx];
-            from_proc = my_rank;
 
-            send_shift = shift_arr[comm_size * from_proc + to_proc];
-
-            MPI_Send(
-                &(*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
-                1,
-                MPI_DOUBLE,
-                to_proc,
-                send_shift + send_counts[to_proc],
-                MPI_COMM_WORLD);
-
-            ++send_counts[to_proc];
-        }
     }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+
+    // if(my_rank == test_rank){
+    //     std::cout << "local_x AFTER comm, before SPMV, before swap: " << std::endl;
+    //     for(int i = 0; i < local_x->size(); ++i){
+    //         std::cout << (*local_x)[i] << std::endl;
+    //     }
+    //     printf("\n");
+    // }
 }
 
 /**
@@ -535,6 +559,24 @@ void define_bookkeeping_type(
     MPI_Type_commit(bk_type);
 }
 
+// template <typename VT, typename IT>
+// void fill_in_symm_elems(
+//     MtxData<VT, IT> *mtx
+//     )
+// {
+//     IT total_symm_elems = mtx->nnz;
+//     VT symm_val;
+//     // IT lower_triang_elems = total_symm_elems;
+//     for(IT i = 0; i < total_symm_elems; ++i){
+//         if(mtx->I[i] != mtx->J[i]){ // if the element is off diagonal
+//             symm_val = mtx->values[i];
+//             mtx->I.push_back(mtx->J[i]);
+//             mtx->J.push_back(mtx->I[i]);
+//             mtx->values.push_back(symm_val); // then replicate it
+//         }
+//     }
+// }
+
 /**
     Data from the original mtx data structure is partitioned and sent to corresponding processes.
     @param *local_mtx : Very similar to the original mtx struct, but constructed here with row, col, and value data sent to this particular process.
@@ -546,7 +588,7 @@ void define_bookkeeping_type(
     @param comm_size : size of mpi communicator
     @return N/A : local_mtx populated through pointers
 */
-template <typename VT, typename IT, typename ST>
+template <typename VT, typename IT>
 void seg_and_send_data(
     MtxData<VT, IT> *local_mtx,
     Config *config, // shouldn't this be const?
@@ -570,6 +612,16 @@ void seg_and_send_data(
         // NOTE: Matrix will be read in as SORTED by default
         // Only root proc will read entire matrix
         MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str->c_str(), config->sort_matrix);
+
+        // print_mtx(mtx);
+
+        // if(mtx.is_symmetric){
+        //     fill_in_symm_elems<VT, IT>(&mtx);
+        // }
+        // printf("\n");
+
+        // print_mtx(mtx);
+        // exit(0);
 
         // Segment global row pointers, and place into an array
         seg_work_sharing_arr<VT, IT>(&mtx, work_sharing_arr, seg_method, comm_size);
@@ -629,6 +681,7 @@ void seg_and_send_data(
     }
     else if (my_rank != 0)
     {
+        // TODO: should these be blocking?
         // First, recieve BK struct
         MPI_Recv(&recv_bk, 1, bk_type, 0, 99, MPI_COMM_WORLD, &status_bk);
 
@@ -665,6 +718,7 @@ void seg_and_send_data(
         local_mtx->J = cols_vec;
         local_mtx->values = vals_vec;
     }
+    MPI_Barrier(MPI_COMM_WORLD);
 
     // Each process exchanges it's global row ptrs for local row ptrs
     IT first_global_row = local_mtx->I[0];

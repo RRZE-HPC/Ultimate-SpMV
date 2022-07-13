@@ -38,11 +38,12 @@ struct Config
 
     // Initialize rhs vector with random numbers.
     bool random_init_x{true};
+
     // Override values of the matrix, read via mtx file, with random numbers.
     bool random_init_A{false};
 
     // No. of repetitions to perform. 0 for automatic detection.
-    unsigned long n_repetitions{10};
+    unsigned long n_repetitions{5};
 
     // Verify result of SpVM.
     bool verify_result{true};
@@ -69,7 +70,7 @@ struct DefaultValues
 {
 
     VT A{2.0};
-    VT x{1.01};
+    VT x{1.00};
     VT y{};
 
     VT *x_values{};
@@ -79,6 +80,7 @@ struct DefaultValues
     ST n_y_values{};
 };
 
+template <typename VT, typename IT>
 struct BenchmarkResult
 {
     double perf_gflops{};
@@ -119,6 +121,11 @@ struct BenchmarkResult
 
     double cb_a_0{};
     double cb_a_nzc{};
+
+    std::vector<VT> y_out;
+    std::vector<VT> x_out;
+    std::vector<VT> total_spmvm_result;
+    std::vector<VT> total_x;
 };
 
 // Honestly, probably not necessary
