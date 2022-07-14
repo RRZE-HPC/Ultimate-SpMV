@@ -4,6 +4,7 @@
 #include "spmv.h"
 #include "vectors.h"
 #include "structs.hpp"
+#include <mpi.h>
 
 #include <cstdarg>
 #include <random>
@@ -863,19 +864,25 @@ IT get_index(std::vector<IT> v, int K)
 template <typename VT>
 void random_init(VT *begin, VT *end)
 {
-    std::mt19937 engine;
+    int my_rank;
+    // MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    if (!g_same_seed_for_every_vector)
-    {
-        std::random_device rnd_device;
-        engine.seed(rnd_device());
-    }
+    srand(time(NULL) + my_rank);
+
+    // std::mt19937 engine;
+
+    // if (!g_same_seed_for_every_vector)
+    // {
+    //     std::random_device rnd_device;
+    //     engine.seed(rnd_device());
+    // }
 
     std::uniform_real_distribution<double> dist(0.1, 2.0);
 
     for (VT *it = begin; it != end; ++it)
     {
-        *it = random_number<VT, decltype(dist), decltype(engine)>::get(dist, engine);
+        *it = ((VT) rand() / ((VT) RAND_MAX)) + 1;
     }
 }
 

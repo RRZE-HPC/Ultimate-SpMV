@@ -107,6 +107,8 @@ spmv_omp_scs(const ST C,
         // TODO: use IT wherever possible
         for (IT j = 0; j < chunk_lengths[c]; ++j) {
             for (IT i = 0; i < (IT)C; ++i) {
+                // std::cout << values[cs + j * (IT)C + i] << " * " << x[col_idxs[cs + j * (IT)C + i]]
+                // << " = " << values[cs + j * (IT)C + i] * x[col_idxs[cs + j * (IT)C + i]] << std::endl;
                 tmp[i] += values[cs + j * (IT)C + i] * x[col_idxs[cs + j * (IT)C + i]];
             }
         }

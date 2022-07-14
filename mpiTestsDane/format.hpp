@@ -237,7 +237,10 @@ void bench_spmv_scs(
 
     IT amnt_local_elements = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
-    adjust_halo_col_idxs<VT, IT>(&scs, &amnt_local_elements, work_sharing_arr);
+    adjust_halo_col_idxs<VT, IT>(local_mtx, &scs, &amnt_local_elements, work_sharing_arr);
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
     std::vector<VT> local_x(amnt_local_elements, 0);
     std::vector<VT> temp_vec(amnt_local_elements, 0);
@@ -250,19 +253,43 @@ void bench_spmv_scs(
     //                                defaults->x, false);
     
     
-    // Test with 1 proc
+    // Test with 2 proc
+    // if(my_rank == 0){
+    //     local_x[0] = 1;
+    //     local_x[1] = 2;
+    //     // local_x[2] = 3;
+    // }
+    // if(my_rank == 1){
+    //     local_x[0] = 3;
+    //     local_x[1] = 4;
+    //     local_x[2] = 5;
+    // }
+
+    // Test with 2 procs, matrix1.mtx. hold on
     // if(my_rank == 0){
     //     local_x[0] = 1;
     //     local_x[1] = 2;
     //     local_x[2] = 3;
     //     local_x[3] = 4;
     //     local_x[4] = 5;
-    // }
-
-    // Test with 2 procs
-    // if(my_rank == 0){
-    //     local_x[0] = 1;
-    //     local_x[1] = 2;
+    //     local_x[5] = 6;
+    //     local_x[6] = 7;
+    //     local_x[7] = 8;
+    //     local_x[8] = 9;
+    //     local_x[9] = 10;
+    //     local_x[10] = 11;
+    //     local_x[11] = 12;
+    //     local_x[12] = 13;
+    //     local_x[13] = 14;
+    //     local_x[14] = 15;
+    //     local_x[15] = 16;
+    //     local_x[16] = 17;
+    //     local_x[17] = 18;
+    //     local_x[18] = 19;
+    //     local_x[19] = 20;
+    //     local_x[20] = 21;
+    //     local_x[21] = 22;
+    //     local_x[22] = 23;
     // }
     // if(my_rank == 1){
     //     local_x[0] = 3;
@@ -332,11 +359,34 @@ void bench_spmv_scs(
 
     collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr);
 
+    // int test_rank = 0;
+    // if(my_rank == test_rank){
+    //     for(int i = 0; i < local_needed_heri.size(); ++i){
+    //         std::cout << local_needed_heri[i] << std::endl;
+    //     }
+    // }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
     // "to_send_heri" are all halo elements that this process is to send
     std::vector<IT> to_send_heri;
 
     IT local_needed_heri_size = local_needed_heri.size();
     IT global_needed_heri_size;
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 0){
+    //     std::cout << "I'm rank: " << my_rank << " and I need: " << local_needed_heri_size/3 << " halo elements." << std::endl;
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+
+    // if(my_rank == 1){
+    //     std::cout << "I'm rank: " << my_rank << " and I need: " << local_needed_heri_size/3 << " halo elements." << std::endl;
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
 
     // TODO: Is this actually necessary?
     MPI_Allreduce(&local_needed_heri_size,
@@ -346,8 +396,8 @@ void bench_spmv_scs(
                   MPI_SUM,
                   MPI_COMM_WORLD);
 
-    // IT *global_needed_heri = new IT[global_needed_heri_size];
-    IT global_needed_heri[global_needed_heri_size];
+    IT *global_needed_heri = new IT[global_needed_heri_size];
+    // IT global_needed_heri[global_needed_heri_size];
 
     for (IT i = 0; i < global_needed_heri_size; ++i)
     {
@@ -386,7 +436,7 @@ void bench_spmv_scs(
     // std::cout << "Do I get here?2" << std::endl;
     // std::cout.precision(17);
 
-    int show_steps = 1;
+    int show_steps = 0;
     // Enter main loop
     for (IT i = 0; i < config->n_repetitions; ++i)
     {
@@ -416,7 +466,7 @@ void bench_spmv_scs(
 
         communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
         // printf("\n");
-        MPI_Barrier(MPI_COMM_WORLD);
+        MPI_Barrier(MPI_COMM_WORLD); //necessary?
 
         if(show_steps){
             if(my_rank == test_rank){
@@ -440,13 +490,15 @@ void bench_spmv_scs(
         // std::cout << scs.n_chunks << std::endl;
         // printf("\n");
         // // exit(0);
-
+        // if(my_rank == test_rank){
         spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
                              scs.chunk_lengths.data(), scs.col_idxs.data(),
                              scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
+        // }
+
+        // MPI_Barrier(MPI_COMM_WORLD);
 
         if(show_steps){
-            MPI_Barrier(MPI_COMM_WORLD);
             if(my_rank == test_rank){
                 std::cout << "local_x AFTER comm, AFTER SPMV, before swap: " << std::endl;
                 for(int i = 0; i < local_x.size(); ++i){
@@ -464,8 +516,9 @@ void bench_spmv_scs(
 
         std::swap(local_x, local_y_scs_vec);
 
+        // MPI_Barrier(MPI_COMM_WORLD);
+
         if(show_steps){
-            MPI_Barrier(MPI_COMM_WORLD);
             if(my_rank == test_rank){
                 std::cout << "local_x AFTER comm, AFTER SPMV, AFTER swap: " << std::endl;
                 for(int i = 0; i < local_x.size(); ++i){
@@ -509,7 +562,6 @@ void bench_spmv_scs(
     // from the scs formatted local_y_scs, and assign to local_y
     // std::vector<VT> local_y(scs.n_rows, 0);
 
-    // TODO: uncomment
     for (IT i = 0; i < scs.old_to_new_idx.n_rows; ++i)
     {
         (*y_out)[i] = local_x[scs.old_to_new_idx[i]];
@@ -518,7 +570,7 @@ void bench_spmv_scs(
     // TODO: move to the heap
     // delete[] shift_arr;
     // delete[] incidence_arr;
-    // delete[] global_needed_heri;
+    delete[] global_needed_heri;
 
     double mem_matrix_b =
             (double)sizeof(VT) * scs.n_elements     // values

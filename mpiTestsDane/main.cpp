@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -171,6 +172,7 @@ bench_spmv(
 template<typename VT, typename IT>
 void write_results_to_file(
     const std::string *file_name_str,
+    const std::string *seg_method,
     Config *config,
     BenchmarkResult<VT, IT> *r,
     std::vector<double> x
@@ -179,14 +181,16 @@ void write_results_to_file(
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     
     char filename[] = "spmv_mkl_compare.txt";
-    int width = 16;
+    int width = 20;
+    double relative_diff;
     std::fstream appendFileToWorkWith;
 
     std::cout.precision(10);
 
     appendFileToWorkWith.open(filename, std::fstream::in | std::fstream::out | std::fstream::app);
-    appendFileToWorkWith << *file_name_str << " with C = " << config->chunk_size << " and dt = " << typeid(VT).name() << " and rev = " << config->n_repetitions << std::endl;
-    appendFileToWorkWith << "Number of processes: " << comm_size << "\n" << std::endl;
+    appendFileToWorkWith << *file_name_str << " with C: " << config->chunk_size << ", data_type: " <<
+    typeid(VT).name() << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
+    appendFileToWorkWith << "Number of MPI processes: " << comm_size << "\n" << std::endl;
 
     // relative difference := (final_val - initial_val) / final_val
     appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
@@ -198,10 +202,30 @@ void write_results_to_file(
                 << std::left << std::setw(width) << "-------------" << std::endl;
 
     for(IT i = 0; i < r->total_spmvm_result.size(); ++i){
+
+        relative_diff = (x[i] - r->total_spmvm_result[i])/x[i];
+
+
+        if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
         appendFileToWorkWith << std::left << std::setw(width) << x[i]
                     << std::left << std::setw(width) << r->total_spmvm_result[i]
-                    << std::left  << 100 * (x[i] - r->total_spmvm_result[i])/x[i] << std::left << "%"
+                    << std::left  << 100 * relative_diff << std::left << "%"
+                    << std::right << std::setw(width) << "ERROR"
+                    << std::endl; 
+        }
+        else if(abs(relative_diff) > .0001){
+        appendFileToWorkWith << std::left << std::setw(width) << x[i]
+                    << std::left << std::setw(width) << r->total_spmvm_result[i]
+                    << std::left  << 100 * relative_diff << std::left << "%"
+                    << std::right << std::setw(width) << "WARNING"
+                    << std::endl; 
+        }
+        else{
+        appendFileToWorkWith << std::left << std::setw(width) << x[i]
+                    << std::left << std::setw(width) << r->total_spmvm_result[i]
+                    << std::left  << 100 * relative_diff << std::left << "%"
                     << std::endl;
+        }
     }
     appendFileToWorkWith << "\n";
     appendFileToWorkWith.close();
@@ -210,6 +234,7 @@ void write_results_to_file(
 template<typename VT, typename IT>
 void validate_mkl(
     const std::string *file_name_str,
+    const std::string *seg_method,
     Config *config,
     BenchmarkResult<VT, IT> *r
 ){
@@ -270,7 +295,7 @@ void validate_mkl(
     // }
 
     // output comparison with r object
-    write_results_to_file<VT, IT>(file_name_str, config, r, x);
+    write_results_to_file<VT, IT>(file_name_str, seg_method, config, r, x);
 }
 
 
@@ -606,7 +631,7 @@ int main(int argc, char *argv[])
 
         if(my_rank == 0){
             if(config.verify_result){
-                validate_mkl<float, int>(&file_name_str, &config, &r);
+                validate_mkl<float, int>(&file_name_str, &seg_method, &config, &r);
             }
         }
     }
@@ -617,7 +642,7 @@ int main(int argc, char *argv[])
 
         if(my_rank == 0){
             if(config.verify_result){
-                validate_mkl<double, int>(&file_name_str, &config, &r);
+                validate_mkl<double, int>(&file_name_str, &seg_method, &config, &r);
             }
         }
     }
