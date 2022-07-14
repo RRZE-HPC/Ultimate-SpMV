@@ -13,9 +13,11 @@
     Collect the row indicies of the halo elements needed for this process, which is used to generate a valid local_x to perform the SPMVM.
         These are organized/encoded as 3-tuples in an array, of the form (proc_to, proc_from, global_row_idx). The global_row_idx
         refers to the "global" x vector, this will be adjusted (localized) later when said element is "retrieved".
+
+    @brief Collect the row indicies of the halo elements needed for this process
     @param *local_needed_heri : pointer to vector that contains encoded 3-tuples of the form (proc_to, proc_from, global_row_idx)
     @param *local_mtx : pointer to local mtx struct
-    @return N/A : local_needed_heri populated by pointer reference
+    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
 */
 template <typename VT, typename IT>
 void collect_local_needed_heri(
@@ -89,11 +91,10 @@ void collect_local_needed_heri(
 }
 
 /**
-    By using the global_needed_heri array, we can push back all the heri this process will need to send onto to_send_heri.
+    @brief By using the global_needed_heri array, we can push back all the heri this process will need to send onto to_send_heri.
     @param *to_send_heri : heri to send from this process
     @param *local_needed_heri : the heri needed by this process
     @param *global_needed_heri : array containing all the needed heri tuple encodings
-    @return N/A, to_send_heri populated by pointer reference
 */
 template <typename IT>
 void collect_to_send_heri(
@@ -156,13 +157,12 @@ void collect_to_send_heri(
 }
 
 /**
-    Pre-calculate the shift for each given proc_to and proc_from, to look it up quickly in the benchmark loop later. Used in the tag-generation scheme in halo communication.
+    @brief Pre-calculate the shift for each given proc_to and proc_from, to look it up quickly in the benchmark loop later. Used in the tag-generation scheme in halo communication.
     @param *global_needed_heri : array containing all the needed heri tuple encodings
     @param *global_needed_heri_size : the size of heri needed across all processes
     @param *shift_arr : Essentially a cumulative from top -> bottom of incedence_arr. The row idx is the "from_proc",
         the column is the "to_proc", and the element is the shift after the local element index to make for the incoming halo elements
     @param *incidence_arr : uses the global_needed_heri to keep track of which processes communicate with which.
-    @return N/A : shift_arr and incidence_arr populated by pointer reference
 */
 template <typename IT>
 void calc_heri_shifts(
@@ -205,6 +205,8 @@ void calc_heri_shifts(
         The shift_arr created earlier is essential is creating a unique tag for the datamoving around between local_x buffers on each process.
         Recall, tuple elements in needed_heri are formatted (proc_to, proc_from, global_row_idx).
         Since this function is in the benchmark loop, need to do as little work possible, ideally.
+
+    @brief Communicate the halo elements to and from the local x-vectors
     @param *local_needed_heri : the heri needed by this process
     @param *to_send_heri : heri to send from this process
     @param *local_x : the x vector corresponding to this process before the halo elements are communicated to it.
@@ -212,7 +214,6 @@ void calc_heri_shifts(
     @param *shift_arr : Essentially a cumulative from top -> bottom of incedence_arr. The row idx is the "from_proc",
         the column is the "to_proc", and the element is the shift after the local element index to make for the incoming halo elements
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
-    @return N/A : the local_x vectors recieve communicated elements through pointers
 */
 template <typename VT, typename IT>
 void communicate_halo_elements(
@@ -361,10 +362,12 @@ void communicate_halo_elements(
 /**
     Adjust the col_idx from the scs data structure, so that elements of scs.values will multiply with the proper local_x elements.
         "local" elements of scs.values have their col_idx adjusted differently than "remote" elements of scs.values.
+
+    @brief Adjust the col_idx from the scs data structure
+    @param *local_mtx : Very similar to the original mtx struct, but constructed here with row, col, and value data sent to this particular process.
     @param *scs : struct that contains the local_mtx struct data, where row idx, col idx, etc. adjusted to sell-c-sigma format
     @param *amnt_local_elements : the length of local_x before halo elements are communicated to it
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
-    @return N/A : the scs.col_idx are adjusted through pointers
 */
 template <typename VT, typename IT>
 void adjust_halo_col_idxs(
@@ -442,13 +445,12 @@ void adjust_halo_col_idxs(
 }
 
 /**
-    Partition the rows of the mtx structure, so that work is disributed (somewhat) evenly. The two options "seg-rows"
+    @brief Partition the rows of the mtx structure, so that work is disributed (somewhat) evenly. The two options "seg-rows"
         and "seg-nnz" are there in an effort to have multiple load balancing techniques the segment work between processes.
     @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param comm_size : size of mpi communicator
-    @return N/A : work_sharing_arr populated through pointers
 */
 template <typename VT, typename IT>
 void seg_work_sharing_arr(
@@ -511,7 +513,7 @@ void seg_work_sharing_arr(
         work_sharing_arr[comm_size] = mtx->I[mtx->nnz - 1] + 1;
     }
 
-    // Protect against edge case, wherelast process gets no work
+    // Protect against edge case, where last process gets no work
     // if(work_sharing_arr[comm_size] == work_sharing_arr[comm_size]){
     //     for(IT loop_rank = 1; loop_rank < comm_size; ++loop_rank){
     //         work_sharing_arr[loop_rank] -= 1;
@@ -522,13 +524,14 @@ void seg_work_sharing_arr(
 /**
     Collect row idxs, col idxs, and corresponding values from the original mtx structure in order to distribute to the other processes.
         The idea is to reconstruct into local mtx structures on each process after communication.
+
+    @brief Collect indices into local vectors
     @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h
     @param *local_I : pointer to the vector to contain the row idx data, taken from original mtx struct
     @param *local_J : pointer to the vector to contain the col idx data, taken from original mtx struct
     @param *local_vals : pointer to the vector to contain the value data, taken from original mtx struct
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
     @param *loop_rank : the current rank that data is being segmented for
-    @return N/A : local_I, local_J, and local_vals are populated by pointers
 */
 template <typename VT, typename IT>
 void seg_mtx_struct(
@@ -576,10 +579,9 @@ void seg_mtx_struct(
 }
 
 /**
-    Create custom bookkeeping datatype, in order to more easily keep track of meta data.
+    @brief Create custom bookkeeping datatype, in order to more easily keep track of meta data.
     @param *send_bk : an instance of bk_type, for the data sent from root to other processes
     @param *bk_type : a constructed datatype for mpi to keep track of bookkeeping data for the local mtx structure
-    @return N/A : bk_type is commited by pointer
 */
 template <typename IT>
 void define_bookkeeping_type(
@@ -606,7 +608,7 @@ void define_bookkeeping_type(
 }
 
 /**
-    Data from the original mtx data structure is partitioned and sent to corresponding processes.
+    @brief Data from the original mtx data structure is partitioned and sent to corresponding processes.
     @param *local_mtx : Very similar to the original mtx struct, but constructed here with row, col, and value data sent to this particular process.
     @param *config : struct to initialze default values and user input
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
@@ -614,7 +616,6 @@ void define_bookkeeping_type(
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
     @param my_rank : current process number
     @param comm_size : size of mpi communicator
-    @return N/A : local_mtx populated through pointers
 */
 template <typename VT, typename IT>
 void seg_and_send_data(
@@ -640,20 +641,6 @@ void seg_and_send_data(
         // NOTE: Matrix will be read in as SORTED by default
         // Only root proc will read entire matrix
         MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str->c_str(), config->sort_matrix);
-
-        // int ctr = 0;
-        // for(int row = 0; row < mtx.n_rows; ++row){
-        //     for(int col = 0; col < mtx.n_cols; ++col){
-        //         if(mtx.I[ctr] == row && mtx.J[ctr] == col){
-        //             std::cout << std::left << ", " << mtx.values[ctr];
-        //             ++ctr;
-        //         }
-        //         else{
-        //             std::cout << std::left << ",  ";
-        //         }
-        //     }
-        //     printf("\n");
-        // }
 
         // Segment global row pointers, and place into an array
         seg_work_sharing_arr<VT, IT>(&mtx, work_sharing_arr, seg_method, comm_size);

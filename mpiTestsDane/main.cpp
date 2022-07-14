@@ -38,14 +38,14 @@
 #endif
 
 /**
-    Select the matrix format, and benchmark the spmvm kernal
-    @param *config : 
-    @param *mtx : 
-    @param *work_sharing_arr : 
-    @param *y_out : 
-    @param *defaults : 
-    @param *x_in : 
-    @return
+    @brief Select the matrix format, and benchmark the spmvm kernal
+    @param *config : struct to initialze default values and user input
+    @param *mtx : mtx data struct, read in from matrix market format reader mtx-reader.h
+    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *y_out : the vector declared to either hold the process local result, 
+        or the global result if verification is selected as an option
+    @param *defaults : a DefaultValues struct, in which default values of x and y can be defined
+    @param *x_in : if one wishes to start with a pre-defined x vector
 */
 template <typename VT, typename IT>
 static void
@@ -103,13 +103,23 @@ bench_spmv(
     }
 }
 
+/**
+    @brief Write the comparison results to an external text file for validation
+    @param *file_name_str : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *config : struct to initialze default values and user input
+    @param *y_out : the vector declared to either hold the process local result, 
+        or the global result if verification is selected as an option
+    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *x : the output from the mkl routine, against which we verify our spmvm result
+*/
 template<typename VT, typename IT>
 void write_results_to_file(
     const std::string *file_name_str,
     const std::string *seg_method,
     Config *config,
     BenchmarkResult<VT, IT> *r,
-    std::vector<double> x
+    std::vector<double> *x
 ){
     IT comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
@@ -136,25 +146,25 @@ void write_results_to_file(
 
     for(IT i = 0; i < r->total_spmvm_result.size(); ++i){
         // relative difference := (final_val - initial_val) / final_val
-        relative_diff = (x[i] - r->total_spmvm_result[i])/x[i];
+        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
 
 
         if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
-        appendFileToWorkWith << std::left << std::setw(width) << x[i]
+        appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
                     << std::left << std::setw(width) << r->total_spmvm_result[i]
                     << std::left  << 100 * relative_diff << std::left << "%"
                     << std::right << std::setw(width) << "ERROR"
                     << std::endl; 
         }
         else if(abs(relative_diff) > .0001){
-        appendFileToWorkWith << std::left << std::setw(width) << x[i]
+        appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
                     << std::left << std::setw(width) << r->total_spmvm_result[i]
                     << std::left  << 100 * relative_diff << std::left << "%"
                     << std::right << std::setw(width) << "WARNING"
                     << std::endl; 
         }
         else{
-        appendFileToWorkWith << std::left << std::setw(width) << x[i]
+        appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
                     << std::left << std::setw(width) << r->total_spmvm_result[i]
                     << std::left  << 100 * relative_diff << std::left << "%"
                     << std::endl;
@@ -164,6 +174,13 @@ void write_results_to_file(
     appendFileToWorkWith.close();
 }
 
+/**
+    @brief Read in the mtx struct to csr format, and use the mkl_dcsrmv to validate our result against
+    @param *file_name_str : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *config : struct to initialze default values and user input
+    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+*/
 template<typename VT, typename IT>
 void validate_mkl(
     const std::string *file_name_str,
@@ -217,16 +234,16 @@ void validate_mkl(
     }
 
     // output comparison with r object
-    write_results_to_file<VT, IT>(file_name_str, seg_method, config, r, x);
+    write_results_to_file<VT, IT>(file_name_str, seg_method, config, r, &x);
 }
 
 
 /**
-    Description...
-    @param *file_name : 
-    @param *seg_method : 
-    @param *config : 
-    @return
+    @brief The main harness, in which we segment and execute the work to be done. Validation happens outside this routine
+    @param *file_name : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *config : struct to initialze default values and user input
+    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
 */
 template <typename VT, typename IT>
 void compute_result(
@@ -344,13 +361,13 @@ void compute_result(
 }
 
 /**
-    Description...
-    @param *file_name_str : 
-    @param *seg_method : 
-    @param *value_type : 
-    @param *random_init_x : 
-    @param *config : 
-    @return
+    @brief Scan user cli input to variables, and verify that the entered parameters are valid
+    @param *file_name_str : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *value_type : either single precision (/float/-sp) or double precision (/double/-dp)
+    @param *random_init_x : decides if our generated x-vector is randomly generated, 
+        or made from the default value defined in the DefaultValues struct
+    @param *config : struct to initialze default values and user input
 */
 void verifyAndAssignInputs(
     int argc,

@@ -2,18 +2,16 @@
 #define KERNELS
 
 #include <mpi.h>
-// #include <set>
 
 #include "mpi_funcs.hpp"
 #include "structs.hpp"
 
 /**
-    Convert mtx struct to sell-c-sigma data structures.
-    @param *mtx : 
-    @param C : 
-    @param sigma : 
-    @param *d : 
-    @return
+    @brief Convert mtx struct to sell-c-sigma data structures.
+    @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h 
+    @param C : chunk height
+    @param sigma : sorting scope
+    @param *d : The ScsData struct to populate with data
 */
 template <typename VT, typename IT>
 void convert_to_scs(
@@ -163,15 +161,15 @@ void convert_to_scs(
 // TODO: what do I return for this?
 // NOTE: every process will return something...
 /**
-    Description...
-    @param *config : 
-    @param *local_mtx : 
-    @param *work_sharing_arr : 
-    @param *y_out : 
-    @param *x_out : 
-    @param *defaults : 
-    @param *x_in : 
-    @return
+    @brief Collect halo element row indices for each local x-vector, and perform SPMVM
+    @param *config : struct to initialze default values and user input
+    @param *local_mtx : pointer to local mtx struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *y_out : the vector declared to either hold the process local result, 
+        or the global result if verification is selected as an option
+    @param *x_out : the local x-vector, which is collect to the root process for mkl validation later
+    @param *defaults : a DefaultValues struct, in which default values of x and y can be defined
+    @param *x_in : optional input vector for x
 */
 template <typename VT, typename IT>
 void bench_spmv_scs(
