@@ -62,7 +62,7 @@ struct Config
     std::string mode = "bench"; 
 
     // Selects the default matrix storage format
-    std::string matrix_format = "scs"; 
+    std::string kernel_format = "scs"; 
 };
 
 template <typename VT, typename IT>
