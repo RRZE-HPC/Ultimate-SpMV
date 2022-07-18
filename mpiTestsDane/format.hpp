@@ -2,6 +2,7 @@
 #define KERNELS
 
 #include <mpi.h>
+#include <algorithm>
 
 #include "mpi_funcs.hpp"
 #include "structs.hpp"
@@ -192,22 +193,20 @@ void bench_spmv_scs(
 
     convert_to_scs<VT, IT>(local_mtx, config->chunk_size, config->sigma, &scs);
 
-    // This y is only process local. Need an Allgather for each proc to have
-    // all of the solution segments
-    V<VT, IT> local_y_scs = V<VT, IT>(scs.n_rows_padded);
 
-    std::uninitialized_fill_n(local_y_scs.data(), local_y_scs.n_rows, defaults->y);
 
-    IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
+
+    // TODO: How bad is this for scalability? Is there a way around this?
+    std::vector<VT> local_y_scs_vec(scs.n_rows_padded, 0); //necessary ^^?
+
+    // IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
 
     IT amnt_local_elements = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
     adjust_halo_col_idxs<VT, IT>(local_mtx, &scs, &amnt_local_elements, work_sharing_arr);
 
     std::vector<VT> local_x(amnt_local_elements, 0);
-    std::vector<VT> temp_vec(amnt_local_elements, 0);
 
-    // Did I write this function?
     init_std_vec_with_ptr_or_value(local_x, local_x.size(), x_in,
                                    defaults->x, config->random_init_x);
 
@@ -225,8 +224,6 @@ void bench_spmv_scs(
     //     // the object returned will be the benchmark results
     // }
 
-    // TODO: How bad is this for scalability? Is there a way around this?
-    std::vector<VT> local_y_scs_vec(local_y_scs.data(), local_y_scs.data() + local_y_scs.n_rows);
 
     // heri := halo element row indices
     // "local_needed_heri" is all the halo elements that this process needs
@@ -275,18 +272,23 @@ void bench_spmv_scs(
     calc_heri_shifts<IT>(global_needed_heri, &global_needed_heri_size, shift_arr, incidence_arr); // NOTE: always symmetric?
 
     // NOTE: should always be a multiple of 3
-    IT local_x_padding = local_needed_heri.size() / 3;
+    IT local_x_needed_padding = local_needed_heri.size() / 3;
+
+    IT padding_for_x_and_y = std::max(local_x_needed_padding, (int)config->chunk_size);
 
     // Prepare buffers for communication
     // int local_x_original_size = local_x.size();
-    local_x.resize(local_x.size() + local_x_padding);
-    int local_x_padded_size = local_x.size();
+    // local_x.resize(local_x.size() + local_x_needed_padding);
+    // int local_x_padded_size = local_x.size();
+    local_x.resize(local_x.size() + padding_for_x_and_y);
+    local_y_scs_vec.resize(local_y_scs_vec.size() + padding_for_x_and_y);
+
 
     int show_steps = 0;
     // Enter main loop
     for (IT i = 0; i < config->n_repetitions; ++i)
     {
-        int test_rank = 0;
+        int test_rank = 1;
 
         if(show_steps){
             if(my_rank == test_rank){
@@ -304,7 +306,8 @@ void bench_spmv_scs(
         }
 
         communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
-        MPI_Barrier(MPI_COMM_WORLD); //necessary?
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // and MPI_Waitall(); ^^ these two necessary for non-blocking comm?
 
         if(show_steps){
             if(my_rank == test_rank){
@@ -358,8 +361,8 @@ void bench_spmv_scs(
             }
         }
 
-        local_y_scs_vec.resize(local_x.size(), 0);
-        local_x.resize(local_x_padded_size);
+        // local_y_scs_vec.resize(local_x.size(), 0);
+        // local_x.resize(local_x_padded_size);
 
         if(show_steps){
             if(my_rank == test_rank){

@@ -104,7 +104,7 @@ bench_spmv(
 }
 
 /**
-    @brief Write the comparison results to an external text file for validation
+    @brief Write the double precision comparison results to an external text file for validation
     @param *file_name_str : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
@@ -113,108 +113,316 @@ bench_spmv(
     @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
     @param *x : the output from the mkl routine, against which we verify our spmvm result
 */
-template<typename VT, typename IT>
-void write_results_to_file(
+void write_dp_result_to_file(
     const std::string *file_name_str,
     const std::string *seg_method,
     Config *config,
-    BenchmarkResult<VT, IT> *r,
+    BenchmarkResult<double, int> *r,
     std::vector<double> *x
 ){
-    IT comm_size;
+    int comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     
     char filename[] = "spmv_mkl_compare.txt";
-    int width = 20;
-    double relative_diff;
+    int width;
+    double relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
+    double absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
     std::fstream appendFileToWorkWith;
 
-    std::cout.precision(10);
+    max_relative_diff = 0;
+    max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
+    max_relative_diff_elem_mkl = (*x)[0];
 
+    max_absolute_diff = 0;
+    max_absolute_diff_elem_spmvm = r->total_spmvm_result[0];
+    max_absolute_diff_elem_mkl = (*x)[0];
+
+    std::cout.precision(16);
+
+    // Print parameters
     appendFileToWorkWith.open(filename, std::fstream::in | std::fstream::out | std::fstream::app);
-    appendFileToWorkWith << *file_name_str << " with C: " << config->chunk_size << ", data_type: " <<
-    typeid(VT).name() << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
-    appendFileToWorkWith << "Number of MPI processes: " << comm_size << "\n" << std::endl;
+    appendFileToWorkWith << *file_name_str << " with " << comm_size << " MPI processes" << std::endl; 
+    appendFileToWorkWith << "C: " << config->chunk_size << ", data_type: " <<
+    'd' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
+    appendFileToWorkWith << std::endl;
 
-    appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
-                << std::left << std::setw(width) << "spmv results:"
-                << std::left << std::setw(width) << "relative diff:" << std::endl;
+    // Print header
+    if(config->verbose_validation == 1){
+        width = 16;
 
-    appendFileToWorkWith << std::left << std::setw(width) << "-----------"
-                << std::left << std::setw(width) << "------------"
-                << std::left << std::setw(width) << "-------------" << std::endl;
+        appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
+                    << std::left << std::setw(width) << "spmv results:"
+                    << std::left << std::setw(width) << "rel. diff(%):" 
+                    << std::left << std::setw(width) << "abs. diff:" << std::endl;
 
-    for(IT i = 0; i < r->total_spmvm_result.size(); ++i){
-        // relative difference := (final_val - initial_val) / final_val
-        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
-
-
-        if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
-        appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
-                    << std::left << std::setw(width) << r->total_spmvm_result[i]
-                    << std::left  << 100 * relative_diff << std::left << "%"
-                    << std::right << std::setw(width) << "ERROR"
-                    << std::endl; 
-        }
-        else if(abs(relative_diff) > .0001){
-        appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
-                    << std::left << std::setw(width) << r->total_spmvm_result[i]
-                    << std::left  << 100 * relative_diff << std::left << "%"
-                    << std::right << std::setw(width) << "WARNING"
-                    << std::endl; 
-        }
-        else{
-        appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
-                    << std::left << std::setw(width) << r->total_spmvm_result[i]
-                    << std::left  << 100 * relative_diff << std::left << "%"
+        appendFileToWorkWith << std::left << std::setw(width) << "-----------"
+                    << std::left << std::setw(width) << "------------"
+                    << std::left << std::setw(width) << "------------"
+                    << std::left << std::setw(width) << "---------" << std::endl;
+    }
+    else if(config->verbose_validation == 0){
+        width = 18;
+        appendFileToWorkWith 
+                    << std::left << std::setw(width-2) << "mkl rel. elem:"
+                    << std::left << std::setw(width) << "spmvm rel. elem:"
+                    << std::left << std::setw(width) << "MAX rel. diff(%):" 
+                    << std::left << std::setw(width-1) << "mkl abs. elem:"
+                    << std::left << std::setw(width) << "spmvm abs. elem:"
+                    << std::left << std::setw(width) << "MAX abs. diff:"
                     << std::endl;
+
+        appendFileToWorkWith 
+                    << std::left << std::setw(width-2) << "-------------"
+                    << std::left << std::setw(width) << "---------------"
+                    << std::left << std::setw(width) << "----------------"
+                    << std::left << std::setw(width-1) << "-------------"
+                    << std::left << std::setw(width) << "---------------"
+                    << std::left << std::setw(width) << "-------------" << std::endl;
+    }
+    for(int i = 0; i < r->total_spmvm_result.size(); ++i){
+        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
+        absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
+        
+        if(config -> verbose_validation == 1)
+        {
+            appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
+                        << std::left << std::setw(width) << r->total_spmvm_result[i]
+                        << std::left << std::setw(width) << 100 * relative_diff
+                        << std::left  << std::setw(width) << absolute_diff;
+
+            if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
+                appendFileToWorkWith << std::left << std::setw(width) << "ERROR";
+            }
+            else if(abs(relative_diff) > .0001){
+                appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+            }
+
+        appendFileToWorkWith << std::endl;
         }
+        else if(config -> verbose_validation == 0)
+        {
+            if(relative_diff > max_relative_diff){
+                max_relative_diff = relative_diff;
+                max_relative_diff_elem_spmvm = r->total_spmvm_result[i];
+                max_relative_diff_elem_mkl = (*x)[i];
+            }
+            if(absolute_diff > max_absolute_diff){
+                max_absolute_diff = absolute_diff;
+                max_absolute_diff_elem_spmvm = r->total_spmvm_result[i];
+                max_absolute_diff_elem_mkl = (*x)[i];
+            }
+        }
+        else
+        {
+            std::cout << "Validation verbose level not recognized" << std::endl;
+            exit(1);
+        }
+    }
+    if(config->verbose_validation == 0)
+    {
+        appendFileToWorkWith 
+                    << std::left << std::setw(width) << max_relative_diff_elem_mkl
+                    << std::left << std::setw(width) << max_relative_diff_elem_spmvm
+                    << std::left << std::setw(width) << 100 * max_relative_diff
+                    << std::left << std::setw(width) << max_absolute_diff_elem_mkl
+                    << std::left << std::setw(width) << max_absolute_diff_elem_spmvm
+                    << std::left << std::setw(width) << max_absolute_diff;
+                         
+        if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
+        ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
+        appendFileToWorkWith << std::left << std::setw(width) << "ERROR";       
+        }
+        else if(abs(max_relative_diff) > .0001){
+        appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+        }
+
+        appendFileToWorkWith << std::endl;
+    }
+    appendFileToWorkWith << "\n";
+    appendFileToWorkWith.close();
+}
+
+
+/**
+    @brief Write the single precision comparison results to an external text file for validation
+    @param *file_name_str : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *config : struct to initialze default values and user input
+    @param *y_out : the vector declared to either hold the process local result, 
+        or the global result if verification is selected as an option
+    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *x : the output from the mkl routine, against which we verify our spmvm result
+*/
+void write_sp_result_to_file(
+    const std::string *file_name_str,
+    const std::string *seg_method,
+    Config *config,
+    BenchmarkResult<float, int> *r,
+    std::vector<float> *x
+){
+    int comm_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+    
+    char filename[] = "spmv_mkl_compare.txt";
+    int width;
+    float relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
+    float absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
+    std::fstream appendFileToWorkWith;
+
+    max_relative_diff = 0;
+    max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
+    max_relative_diff_elem_mkl = (*x)[0];
+
+    max_absolute_diff = 0;
+    max_absolute_diff_elem_spmvm = r->total_spmvm_result[0];
+    max_absolute_diff_elem_mkl = (*x)[0];
+
+    std::cout.precision(8);
+
+    // Print parameters
+    appendFileToWorkWith.open(filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    appendFileToWorkWith << *file_name_str << " with " << comm_size << " MPI processes" << std::endl; 
+    appendFileToWorkWith << "C: " << config->chunk_size << ", data_type: " <<
+    'f' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
+    appendFileToWorkWith << std::endl;
+
+    // Print header
+    if(config->verbose_validation == 1){
+        width = 16;
+
+        appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
+                    << std::left << std::setw(width) << "spmv results:"
+                    << std::left << std::setw(width) << "rel. diff(%):" 
+                    << std::left << std::setw(width) << "abs. diff:" << std::endl;
+
+        appendFileToWorkWith << std::left << std::setw(width) << "-----------"
+                    << std::left << std::setw(width) << "------------"
+                    << std::left << std::setw(width) << "------------"
+                    << std::left << std::setw(width) << "---------" << std::endl;
+    }
+    else if(config->verbose_validation == 0){
+        width = 18;
+        appendFileToWorkWith 
+                    << std::left << std::setw(width-2) << "mkl rel. elem:"
+                    << std::left << std::setw(width) << "spmvm rel. elem:"
+                    << std::left << std::setw(width) << "MAX rel. diff(%):" 
+                    << std::left << std::setw(width-1) << "mkl abs. elem:"
+                    << std::left << std::setw(width) << "spmvm abs. elem:"
+                    << std::left << std::setw(width) << "MAX abs. diff:"
+                    << std::endl;
+
+        appendFileToWorkWith 
+                    << std::left << std::setw(width-2) << "-------------"
+                    << std::left << std::setw(width) << "---------------"
+                    << std::left << std::setw(width) << "----------------"
+                    << std::left << std::setw(width-1) << "-------------"
+                    << std::left << std::setw(width) << "---------------"
+                    << std::left << std::setw(width) << "-------------" << std::endl;
+    }
+    for(int i = 0; i < r->total_spmvm_result.size(); ++i){
+        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
+        absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
+        
+        if(config -> verbose_validation == 1)
+        {
+            appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
+                        << std::left << std::setw(width) << r->total_spmvm_result[i]
+                        << std::left << std::setw(width) << 100 * relative_diff
+                        << std::left  << std::setw(width) << absolute_diff;
+
+            if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
+                appendFileToWorkWith << std::left << std::setw(width) << "ERROR";
+            }
+            else if(abs(relative_diff) > .0001){
+                appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+            }
+
+        appendFileToWorkWith << std::endl;
+        }
+        else if(config -> verbose_validation == 0)
+        {
+            if(relative_diff > max_relative_diff){
+                max_relative_diff = relative_diff;
+                max_relative_diff_elem_spmvm = r->total_spmvm_result[i];
+                max_relative_diff_elem_mkl = (*x)[i];
+            }
+            if(absolute_diff > max_absolute_diff){
+                max_absolute_diff = absolute_diff;
+                max_absolute_diff_elem_spmvm = r->total_spmvm_result[i];
+                max_absolute_diff_elem_mkl = (*x)[i];
+            }
+        }
+        else
+        {
+            std::cout << "Validation verbose level not recognized" << std::endl;
+            exit(1);
+        }
+    }
+    if(config->verbose_validation == 0)
+    {
+        appendFileToWorkWith 
+                    << std::left << std::setw(width) << max_relative_diff_elem_mkl
+                    << std::left << std::setw(width) << max_relative_diff_elem_spmvm
+                    << std::left << std::setw(width) << 100 * max_relative_diff
+                    << std::left << std::setw(width) << max_absolute_diff_elem_mkl
+                    << std::left << std::setw(width) << max_absolute_diff_elem_spmvm
+                    << std::left << std::setw(width) << max_absolute_diff;
+                         
+        if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
+        ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
+        appendFileToWorkWith << std::left << std::setw(width) << "ERROR";       
+        }
+        else if(abs(max_relative_diff) > .0001){
+        appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+        }
+
+        appendFileToWorkWith << std::endl;
     }
     appendFileToWorkWith << "\n";
     appendFileToWorkWith.close();
 }
 
 /**
-    @brief Read in the mtx struct to csr format, and use the mkl_dcsrmv to validate our result against
+    @brief Read in the mtx struct to csr format, and use the mkl_dcsrmv to validate our double precision result against mkl
     @param *file_name_str : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
     @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
 */
-template<typename VT, typename IT>
-void validate_mkl(
+void validate_dp_result(
     const std::string *file_name_str,
     const std::string *seg_method,
     Config *config,
-    BenchmarkResult<VT, IT> *r
-){
-    // NOTE: Really have to read in this whole thing?
-    MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str->c_str(), config->sort_matrix);
+    BenchmarkResult<double, int> *r,
+    std::vector<double> *mkl_dp_result
+){    
+    // Root process reads in matrix again, for mkl
+    MtxData<double, int> mtx = read_mtx_data<double, int>(file_name_str->c_str(), config->sort_matrix);
 
-    // Promote datatype to double
-    std::vector<double> x(mtx.n_rows, 0);
-    std::vector<double> y(mtx.n_rows, 0);
+    int num_rows = mtx.n_rows;
+    int num_cols = mtx.n_cols;
 
-    V<VT, IT> values;
-    V<IT, IT> col_idxs;
-    V<IT, IT> row_ptrs;
+    mkl_dp_result->resize(num_rows, 0);
+    std::vector<double> y(num_rows, 0);
 
-    convert_to_csr(mtx, row_ptrs, col_idxs, values);
+    V<double, int> values;
+    V<int, int> col_idxs;
+    V<int, int> row_ptrs;
+
+    convert_to_csr<double, int>(mtx, row_ptrs, col_idxs, values);
 
     // Promote values to doubles
-    std::vector<double> values_vec(values.data(), values.data() + values.n_rows);
+    // std::vector<VT> values_vec(values.data(), values.data() + values.n_rows);
         
-    for (IT i = 0; i < mtx.n_rows; i++) {
-        x[i] = (double)(r->total_x)[i];
+    for (int i = 0; i < num_rows; i++) {
+        (*mkl_dp_result)[i] = r->total_x[i];
     }
 
-    for (IT i = 0; i < mtx.n_rows; i++) {
+    for (int i = 0; i < num_cols; i++) {
         y[i] = 0.0;
     }
 
     char transa = 'n';
-    int num_rows = mtx.n_rows;
-    int num_cols = mtx.n_cols;
     double alpha = 1.0;
     double beta = 0.0; 
     char matdescra [4] = {
@@ -225,21 +433,69 @@ void validate_mkl(
 
     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
-
-    for(IT i = 0; i < config->n_repetitions; ++i){
-        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], &values_vec[0], &(col_idxs.data())[0], &(row_ptrs.data())[0], &(row_ptrs.data())[1], &x[0], &beta, &y[0]);
-
-        // NOTE: no need to resize, due to crs format
-        std::swap(x, y);
+    for(int i = 0; i < config->n_repetitions; ++i){
+        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
+        std::swap(*mkl_dp_result, y);
     }
-
-    // output comparison with r object
-    write_results_to_file<VT, IT>(file_name_str, seg_method, config, r, &x);
 }
 
+/**
+    @brief Read in the mtx struct to csr format, and use the mkl_scsrmv to validate our single precision result against mkl
+    @param *file_name_str : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *config : struct to initialze default values and user input
+    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+*/
+void validate_sp_result(
+    const std::string *file_name_str,
+    const std::string *seg_method,
+    Config *config,
+    BenchmarkResult<float, int> *r,
+    std::vector<float> *mkl_sp_result
+){    
+    // Root process reads in matrix again, for mkl
+    MtxData<float, int> mtx = read_mtx_data<float, int>(file_name_str->c_str(), config->sort_matrix);
+
+    int num_rows = mtx.n_rows;
+    int num_cols = mtx.n_cols;
+
+    mkl_sp_result->resize(num_rows, 0);
+    std::vector<float> y(num_rows, 0);
+
+    V<float, int> values;
+    V<int, int> col_idxs;
+    V<int, int> row_ptrs;
+
+    convert_to_csr<float, int>(mtx, row_ptrs, col_idxs, values);
+        
+    for (int i = 0; i < num_rows; i++) {
+        (*mkl_sp_result)[i] = r->total_x[i];
+    }
+
+    for (int i = 0; i < num_cols; i++) {
+        y[i] = 0.0;
+    }
+
+    char transa = 'n';
+    float alpha = 1.0;
+    float beta = 0.0; 
+    char matdescra [4] = {
+        'G', // general matrix
+        ' ', // ignored
+        ' ', // ignored
+        'C'}; // zero-based indexing (C-style)
+
+    // Computes y := alpha*A*x + beta*y, for A -> m * k, 
+    // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
+    for(int i = 0; i < config->n_repetitions; ++i){
+        mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
+        std::swap(*mkl_sp_result, y);
+    }
+}
 
 /**
-    @brief The main harness, in which we segment and execute the work to be done. Validation happens outside this routine
+    @brief The main harness for the rest of the functions, in which we segment and execute the work to be done.
+        Validation happens outside this routine
     @param *file_name : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
@@ -272,6 +528,82 @@ void compute_result(
 
     seg_and_send_data<VT, IT>(&local_mtx, config, seg_method, file_name, work_sharing_arr, my_rank, comm_size);
 
+    //     MPI_Barrier(MPI_COMM_WORLD);
+
+    // if(my_rank == 0){
+    //     int ctr = 0;
+    //     for(int row = 0; row < local_mtx.n_rows; ++row){
+    //         for(int col = 0; col < local_mtx.n_cols; ++col){
+    //             if(local_mtx.I[ctr] == row && local_mtx.J[ctr] == col){
+    //                 std::cout << std::left << ", " << local_mtx.values[ctr];
+    //                 ++ctr;
+    //             }
+    //             else{
+    //                 std::cout << std::left << ",  ";
+    //             }
+
+    //             if(col == work_sharing_arr[my_rank] || col == work_sharing_arr[my_rank + 1] - 1){
+    //                 std::cout << std::left << "|";
+    //             }
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    //     MPI_Barrier(MPI_COMM_WORLD);
+
+
+    // printf("\n");
+
+    // if(my_rank == 1){
+    //     int ctr = 0;
+    //     for(int row = 0; row < local_mtx.n_rows; ++row){
+    //         for(int col = 0; col < local_mtx.n_cols; ++col){
+    //             if(local_mtx.I[ctr] == row && local_mtx.J[ctr] == col){
+    //                 std::cout << std::left << ", " << local_mtx.values[ctr];
+    //                 ++ctr;
+    //             }
+    //             else{
+    //                 std::cout << std::left << ",  ";
+    //             }
+    //             if(col == work_sharing_arr[my_rank] - 1 || col == work_sharing_arr[my_rank + 1] - 1){
+    //                 std::cout << std::left << "|";
+    //             }
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    //     MPI_Barrier(MPI_COMM_WORLD);
+
+
+    // printf("\n");
+
+    // if(my_rank == 3){
+    //     int ctr = 0;
+    //     for(int row = 0; row < local_mtx.n_rows; ++row){
+    //         for(int col = 0; col < local_mtx.n_cols; ++col){
+    //             if(local_mtx.I[ctr] == row && local_mtx.J[ctr] == col){
+    //                 std::cout << std::left << ", " << local_mtx.values[ctr];
+    //                 ++ctr;
+    //             }
+    //             else{
+    //                 std::cout << std::left << ",  ";
+    //             }
+    //             if(col == work_sharing_arr[my_rank] - 1 || col == work_sharing_arr[my_rank + 1] - 1){
+    //                 std::cout << std::left << "|";
+    //             }
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    //     MPI_Barrier(MPI_COMM_WORLD);
+
+    // exit(0);
+
     // Each process must initially allocate space for total y vector, eventhough it is potentially resized later
     std::vector<VT> y_out(work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank], 0);
 
@@ -295,7 +627,7 @@ void compute_result(
     r->x_out = x_out;
     r->y_out = y_out;
 
-    if (config->verify_result)
+    if (config->validate_result)
     {
         // TODO: is the size correct here?
         std::vector<VT> total_spmvm_result(work_sharing_arr[comm_size], 0);
@@ -369,7 +701,7 @@ void compute_result(
         or made from the default value defined in the DefaultValues struct
     @param *config : struct to initialze default values and user input
 */
-void verifyAndAssignInputs(
+void verify_and_assign_inputs(
     int argc,
     char *argv[],
     std::string *file_name_str,
@@ -424,6 +756,16 @@ void verifyAndAssignInputs(
                 exit(1);
             }
         }
+        else if (arg == "-v")
+        {
+            config->verbose_validation = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->verbose_validation != 0 && config->verbose_validation != 1)
+            {
+                fprintf(stderr, "ERROR: Only validation levels 0 and 1 are supported.\n");
+                exit(1);
+            }
+        }
         else if (arg == "-rand-x")
         {
             *random_init_x = true;
@@ -444,6 +786,7 @@ void verifyAndAssignInputs(
         {
             *seg_method = "seg-nnz";
         }
+
         // else if (arg == "-bench")
         // {
         //     config->mode = "bench";
@@ -487,27 +830,33 @@ int main(int argc, char *argv[])
 
     MARKER_INIT();
 
-    verifyAndAssignInputs(argc, argv, &file_name_str, &seg_method, &value_type, &random_init_x, &config);
+    verify_and_assign_inputs(argc, argv, &file_name_str, &seg_method, &value_type, &random_init_x, &config);
 
-    if (value_type == "sp")
+    if (value_type == "dp")
+    {
+        // using VT = double;
+        // using IT = int;
+        BenchmarkResult<double, int> r;
+        compute_result<double, int>(&file_name_str, &seg_method, &config, &r);
+
+        if(my_rank == 0){
+            if(config.validate_result){
+                std::vector<double> mkl_dp_result;
+                validate_dp_result(&file_name_str, &seg_method, &config, &r, &mkl_dp_result);
+                write_dp_result_to_file(&file_name_str, &seg_method, &config, &r, &mkl_dp_result);
+            }
+        }
+    }
+    else if (value_type == "sp")
     {
         BenchmarkResult<float, int> r;
         compute_result<float, int>(&file_name_str, &seg_method, &config, &r);
 
         if(my_rank == 0){
-            if(config.verify_result){
-                validate_mkl<float, int>(&file_name_str, &seg_method, &config, &r);
-            }
-        }
-    }
-    else if (value_type == "dp")
-    {
-        BenchmarkResult<double, int> r;
-        compute_result<double, int>(&file_name_str, &seg_method, &config, &r);
-
-        if(my_rank == 0){
-            if(config.verify_result){
-                validate_mkl<double, int>(&file_name_str, &seg_method, &config, &r);
+            if(config.validate_result){
+                std::vector<float> mkl_sp_result;
+                validate_sp_result(&file_name_str, &seg_method, &config, &r, &mkl_sp_result);
+                write_sp_result_to_file(&file_name_str, &seg_method, &config, &r, &mkl_sp_result);
             }
         }
     }

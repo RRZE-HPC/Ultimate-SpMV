@@ -46,7 +46,7 @@ struct Config
     unsigned long n_repetitions{5};
 
     // Verify result of SpVM.
-    bool verify_result{true};
+    bool validate_result{true};
 
     // Verify result against solution of COO kernel.
     bool verify_result_with_coo{true};
@@ -57,6 +57,8 @@ struct Config
     // Sort rows/columns of sparse matrix before
     // converting it to a specific format.
     bool sort_matrix{true};
+
+    bool verbose_validation{true};
 
     // Configures if the code will be executed in bench mode or compute mode
     std::string mode = "bench"; 

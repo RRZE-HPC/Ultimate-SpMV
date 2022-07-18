@@ -10,7 +10,7 @@
 #include <mpi.h>
 
 /**
-    Collect the row indicies of the halo elements needed for this process, which is used to generate a valid local_x to perform the SPMVM.
+    Collect the row indicies of the halo elements needed for THIS process, which is used to generate a valid local_x to perform the SPMVM.
         These are organized/encoded as 3-tuples in an array, of the form (proc_to, proc_from, global_row_idx). The global_row_idx
         refers to the "global" x vector, this will be adjusted (localized) later when said element is "retrieved".
 
@@ -30,7 +30,8 @@ void collect_local_needed_heri(
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-    IT from_proc, total_x_row_idx, remote_elem_candidate_col, elem_col, remote_elem_col;
+    IT from_proc, to_proc;
+    IT total_x_row_idx, remote_elem_candidate_col, elem_col, remote_elem_col;
     IT needed_heri_count = 0;
 
     // To remember which columns have already been accounted for
@@ -40,9 +41,8 @@ void collect_local_needed_heri(
     std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
     std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
 
-    // First, assemble the global view of required elements
     for (IT i = 0; i < local_mtx->nnz; ++i)
-    { // this is only MY nnz, not the nnz of the process_local_mtx were looking at
+    {
         // If true, this is a remote element, and needs to be added to vector
         elem_col = local_mtx->J[i];
         // Avoids double-adding the same column
@@ -62,9 +62,10 @@ void collect_local_needed_heri(
 
                         // Just to make process more clear
                         from_proc = j;
+                        to_proc = my_rank;
 
                         // The heri tuple, which is then used inside another tuple for ordering later
-                        heri_tuple = std::make_tuple(my_rank, from_proc, remote_elem_col);
+                        heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
 
                         unordered_heri_tuple = std::make_tuple(remote_elem_col, heri_tuple);
 
@@ -106,6 +107,13 @@ void collect_to_send_heri(
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
+    std::tuple<IT, IT, IT> heri_tuple;
+    std::tuple<IT, IT, IT> inner_tuple;
+    std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
+    std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
+    IT from_proc, to_proc, remote_elem_col;
+
+
     // NOTE: Do these need to be on the heap?
     IT all_local_needed_heri_sizes[comm_size];
     IT global_needed_heri_displ_arr[comm_size];
@@ -135,6 +143,7 @@ void collect_to_send_heri(
         intermediate_size += all_local_needed_heri_sizes[i];
     }
 
+    // Collect to each process, the entire view of needed elements
     MPI_Allgatherv(&(*local_needed_heri)[0],
                    local_needed_heri_size,
                    MPI_INT,
@@ -148,12 +157,38 @@ void collect_to_send_heri(
     for (IT from_proc_idx = 1; from_proc_idx < intermediate_size; from_proc_idx += 3)
     {
         if (global_needed_heri[from_proc_idx] == my_rank)
-        {
-            to_send_heri->push_back(global_needed_heri[from_proc_idx - 1]);
-            to_send_heri->push_back(global_needed_heri[from_proc_idx]);
-            to_send_heri->push_back(global_needed_heri[from_proc_idx + 1]);
+        {// i.e. if were sending FROM this rank
+
+            // Just to make process more clear
+            remote_elem_col = global_needed_heri[from_proc_idx + 1];
+            to_proc = global_needed_heri[from_proc_idx - 1];
+            from_proc = my_rank;
+
+            // The heri tuple, which is then used inside another tuple for ordering later
+            heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
+
+            unordered_heri_tuple = std::make_tuple(remote_elem_col, heri_tuple);
+
+            unordered_heri_tuples_vec.push_back(unordered_heri_tuple);
         }
     }
+
+    std::sort(unordered_heri_tuples_vec.begin(), unordered_heri_tuples_vec.end());
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    for(auto& tuple : unordered_heri_tuples_vec){
+        inner_tuple = std::get<1>(tuple);
+        to_send_heri->push_back(std::get<0>(inner_tuple));
+        to_send_heri->push_back(std::get<1>(inner_tuple));
+        to_send_heri->push_back(std::get<2>(inner_tuple));
+
+        // if(my_rank == 0){
+        //     std::cout << "To proc: " << std::get<0>(inner_tuple) <<
+        //      ", we send the heri idx: " << std::get<2>(inner_tuple) << std::endl;
+        // }
+    }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 }
 
 /**
@@ -382,10 +417,22 @@ void adjust_halo_col_idxs(
     IT remote_elem_count = 0;
     IT amnt_lhs_remote_elems = 0;
     IT amnt_rhs_remote_elems = 0;
-    IT test_rank = 2;
+    IT test_rank = 1, show_steps = 0;
+    IT exists_nz_elem = 0;
+    IT idx_ctr;
     IT elem_idx;
 
     std::vector<IT> original_col_idxs(scs->col_idxs.data(), scs->col_idxs.data() + scs->n_elements);
+
+    if(show_steps){
+        if(my_rank == test_rank){
+            std::cout << "column indices BEFORE adjustment: " << std::endl;
+            for(int idx = 0; idx < scs->n_elements; ++idx){
+                std::cout << scs->col_idxs[idx] << std::endl;
+            }
+            printf("\n");
+        }
+    }
 
     // Then, reindex LOCAL elements
     for (IT i = 0; i < scs->n_elements; ++i)
@@ -401,22 +448,39 @@ void adjust_halo_col_idxs(
 
     int lhs_halo_col_ctr = 0;
     // Proc 0 will never have LHS remote elements
-    if(my_rank != 0){
-
+    if(my_rank != 0)
+    {
         // start at the "left wall" of the matrix, and iterate columns until we reach local elements
         for (int col = 0; col < work_sharing_arr[my_rank]; ++col)
         {
-            if ( // if there exists a non-zero element in this column...
-                (std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end())
-                && scs->values[get_index(original_col_idxs, col)] != 0){
-                for(auto elem : original_col_idxs){
-                    if(elem == col){
-                        elem_idx = get_index(original_col_idxs, elem);
-                        scs->col_idxs[elem_idx] = *amnt_local_elements + lhs_halo_col_ctr;
+            if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
+            { // if there exists ANY element in this column...
+                idx_ctr = 0;
+                for(auto elem : original_col_idxs)
+                {
+                    if(elem == col && scs->values[idx_ctr] != 0)
+                    {
+                        exists_nz_elem = 1;
+                        break;
                     }
+                    // elem_idx = get_index(original_col_idxs, elem);
+                    ++idx_ctr; // incremenet the corresponding index
                 }
-            // If at least one element exists in this column, increment counter
-            ++lhs_halo_col_ctr;
+
+                if(exists_nz_elem)
+                { // and if this element is not padding
+                    idx_ctr = 0;
+                    for(auto elem : original_col_idxs)
+                    { // 
+                        if(elem == col && scs->values[idx_ctr] != 0)
+                        {
+                            scs->col_idxs[idx_ctr] = *amnt_local_elements + lhs_halo_col_ctr;
+                        }
+                        ++idx_ctr;
+                    }
+                    // If at least one nonzero element exists in this column, increment counter
+                    ++lhs_halo_col_ctr;
+                }
             }
         }   
     }
@@ -424,23 +488,50 @@ void adjust_halo_col_idxs(
 
     int rhs_halo_col_ctr = 0;
     // Last proc will never have RHS remote elements
-    if(my_rank != comm_size){
+    if(my_rank != (comm_size - 1)){
         // start at the "left wall" of the matrix, and iterate columns until we reach local elements
         for (int col = work_sharing_arr[my_rank + 1]; col < work_sharing_arr[comm_size]; ++col)
         {
-            if ( // if there exists a non-zero element in this column...
-                (std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end())
-                && scs->values[get_index(original_col_idxs, col)] != 0){
-                for(auto elem : original_col_idxs){
-                    if(elem == col){
-                        elem_idx = get_index(original_col_idxs, elem);
-                        scs->col_idxs[elem_idx] = *amnt_local_elements + lhs_halo_col_ctr + rhs_halo_col_ctr;
+            if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
+            { // if there exists ANY element in this column...
+                idx_ctr = 0;
+                for(auto elem : original_col_idxs)
+                {
+                    if(elem == col && scs->values[idx_ctr] != 0)
+                    {
+                        exists_nz_elem = 1;
+                        break;
                     }
+                    // elem_idx = get_index(original_col_idxs, elem);
+                    ++idx_ctr; // incremenet the corresponding index
                 }
-            // If at least one element exists in this column, increment counter
-            ++rhs_halo_col_ctr;
+
+                if(exists_nz_elem)
+                { // and if this element is not padding
+                    idx_ctr = 0;
+                    for(auto elem : original_col_idxs)
+                    { // 
+                        if(elem == col && scs->values[idx_ctr] != 0)
+                        {
+                            scs->col_idxs[idx_ctr] = *amnt_local_elements + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                        }
+                        ++idx_ctr;
+                    }
+                    // If at least one element exists in this column, increment counter
+                    ++rhs_halo_col_ctr;
+                }
             }
         }   
+    }
+
+    if(show_steps){
+        if(my_rank == test_rank){
+            std::cout << "column indices AFTER adjustment: " << std::endl;
+            for(int idx = 0; idx < scs->n_elements; ++idx){
+                std::cout << scs->col_idxs[idx] << std::endl;
+            }
+            printf("\n");
+        }
     }
 }
 
