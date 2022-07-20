@@ -713,8 +713,8 @@ void verify_and_assign_inputs(
     if (argc < 2)
     {
         fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
-                        "options [defaults]: -c[%li], -s[%li], -rev[%li], -rand-x[%i], -sp/dp[%s], -seg-nnz/seg-rows[%s]\n",
-                argv[0], config->chunk_size, config->sigma, config->n_repetitions, *random_init_x, value_type->c_str(), seg_method->c_str());
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand-x [%i], -sp/dp [%s], -seg-nnz/seg-rows [%s], -v [%i]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, *random_init_x, value_type->c_str(), seg_method->c_str(), config->verbose_validation );
         exit(1);
     }
 
@@ -845,6 +845,7 @@ int main(int argc, char *argv[])
                 validate_dp_result(&file_name_str, &seg_method, &config, &r, &mkl_dp_result);
                 write_dp_result_to_file(&file_name_str, &seg_method, &config, &r, &mkl_dp_result);
             }
+            std::cout << "SPMVM completed" << std::endl;
         }
     }
     else if (value_type == "sp")
@@ -858,6 +859,7 @@ int main(int argc, char *argv[])
                 validate_sp_result(&file_name_str, &seg_method, &config, &r, &mkl_sp_result);
                 write_sp_result_to_file(&file_name_str, &seg_method, &config, &r, &mkl_sp_result);
             }
+            std::cout << "SPMVM completed" << std::endl;
         }
     }
 
