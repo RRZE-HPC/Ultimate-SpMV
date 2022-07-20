@@ -52,7 +52,7 @@ struct Config
     bool verify_result_with_coo{true};
 
     // Print incorrect elements from solution.
-    bool verbose_verification{true};
+    // bool verbose_verification{true};
 
     // Sort rows/columns of sparse matrix before
     // converting it to a specific format.
@@ -60,8 +60,8 @@ struct Config
 
     bool verbose_validation{false};
 
-    // Configures if the code will be executed in bench mode or compute mode
-    std::string mode = "bench"; 
+    // Configures if the code will be executed in bench mode (b) or solve mode (s)
+    char mode = 'b'; 
 
     // Selects the default matrix storage format
     std::string kernel_format = "scs"; 

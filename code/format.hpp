@@ -206,6 +206,7 @@ void bench_spmv_scs(
     adjust_halo_col_idxs<VT, IT>(local_mtx, &scs, &amnt_local_elements, work_sharing_arr);
 
     std::vector<VT> local_x(amnt_local_elements, 0);
+    std::vector<VT> dummy_x(amnt_local_elements, 0);
 
     init_std_vec_with_ptr_or_value(local_x, local_x.size(), x_in,
                                    defaults->x, config->random_init_x);
@@ -214,16 +215,6 @@ void bench_spmv_scs(
     for(IT i = 0; i < local_x.size(); ++i){
         (*x_out)[i] = local_x[i];
     }
-
-    // if(config->mode == "solver"){
-    //     // TODO: make modifications for solver mode
-    //     // the object "returned" will be the gathered results vector
-    // }
-    // else if(config->mode == "bench"){
-    //     // TODO: make modifications for bench mode
-    //     // the object returned will be the benchmark results
-    // }
-
 
     // heri := halo element row indices
     // "local_needed_heri" is all the halo elements that this process needs
@@ -273,116 +264,48 @@ void bench_spmv_scs(
 
     // NOTE: should always be a multiple of 3
     IT local_x_needed_padding = local_needed_heri.size() / 3;
-
     IT padding_for_x_and_y = std::max(local_x_needed_padding, (int)config->chunk_size);
 
     // Prepare buffers for communication
-    // int local_x_original_size = local_x.size();
-    // local_x.resize(local_x.size() + local_x_needed_padding);
-    // int local_x_padded_size = local_x.size();
+    dummy_x.resize(dummy_x.size() + padding_for_x_and_y);
     local_x.resize(local_x.size() + padding_for_x_and_y);
     local_y_scs_vec.resize(local_y_scs_vec.size() + padding_for_x_and_y);
 
+    if(config->mode == 'b'){ // Enter main COMM-SPMVM-SWAP loop, bench mode
+        // int NITER = 2;
+        // do
+        // {
+        //     // get start time
+        //     // TODO
+        //     for(int k = 0; k < NITER; ++k){
+        //         communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
 
-    int show_steps = 0;
-    // Enter main loop
-    for (IT i = 0; i < config->n_repetitions; ++i)
-    {
-        int test_rank = 1;
+        //         spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
+        //                             scs.chunk_lengths.data(), scs.col_idxs.data(),
+        //                             scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
 
-        if(show_steps){
-            if(my_rank == test_rank){
-                std::cout << "local_x before comm, before SPMV, before swap: " << std::endl;
-                for(int i = 0; i < local_x.size(); ++i){
-                    std::cout << local_x[i] << std::endl;
-                }
-                printf("\n");
-                std::cout << "local_y before comm, before SPMV, before swap: " << std::endl;
-                for(int i = 0; i < local_y_scs_vec.size(); ++i){
-                    std::cout << local_y_scs_vec[i] << std::endl;
-                }
-                printf("\n");
-            }
-        }
+        //         std::swap(dummy_x, local_y_scs_vec);
+        //     }
 
-        communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
-        // MPI_Barrier(MPI_COMM_WORLD);
-        // and MPI_Waitall(); ^^ these two necessary for non-blocking comm?
-
-        if(show_steps){
-            if(my_rank == test_rank){
-                std::cout << "local_x AFTER comm, before SPMV, before swap: " << std::endl;
-                for(int i = 0; i < local_x.size(); ++i){
-                    std::cout << local_x[i] << std::endl;
-                }
-                printf("\n");
-                std::cout << "local_y AFTER comm, before SPMV, before swap: " << std::endl;
-                for(int i = 0; i < local_y_scs_vec.size(); ++i){
-                    std::cout << local_y_scs_vec[i] << std::endl;
-                }
-                printf("\n");
-            }
-        }
-
-        spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
-                             scs.chunk_lengths.data(), scs.col_idxs.data(),
-                             scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
-
-        if(show_steps){
-            if(my_rank == test_rank){
-                std::cout << "local_x AFTER comm, AFTER SPMV, before swap: " << std::endl;
-                for(int i = 0; i < local_x.size(); ++i){
-                    std::cout << local_x[i] << std::endl;
-                }
-                printf("\n");
-                std::cout << "local_y AFTER comm, AFTER SPMV, before swap: " << std::endl;
-                for(int i = 0; i < local_y_scs_vec.size(); ++i){
-                    std::cout << local_y_scs_vec[i] << std::endl;
-                }
-                printf("\n");
-            }
-        }
-
-        std::swap(local_x, local_y_scs_vec);
-
-
-        if(show_steps){
-            if(my_rank == test_rank){
-                std::cout << "local_x AFTER comm, AFTER SPMV, AFTER swap: " << std::endl;
-                for(int i = 0; i < local_x.size(); ++i){
-                    std::cout << local_x[i] << std::endl;
-                }
-                printf("\n");
-                std::cout << "local_y AFTER comm, AFTER SPMV, AFTER swap: " << std::endl;
-                for(int i = 0; i < local_y_scs_vec.size(); ++i){
-                    std::cout << local_y_scs_vec[i] << std::endl;
-                }
-                printf("\n");
-            }
-        }
-
-        // local_y_scs_vec.resize(local_x.size(), 0);
-        // local_x.resize(local_x_padded_size);
-
-        if(show_steps){
-            if(my_rank == test_rank){
-                std::cout << "local_x AFTER comm, AFTER SPMV, AFTER swap, AFTER size adjust: " << std::endl;
-                for(int i = 0; i < local_x.size(); ++i){
-                    std::cout << local_x[i] << std::endl;
-                }
-                printf("\n");
-                std::cout << "local_y AFTER comm, AFTER SPMV, AFTER swap, AFTER size adjust: " << std::endl;
-                for(int i = 0; i < local_y_scs_vec.size(); ++i){
-                    std::cout << local_y_scs_vec[i] << std::endl;
-                }
-                printf("\n");
-            }
-        }
+        // } while (end - start < .1)
+        // NITER = NITER / 2;
     }
+    else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
+        for (IT i = 0; i < config->n_repetitions; ++i)
+        {
+            communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
 
-    for (IT i = 0; i < scs.old_to_new_idx.n_rows; ++i)
-    {
-        (*y_out)[i] = local_x[scs.old_to_new_idx[i]];
+            spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
+                                scs.chunk_lengths.data(), scs.col_idxs.data(),
+                                scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
+
+            std::swap(local_x, local_y_scs_vec);
+        }
+
+        for (IT i = 0; i < scs.old_to_new_idx.n_rows; ++i)
+        {
+            (*y_out)[i] = local_x[scs.old_to_new_idx[i]];
+        }
     }
 
     delete[] shift_arr;
