@@ -10,6 +10,21 @@ using V = Vector<VT, IT>;
 // Use -rand to initialize randomly.
 static bool g_same_seed_for_every_vector = true;
 
+template <typename IT>
+struct ContextData
+{
+    std::vector<IT> to_send_heri;
+    std::vector<IT> local_needed_heri;
+
+    std::vector<IT> shift_arr; //how does this work, with these on the heap?
+    std::vector<IT> incidence_arr;
+
+    // rank?
+    // comm_size?
+    // padding?
+    // what else?
+};
+
 template <typename VT, typename IT>
 struct ScsData
 {

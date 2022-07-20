@@ -1,13 +1,14 @@
 #include "spmv.h"
 #include "mtx-reader.h"
 #include "vectors.h"
-#include "mkl.h"
 
 #include "utilities.hpp"
 #include "structs.hpp"
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "format.hpp"
+#include "benchmarks.hpp"
+#include "write_results.hpp"
 
 
 #include <typeinfo>
@@ -38,459 +39,117 @@
 #endif
 
 /**
-    @brief Select the matrix format, and benchmark the spmvm kernal
-    @param *config : struct to initialze default values and user input
-    @param *mtx : mtx data struct, read in from matrix market format reader mtx-reader.h
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
-    @param *y_out : the vector declared to either hold the process local result, 
-        or the global result if verification is selected as an option
-    @param *defaults : a DefaultValues struct, in which default values of x and y can be defined
-    @param *x_in : if one wishes to start with a pre-defined x vector
+    @brief 
+    @param 
 */
 template <typename VT, typename IT>
-static void
-bench_spmv(
-    Config *config,
+void init_structs(
     MtxData<VT, IT> *local_mtx,
-    const int *work_sharing_arr,
-    std::vector<VT> *y_out,
-    std::vector<VT> *x_out,
-    DefaultValues<VT, IT> *defaults,
-    BenchmarkResult<VT, IT> *r,
-    const std::vector<VT> *x_in = nullptr
-)
-{
-    if(config->kernel_format == "csr"){
-        // bench_spmv_csr<VT, IT>(
-        //     config,
-        //     local_mtx,
-        //     work_sharing_arr,
-        //     y_out,
-        //     x_out,
-        //     defaults,
-        //     r,
-        //     x_in
-        // );
-    }
-    else if(config->kernel_format == "ellrm"){}
-    else if(config->kernel_format == "ellcm"){}
-    else if(config->kernel_format == "ell"){
-        // bench_spmv_ell<VT, IT>(
-        //     config,
-        //     local_mtx,
-        //     work_sharing_arr,
-        //     y_out,
-        //     x_out,
-        //     defaults,
-        //     r,
-        //     x_in
-        // );
-    }
-    else if(config->kernel_format == "scs"){
-        bench_spmv_scs<VT, IT>(
-            config,
-            local_mtx,
-            work_sharing_arr,
-            y_out,
-            x_out,
-            defaults,
-            r,
-            x_in
-        );
-    }
-    else{
-        fprintf(stderr, "ERROR: SpMV format for kernel %s is not implemented.\n", config->kernel_format.c_str());
-    }
-}
-
-/**
-    @brief Write the double precision comparison results to an external text file for validation
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *config : struct to initialze default values and user input
-    @param *y_out : the vector declared to either hold the process local result, 
-        or the global result if verification is selected as an option
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
-    @param *x : the output from the mkl routine, against which we verify our spmvm result
-*/
-void write_dp_result_to_file(
-    const std::string *file_name_str,
-    const std::string *seg_method,
+    IT *work_sharing_arr,
     Config *config,
-    BenchmarkResult<double, int> *r,
-    std::vector<double> *x
+    const std::string *seg_method,
+    const std::string *file_name_str,
+    std::vector<VT> *dummy_x,
+    std::vector<VT> *local_x,
+    std::vector<VT> *local_y,
+    ContextData<IT> *local_context,
+    const int *my_rank,
+    const int *comm_size,
+    const int *amnt_local_elems
 ){
-    int comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    
-    char filename[] = "spmv_mkl_compare.txt";
-    int width;
-    double relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
-    double absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
-    std::fstream appendFileToWorkWith;
+    std::vector<IT> local_needed_heri;
+    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr, my_rank, comm_size);
 
-    max_relative_diff = 0;
-    max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
-    max_relative_diff_elem_mkl = (*x)[0];
+    IT local_needed_heri_size = local_needed_heri.size();
+    IT global_needed_heri_size;
 
-    max_absolute_diff = 0;
-    max_absolute_diff_elem_spmvm = r->total_spmvm_result[0];
-    max_absolute_diff_elem_mkl = (*x)[0];
+    // TODO: Is this actually necessary?
+    MPI_Allreduce(&local_needed_heri_size,
+                  &global_needed_heri_size,
+                  1,
+                  MPI_INT,
+                  MPI_SUM,
+                  MPI_COMM_WORLD
+    );
 
-    std::cout.precision(16);
+    IT *global_needed_heri = new IT[global_needed_heri_size];
 
-    // Print parameters
-    appendFileToWorkWith.open(filename, std::fstream::in | std::fstream::out | std::fstream::app);
-    appendFileToWorkWith << *file_name_str << " with " << comm_size << " MPI processes" << std::endl; 
-    appendFileToWorkWith << "C: " << config->chunk_size << ", data_type: " <<
-    'd' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
-    appendFileToWorkWith << std::endl;
-
-    // Print header
-    if(config->verbose_validation == 1){
-        width = 16;
-
-        appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
-                    << std::left << std::setw(width) << "spmv results:"
-                    << std::left << std::setw(width) << "rel. diff(%):" 
-                    << std::left << std::setw(width) << "abs. diff:" << std::endl;
-
-        appendFileToWorkWith << std::left << std::setw(width) << "-----------"
-                    << std::left << std::setw(width) << "------------"
-                    << std::left << std::setw(width) << "------------"
-                    << std::left << std::setw(width) << "---------" << std::endl;
-    }
-    else if(config->verbose_validation == 0){
-        width = 18;
-        appendFileToWorkWith 
-                    << std::left << std::setw(width-2) << "mkl rel. elem:"
-                    << std::left << std::setw(width) << "spmvm rel. elem:"
-                    << std::left << std::setw(width) << "MAX rel. diff(%):" 
-                    << std::left << std::setw(width-1) << "mkl abs. elem:"
-                    << std::left << std::setw(width) << "spmvm abs. elem:"
-                    << std::left << std::setw(width) << "MAX abs. diff:"
-                    << std::endl;
-
-        appendFileToWorkWith 
-                    << std::left << std::setw(width-2) << "-------------"
-                    << std::left << std::setw(width) << "---------------"
-                    << std::left << std::setw(width) << "----------------"
-                    << std::left << std::setw(width-1) << "-------------"
-                    << std::left << std::setw(width) << "---------------"
-                    << std::left << std::setw(width) << "-------------" << std::endl;
-    }
-    for(int i = 0; i < r->total_spmvm_result.size(); ++i){
-        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
-        absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
-        
-        if(config -> verbose_validation == 1)
-        {
-            appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
-                        << std::left << std::setw(width) << r->total_spmvm_result[i]
-                        << std::left << std::setw(width) << 100 * relative_diff
-                        << std::left  << std::setw(width) << absolute_diff;
-
-            if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
-                appendFileToWorkWith << std::left << std::setw(width) << "ERROR";
-            }
-            else if(abs(relative_diff) > .0001){
-                appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
-            }
-
-        appendFileToWorkWith << std::endl;
-        }
-        else if(config -> verbose_validation == 0)
-        {
-            if(relative_diff > max_relative_diff){
-                max_relative_diff = relative_diff;
-                max_relative_diff_elem_spmvm = r->total_spmvm_result[i];
-                max_relative_diff_elem_mkl = (*x)[i];
-            }
-            if(absolute_diff > max_absolute_diff){
-                max_absolute_diff = absolute_diff;
-                max_absolute_diff_elem_spmvm = r->total_spmvm_result[i];
-                max_absolute_diff_elem_mkl = (*x)[i];
-            }
-        }
-        else
-        {
-            std::cout << "Validation verbose level not recognized" << std::endl;
-            exit(1);
-        }
-    }
-    if(config->verbose_validation == 0)
+    for (IT i = 0; i < global_needed_heri_size; ++i)
     {
-        appendFileToWorkWith 
-                    << std::left << std::setw(width) << max_relative_diff_elem_mkl
-                    << std::left << std::setw(width) << max_relative_diff_elem_spmvm
-                    << std::left << std::setw(width) << 100 * max_relative_diff
-                    << std::left << std::setw(width) << max_absolute_diff_elem_mkl
-                    << std::left << std::setw(width) << max_absolute_diff_elem_spmvm
-                    << std::left << std::setw(width) << max_absolute_diff;
-                         
-        if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
-        ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
-        appendFileToWorkWith << std::left << std::setw(width) << "ERROR";       
-        }
-        else if(abs(max_relative_diff) > .0001){
-        appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
-        }
-
-        appendFileToWorkWith << std::endl;
+        global_needed_heri[i] = IT{};
     }
-    appendFileToWorkWith << "\n";
-    appendFileToWorkWith.close();
-}
 
+    // "to_send_heri" are all halo elements that this process is to send
+    std::vector<IT> to_send_heri;
+    collect_to_send_heri<IT>(
+        &to_send_heri,
+        &local_needed_heri,
+        global_needed_heri,
+        my_rank,
+        comm_size
+    );
 
-/**
-    @brief Write the single precision comparison results to an external text file for validation
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *config : struct to initialze default values and user input
-    @param *y_out : the vector declared to either hold the process local result, 
-        or the global result if verification is selected as an option
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
-    @param *x : the output from the mkl routine, against which we verify our spmvm result
-*/
-void write_sp_result_to_file(
-    const std::string *file_name_str,
-    const std::string *seg_method,
-    Config *config,
-    BenchmarkResult<float, int> *r,
-    std::vector<float> *x
-){
-    int comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    
-    char filename[] = "spmv_mkl_compare.txt";
-    int width;
-    float relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
-    float absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
-    std::fstream appendFileToWorkWith;
+    // The shift array is used in the tag-generation scheme in halo communication.
+    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
+    // after the local element index to make for the incoming halo elements
+    std::vector<IT> shift_arr((*comm_size) * (*comm_size), 0);
+    std::vector<IT> incidence_arr((*comm_size) * (*comm_size), 0);
+    // IT *shift_arr = new IT[(*comm_size) * (*comm_size)];
+    // IT *incidence_arr = new IT[(*comm_size) * (*comm_size)];
 
-    max_relative_diff = 0;
-    max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
-    max_relative_diff_elem_mkl = (*x)[0];
-
-    max_absolute_diff = 0;
-    max_absolute_diff_elem_spmvm = r->total_spmvm_result[0];
-    max_absolute_diff_elem_mkl = (*x)[0];
-
-    std::cout.precision(8);
-
-    // Print parameters
-    appendFileToWorkWith.open(filename, std::fstream::in | std::fstream::out | std::fstream::app);
-    appendFileToWorkWith << *file_name_str << " with " << comm_size << " MPI processes" << std::endl; 
-    appendFileToWorkWith << "C: " << config->chunk_size << ", data_type: " <<
-    'f' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
-    appendFileToWorkWith << std::endl;
-
-    // Print header
-    if(config->verbose_validation == 1){
-        width = 16;
-
-        appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
-                    << std::left << std::setw(width) << "spmv results:"
-                    << std::left << std::setw(width) << "rel. diff(%):" 
-                    << std::left << std::setw(width) << "abs. diff:" << std::endl;
-
-        appendFileToWorkWith << std::left << std::setw(width) << "-----------"
-                    << std::left << std::setw(width) << "------------"
-                    << std::left << std::setw(width) << "------------"
-                    << std::left << std::setw(width) << "---------" << std::endl;
-    }
-    else if(config->verbose_validation == 0){
-        width = 18;
-        appendFileToWorkWith 
-                    << std::left << std::setw(width-2) << "mkl rel. elem:"
-                    << std::left << std::setw(width) << "spmvm rel. elem:"
-                    << std::left << std::setw(width) << "MAX rel. diff(%):" 
-                    << std::left << std::setw(width-1) << "mkl abs. elem:"
-                    << std::left << std::setw(width) << "spmvm abs. elem:"
-                    << std::left << std::setw(width) << "MAX abs. diff:"
-                    << std::endl;
-
-        appendFileToWorkWith 
-                    << std::left << std::setw(width-2) << "-------------"
-                    << std::left << std::setw(width) << "---------------"
-                    << std::left << std::setw(width) << "----------------"
-                    << std::left << std::setw(width-1) << "-------------"
-                    << std::left << std::setw(width) << "---------------"
-                    << std::left << std::setw(width) << "-------------" << std::endl;
-    }
-    for(int i = 0; i < r->total_spmvm_result.size(); ++i){
-        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
-        absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
-        
-        if(config -> verbose_validation == 1)
-        {
-            appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
-                        << std::left << std::setw(width) << r->total_spmvm_result[i]
-                        << std::left << std::setw(width) << 100 * relative_diff
-                        << std::left  << std::setw(width) << absolute_diff;
-
-            if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
-                appendFileToWorkWith << std::left << std::setw(width) << "ERROR";
-            }
-            else if(abs(relative_diff) > .0001){
-                appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
-            }
-
-        appendFileToWorkWith << std::endl;
-        }
-        else if(config -> verbose_validation == 0)
-        {
-            if(relative_diff > max_relative_diff){
-                max_relative_diff = relative_diff;
-                max_relative_diff_elem_spmvm = r->total_spmvm_result[i];
-                max_relative_diff_elem_mkl = (*x)[i];
-            }
-            if(absolute_diff > max_absolute_diff){
-                max_absolute_diff = absolute_diff;
-                max_absolute_diff_elem_spmvm = r->total_spmvm_result[i];
-                max_absolute_diff_elem_mkl = (*x)[i];
-            }
-        }
-        else
-        {
-            std::cout << "Validation verbose level not recognized" << std::endl;
-            exit(1);
-        }
-    }
-    if(config->verbose_validation == 0)
+    for (IT i = 0; i < (*comm_size) * (*comm_size); ++i)
     {
-        appendFileToWorkWith 
-                    << std::left << std::setw(width) << max_relative_diff_elem_mkl
-                    << std::left << std::setw(width) << max_relative_diff_elem_spmvm
-                    << std::left << std::setw(width) << 100 * max_relative_diff
-                    << std::left << std::setw(width) << max_absolute_diff_elem_mkl
-                    << std::left << std::setw(width) << max_absolute_diff_elem_spmvm
-                    << std::left << std::setw(width) << max_absolute_diff;
-                         
-        if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
-        ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
-        appendFileToWorkWith << std::left << std::setw(width) << "ERROR";       
-        }
-        else if(abs(max_relative_diff) > .0001){
-        appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
-        }
-
-        appendFileToWorkWith << std::endl;
-    }
-    appendFileToWorkWith << "\n";
-    appendFileToWorkWith.close();
-}
-
-/**
-    @brief Read in the mtx struct to csr format, and use the mkl_dcsrmv to validate our double precision result against mkl
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *config : struct to initialze default values and user input
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
-*/
-void validate_dp_result(
-    const std::string *file_name_str,
-    const std::string *seg_method,
-    Config *config,
-    BenchmarkResult<double, int> *r,
-    std::vector<double> *mkl_dp_result
-){    
-    // Root process reads in matrix again, for mkl
-    MtxData<double, int> mtx = read_mtx_data<double, int>(file_name_str->c_str(), config->sort_matrix);
-
-    int num_rows = mtx.n_rows;
-    int num_cols = mtx.n_cols;
-
-    mkl_dp_result->resize(num_rows, 0);
-    std::vector<double> y(num_rows, 0);
-
-    V<double, int> values;
-    V<int, int> col_idxs;
-    V<int, int> row_ptrs;
-
-    convert_to_csr<double, int>(mtx, row_ptrs, col_idxs, values);
-
-    // Promote values to doubles
-    // std::vector<VT> values_vec(values.data(), values.data() + values.n_rows);
-        
-    for (int i = 0; i < num_rows; i++) {
-        (*mkl_dp_result)[i] = r->total_x[i];
+        shift_arr[i] = IT{};
+        incidence_arr[i] = IT{};
     }
 
-    for (int i = 0; i < num_cols; i++) {
-        y[i] = 0.0;
-    }
+    calc_heri_shifts<IT>(
+        global_needed_heri, 
+        &global_needed_heri_size, 
+        &shift_arr, 
+        &incidence_arr, 
+        comm_size
+    ); // NOTE: always symmetric?
 
-    char transa = 'n';
-    double alpha = 1.0;
-    double beta = 0.0; 
-    char matdescra [4] = {
-        'G', // general matrix
-        ' ', // ignored
-        ' ', // ignored
-        'C'}; // zero-based indexing (C-style)
+    // if(*my_rank == 1){
+    //     for(int row = 0; row < *comm_size; ++row){
+    //         for(int col = 0; col < *comm_size; ++col){
+    //             std::cout << shift_arr[*comm_size * row + col] << ", ";
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
-    // Computes y := alpha*A*x + beta*y, for A -> m * k, 
-    // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
-    for(int i = 0; i < config->n_repetitions; ++i){
-        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
-        std::swap(*mkl_dp_result, y);
-    }
-}
+    // NOTE: should always be a multiple of 3
+    IT local_x_needed_padding = local_needed_heri.size() / 3;
+    IT x_y_padding = std::max(local_x_needed_padding, (int)config->chunk_size);
 
-/**
-    @brief Read in the mtx struct to csr format, and use the mkl_scsrmv to validate our single precision result against mkl
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *config : struct to initialze default values and user input
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
-*/
-void validate_sp_result(
-    const std::string *file_name_str,
-    const std::string *seg_method,
-    Config *config,
-    BenchmarkResult<float, int> *r,
-    std::vector<float> *mkl_sp_result
-){    
-    // Root process reads in matrix again, for mkl
-    MtxData<float, int> mtx = read_mtx_data<float, int>(file_name_str->c_str(), config->sort_matrix);
+    // Prepare buffers for communication
+    dummy_x->resize(x_y_padding + *amnt_local_elems, 0);
+    local_x->resize(x_y_padding + *amnt_local_elems, 0);
+    local_y->resize(x_y_padding + *amnt_local_elems, 0);
 
-    int num_rows = mtx.n_rows;
-    int num_cols = mtx.n_cols;
+    // Initialize local_x, either randomly, with defaults, or with a predefined x_in
+    DefaultValues<VT, IT> default_values;
+    // const std::vector<VT> x_in;// = nullptr; //what to do about this?
+    init_std_vec_with_ptr_or_value(
+        *local_x, 
+        local_x->size(),
+        default_values.x, 
+        config->random_init_x
+    );
 
-    mkl_sp_result->resize(num_rows, 0);
-    std::vector<float> y(num_rows, 0);
+    // Copy x to the dummy vector, so spmvm can use this for swapping and multiplication
+    std::copy(local_x->begin(), local_x->end(), dummy_x->begin());
 
-    V<float, int> values;
-    V<int, int> col_idxs;
-    V<int, int> row_ptrs;
+    local_context->local_needed_heri = local_needed_heri;
+    local_context->to_send_heri = to_send_heri;
+    local_context->shift_arr = shift_arr;
+    local_context->incidence_arr = incidence_arr;
 
-    convert_to_csr<float, int>(mtx, row_ptrs, col_idxs, values);
-        
-    for (int i = 0; i < num_rows; i++) {
-        (*mkl_sp_result)[i] = r->total_x[i];
-    }
-
-    for (int i = 0; i < num_cols; i++) {
-        y[i] = 0.0;
-    }
-
-    char transa = 'n';
-    float alpha = 1.0;
-    float beta = 0.0; 
-    char matdescra [4] = {
-        'G', // general matrix
-        ' ', // ignored
-        ' ', // ignored
-        'C'}; // zero-based indexing (C-style)
-
-    // Computes y := alpha*A*x + beta*y, for A -> m * k, 
-    // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
-    for(int i = 0; i < config->n_repetitions; ++i){
-        mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
-        std::swap(*mkl_sp_result, y);
-    }
+    delete[] global_needed_heri;
 }
 
 /**
@@ -506,150 +165,112 @@ void compute_result(
     const std::string *file_name,
     const std::string *seg_method,
     Config *config,
-    BenchmarkResult<VT, IT> *r)
+    BenchmarkResult<VT, IT> *r,
+    const int *my_rank,
+    const int *comm_size)
 {
     // TODO: bring back matrix stats
     // MatrixStats<double> matrix_stats;
     // bool matrix_stats_computed = false;
 
-    // Initialize MPI variables
-    IT my_rank, comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-    // Declare struct on each process
+    // Declare mtx struct on each process
     MtxData<VT, IT> local_mtx;
 
-    // Allocate space for work sharing array. Is populated in seg_and_send_data function
-    IT work_sharing_arr[comm_size + 1];
+    // Allocate space for work sharing array. Is populated in seg_and_send_mtx function
+    IT work_sharing_arr[*comm_size + 1];
 
-    for(IT i = 0; i < comm_size + 1; ++i){
+    for(IT i = 0; i < *comm_size + 1; ++i){
         work_sharing_arr[i] = IT{};
     }
 
-    seg_and_send_data<VT, IT>(&local_mtx, config, seg_method, file_name, work_sharing_arr, my_rank, comm_size);
+    seg_and_send_mtx<VT, IT>(
+        &local_mtx, 
+        config, 
+        seg_method, 
+        file_name, 
+        work_sharing_arr, 
+        my_rank, 
+        comm_size
+    );
 
-    //     MPI_Barrier(MPI_COMM_WORLD);
+    IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
 
-    // if(my_rank == 0){
-    //     int ctr = 0;
-    //     for(int row = 0; row < local_mtx.n_rows; ++row){
-    //         for(int col = 0; col < local_mtx.n_cols; ++col){
-    //             if(local_mtx.I[ctr] == row && local_mtx.J[ctr] == col){
-    //                 std::cout << std::left << ", " << local_mtx.values[ctr];
-    //                 ++ctr;
-    //             }
-    //             else{
-    //                 std::cout << std::left << ",  ";
-    //             }
+    ContextData<IT> local_context;
+    std::vector<VT> local_y; //(amnt_local_elements, 0);
+    std::vector<VT> local_x; //(amnt_local_elements, 0);
+    std::vector<VT> dummy_x; //(size of local x, 0);
 
-    //             if(col == work_sharing_arr[my_rank] || col == work_sharing_arr[my_rank + 1] - 1){
-    //                 std::cout << std::left << "|";
-    //             }
-    //         }
-    //         printf("\n");
+    // Resize and populate local x and y
+    // populate local context
+    init_structs<VT, IT>(
+        &local_mtx, 
+        work_sharing_arr, 
+        config, 
+        seg_method, 
+        file_name, 
+        &local_x, 
+        &dummy_x,
+        &local_y, 
+        &local_context, 
+        my_rank, 
+        comm_size,
+        &amnt_local_elems
+    );
+
+    // if(*my_rank == 0){
+    //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
+    //         std::cout << local_x[i] << std::endl;
     //     }
     // }
     // MPI_Barrier(MPI_COMM_WORLD);
-    //     MPI_Barrier(MPI_COMM_WORLD);
 
-
-    // printf("\n");
-
-    // if(my_rank == 1){
-    //     int ctr = 0;
-    //     for(int row = 0; row < local_mtx.n_rows; ++row){
-    //         for(int col = 0; col < local_mtx.n_cols; ++col){
-    //             if(local_mtx.I[ctr] == row && local_mtx.J[ctr] == col){
-    //                 std::cout << std::left << ", " << local_mtx.values[ctr];
-    //                 ++ctr;
-    //             }
-    //             else{
-    //                 std::cout << std::left << ",  ";
-    //             }
-    //             if(col == work_sharing_arr[my_rank] - 1 || col == work_sharing_arr[my_rank + 1] - 1){
-    //                 std::cout << std::left << "|";
-    //             }
-    //         }
-    //         printf("\n");
-    //     }
-    // }
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    //     MPI_Barrier(MPI_COMM_WORLD);
-
-
-    // printf("\n");
-
-    // if(my_rank == 3){
-    //     int ctr = 0;
-    //     for(int row = 0; row < local_mtx.n_rows; ++row){
-    //         for(int col = 0; col < local_mtx.n_cols; ++col){
-    //             if(local_mtx.I[ctr] == row && local_mtx.J[ctr] == col){
-    //                 std::cout << std::left << ", " << local_mtx.values[ctr];
-    //                 ++ctr;
-    //             }
-    //             else{
-    //                 std::cout << std::left << ",  ";
-    //             }
-    //             if(col == work_sharing_arr[my_rank] - 1 || col == work_sharing_arr[my_rank + 1] - 1){
-    //                 std::cout << std::left << "|";
-    //             }
-    //         }
-    //         printf("\n");
-    //     }
-    // }
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    //     MPI_Barrier(MPI_COMM_WORLD);
-
-    // exit(0);
-
-    // Each process must initially allocate space for total y vector, eventhough it is potentially resized later
-    std::vector<VT> y_out(work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank], 0);
-
-    // Each process needs to return the original local_x vector it uses in the multiplication, for optional validation 
-    std::vector<VT> x_out(work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank], 0);
-
-    DefaultValues<VT, IT> default_values;
-
-    // Calculate y_out, which will either the global or local solution vector
     bench_spmv<VT, IT>(
         config,
         &local_mtx,
+        &local_context,
         work_sharing_arr,
-        &y_out,
-        &x_out,
-        &default_values,
-        r
+        &local_y,
+        &dummy_x,
+        r,
+        my_rank,
+        comm_size
     );
 
+    // if(*my_rank == 0){
+    //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
+    //         std::cout << local_y[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
     // Assign proc local x and y to benchmark result object
-    r->x_out = x_out;
-    r->y_out = y_out;
+    r->x_out = local_x;
+    r->y_out = local_y;
 
     if (config->validate_result)
     {
         // TODO: is the size correct here?
-        std::vector<VT> total_spmvm_result(work_sharing_arr[comm_size], 0);
-        std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
+        std::vector<VT> total_spmvm_result(work_sharing_arr[*comm_size], 0);
+        std::vector<VT> total_x(work_sharing_arr[*comm_size], 0);
 
-        IT counts_arr[comm_size];
-        IT displ_arr_bk[comm_size];
+        IT counts_arr[*comm_size];
+        IT displ_arr_bk[*comm_size];
 
-        for(IT i = 0; i < comm_size; ++i){
+        for(IT i = 0; i < *comm_size; ++i){
             counts_arr[i] = IT{};
             displ_arr_bk[i] = IT{};
         }
         
-        for (IT i = 0; i < comm_size; ++i){
+        for (IT i = 0; i < *comm_size; ++i){
             counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
             displ_arr_bk[i] = work_sharing_arr[i];
         }
 
         // Collect each of the process local x and y vectors to a global/total vector for validation
         if (typeid(VT) == typeid(double)){
-            MPI_Allgatherv(&y_out[0],
-                            y_out.size(),
+            MPI_Allgatherv(&local_y[0],
+                            amnt_local_elems,
                             MPI_DOUBLE,
                             &total_spmvm_result[0],
                             counts_arr,
@@ -657,8 +278,8 @@ void compute_result(
                             MPI_DOUBLE,
                             MPI_COMM_WORLD);
 
-            MPI_Allgatherv(&x_out[0],
-                            x_out.size(),
+            MPI_Allgatherv(&local_x[0],
+                            amnt_local_elems,
                             MPI_DOUBLE,
                             &total_x[0],
                             counts_arr,
@@ -667,8 +288,8 @@ void compute_result(
                             MPI_COMM_WORLD);
         }
         else if (typeid(VT) == typeid(float)){
-            MPI_Allgatherv(&y_out[0],
-                            y_out.size(),
+            MPI_Allgatherv(&local_y[0],
+                            amnt_local_elems,
                             MPI_FLOAT,
                             &total_spmvm_result[0],
                             counts_arr,
@@ -676,8 +297,8 @@ void compute_result(
                             MPI_FLOAT,
                             MPI_COMM_WORLD);
 
-            MPI_Allgatherv(&x_out[0],
-                            x_out.size(),
+            MPI_Allgatherv(&local_x[0],
+                            amnt_local_elems,
                             MPI_FLOAT,
                             &total_x[0],
                             counts_arr,
@@ -690,143 +311,14 @@ void compute_result(
         r->total_x = total_x;
         r->total_spmvm_result = total_spmvm_result;
     }
-}
-
-/**
-    @brief Scan user cli input to variables, and verify that the entered parameters are valid
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *value_type : either single precision (/float/-sp) or double precision (/double/-dp)
-    @param *random_init_x : decides if our generated x-vector is randomly generated, 
-        or made from the default value defined in the DefaultValues struct
-    @param *config : struct to initialze default values and user input
-*/
-void verify_and_assign_inputs(
-    int argc,
-    char *argv[],
-    std::string *file_name_str,
-    std::string *seg_method,
-    std::string *value_type,
-    bool *random_init_x,
-    Config *config)
-{
-    if (argc < 2)
-    {
-        fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
-                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand-x [%i], -sp/dp [%s], -seg-nnz/seg-rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
-                argv[0], config->chunk_size, config->sigma, config->n_repetitions, *random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
-        exit(1);
-    }
-
-    *file_name_str = argv[1];
-    config->kernel_format = argv[2];
-
-    int args_start_index = 3;
-    for (int i = args_start_index; i < argc; ++i)
-    {
-        std::string arg = argv[i];
-        if (arg == "-c")
-        {
-            config->chunk_size = atoi(argv[++i]);
-
-            if (config->chunk_size < 1)
-            {
-                fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
-                exit(1);
-            }
-        }
-        else if (arg == "-s")
-        {
-
-            config->sigma = atoi(argv[++i]); // i.e. grab the NEXT
-
-            if (config->sigma < 1)
-            {
-                fprintf(stderr, "ERROR: sigma must be >= 1.\n");
-                exit(1);
-            }
-        }
-        else if (arg == "-rev")
-        {
-            config->n_repetitions = atoi(argv[++i]); // i.e. grab the NEXT
-
-            if (config->n_repetitions < 1)
-            {
-                fprintf(stderr, "ERROR: revisions must be >= 1.\n");
-                exit(1);
-            }
-        }
-        else if (arg == "-verbose")
-        {
-            config->verbose_validation = atoi(argv[++i]); // i.e. grab the NEXT
-
-            if (config->verbose_validation != 0 && config->verbose_validation != 1)
-            {
-                fprintf(stderr, "ERROR: Only validation verbosity levels 0 and 1 are supported.\n");
-                exit(1);
-            }
-        }
-        else if (arg == "-validate")
-        {
-            config->validate_result = atoi(argv[++i]); // i.e. grab the NEXT
-
-            if (config->validate_result != 0 && config->validate_result != 1)
-            {
-                fprintf(stderr, "ERROR: You can only choose to validate result (1, i.e. yes) or not (0, i.e. no).\n");
-                exit(1);
-            }
-        }
-        else if (arg == "-mode")
-        {
-            config->mode = *argv[++i]; // i.e. grab the NEXT
-
-            if (config->mode != 'b' && config->mode != 's')
-            {
-                fprintf(stderr, "ERROR: Only bench (b) and solve (s) modes are supported.\n");
-                exit(1);
-            }
-        }
-        else if (arg == "-rand-x")
-        {
-            *random_init_x = true;
-        }
-        else if (arg == "-dp")
-        {
-            *value_type = "dp";
-        }
-        else if (arg == "-sp")
-        {
-            *value_type = "sp";
-        }
-        else if (arg == "-seg-rows")
-        {
-            *seg_method = "seg-rows";
-        }
-        else if (arg == "-seg-nnz")
-        {
-            *seg_method = "seg-nnz";
-        }
-
-        // else if (arg == "-bench")
-        // {
-        //     config->mode = "bench";
-        // }
-        // else if (arg == "-solver")
-        // {
-        //     config->mode = "solver";
-        // }
-        else
-        {
-            fprintf(stderr, "ERROR: unknown argument.\n");
-            exit(1);
-        }
-    }
-
-    if (config->sigma > config->chunk_size)
-    {
-        fprintf(stderr, "ERROR: sigma must be smaller than chunk size.\n");
-        exit(1);
-    }
+    // if(*my_rank == 0){
+    //     printf("\n");
+    //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
+    //         std::cout << (r->total_spmvm_result)[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 }
 
 int main(int argc, char *argv[])
@@ -834,7 +326,7 @@ int main(int argc, char *argv[])
     MPI_Init(&argc, &argv);
 
     Config config;
-    std::string file_name_str{};
+    std::string matrix_file_name{};
 
     // Set defaults for cl inputs
     std::string seg_method{"seg-rows"};
@@ -842,7 +334,6 @@ int main(int argc, char *argv[])
     int C = config.chunk_size;
     int sigma = config.sigma;
     int revisions = config.n_repetitions;
-    bool random_init_x = false;
 
     int my_rank, comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
@@ -850,22 +341,24 @@ int main(int argc, char *argv[])
 
     MARKER_INIT();
 
-    verify_and_assign_inputs(argc, argv, &file_name_str, &seg_method, &value_type, &random_init_x, &config);
+    verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config);
 
     if (value_type == "dp")
     {
         BenchmarkResult<double, int> r;
-        compute_result<double, int>(&file_name_str, &seg_method, &config, &r);
+        compute_result<double, int>(&matrix_file_name, &seg_method, &config, &r, &my_rank, &comm_size);
 
         if(my_rank == 0){
             std::cout << "SPMVM(s) completed. Mode: " << config.mode << std::endl;
 
             if(config.mode == 's'){
                 if(config.validate_result){
+                    std::string output_filename = {"spmv_mkl_compare_dp.txt"};
                     std::cout << "Validating..." << std::endl;
                     std::vector<double> mkl_dp_result;
-                    validate_dp_result(&file_name_str, &seg_method, &config, &r, &mkl_dp_result);
-                    write_dp_result_to_file(&file_name_str, &seg_method, &config, &r, &mkl_dp_result);
+                    validate_dp_result(&matrix_file_name, &seg_method, &config, &r, &mkl_dp_result);
+                    write_dp_result_to_file(&output_filename, &matrix_file_name, &seg_method, &config, &r, &mkl_dp_result, &comm_size);
+                    std::cout << "See " << output_filename << std::endl;
                 }
                 else{
                     std::cout << "Result not validated" << std::endl;
@@ -879,18 +372,19 @@ int main(int argc, char *argv[])
     else if (value_type == "sp")
     {
         BenchmarkResult<float, int> r;
-        compute_result<float, int>(&file_name_str, &seg_method, &config, &r);
+        compute_result<float, int>(&matrix_file_name, &seg_method, &config, &r, &my_rank, &comm_size);
 
         if(my_rank == 0){
             std::cout << "SPMVM(s) completed. Mode: " << config.mode << std::endl;
 
             if(config.mode == 's'){
                 if(config.validate_result){
+                    std::string output_filename = {"spmv_mkl_compare_sp.txt"};
                     std::cout << "Validating..." << std::endl;
                     std::vector<float> mkl_sp_result;
-                    validate_sp_result(&file_name_str, &seg_method, &config, &r, &mkl_sp_result);
-                    write_sp_result_to_file(&file_name_str, &seg_method, &config, &r, &mkl_sp_result);
-                    std::cout << "See spmv_mkl_compare.txt" << std::endl;
+                    validate_sp_result(&matrix_file_name, &seg_method, &config, &r, &mkl_sp_result);
+                    write_sp_result_to_file(&output_filename, &matrix_file_name, &seg_method, &config, &r, &mkl_sp_result, &comm_size);
+                    std::cout << "See " << output_filename << std::endl;
                 }
                 else{
                     std::cout << "Result not validated" << std::endl;

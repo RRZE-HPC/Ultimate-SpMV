@@ -865,7 +865,6 @@ template <typename VT>
 void random_init(VT *begin, VT *end)
 {
     int my_rank;
-    // MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
     srand(time(NULL) + my_rank);
@@ -929,11 +928,13 @@ void init_with_ptr_or_value(V<VT, IT> &x,
 }
 
 template <typename VT>
-void init_std_vec_with_ptr_or_value(std::vector<VT> &x,
-                               ST n_x,
-                               const std::vector<VT> *x_in,
-                               VT default_value,
-                               bool init_with_random_numbers = false)
+void init_std_vec_with_ptr_or_value(
+    std::vector<VT> &x,
+    ST n_x,
+    VT default_value,
+    bool init_with_random_numbers = false,
+    const std::vector<VT> *x_in = nullptr
+)
 {
     if (!init_with_random_numbers)
     {
@@ -963,5 +964,167 @@ void init_std_vec_with_ptr_or_value(std::vector<VT> &x,
         random_init(&(*x.begin()), &(*x.end()));
     }
 }
+
+
+/**
+    @brief Scan user cli input to variables, and verify that the entered parameters are valid
+    @param *file_name_str : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *value_type : either single precision (/float/-sp) or double precision (/double/-dp)
+    @param *random_init_x : decides if our generated x-vector is randomly generated, 
+        or made from the default value defined in the DefaultValues struct
+    @param *config : struct to initialze default values and user input
+*/
+void verify_and_assign_inputs(
+    int argc,
+    char *argv[],
+    std::string *file_name_str,
+    std::string *seg_method,
+    std::string *value_type,
+    Config *config)
+{
+    if (argc < 2)
+    {
+        fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+        exit(1);
+    }
+
+    *file_name_str = argv[1];
+    config->kernel_format = argv[2];
+
+    int args_start_index = 3;
+    for (int i = args_start_index; i < argc; ++i)
+    {
+        std::string arg = argv[i];
+        if (arg == "-c")
+        {
+            config->chunk_size = atoi(argv[++i]);
+
+            if (config->chunk_size < 1)
+            {
+                fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+                exit(1);
+            }
+        }
+        else if (arg == "-s")
+        {
+
+            config->sigma = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->sigma < 1)
+            {
+                fprintf(stderr, "ERROR: sigma must be >= 1.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+                exit(1);
+            }
+        }
+        else if (arg == "-rev")
+        {
+            config->n_repetitions = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->n_repetitions < 1)
+            {
+                fprintf(stderr, "ERROR: revisions must be >= 1.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+                exit(1);
+            }
+        }
+        else if (arg == "-verbose")
+        {
+            config->verbose_validation = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->verbose_validation != 0 && config->verbose_validation != 1)
+            {
+                fprintf(stderr, "ERROR: Only validation verbosity levels 0 and 1 are supported.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+                exit(1);
+            }
+        }
+        else if (arg == "-validate")
+        {
+            config->validate_result = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->validate_result != 0 && config->validate_result != 1)
+            {
+                fprintf(stderr, "ERROR: You can only choose to validate result (1, i.e. yes) or not (0, i.e. no).\n");
+                fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+                exit(1);
+            }
+        }
+        else if (arg == "-mode")
+        {
+            config->mode = *argv[++i]; // i.e. grab the NEXT
+
+            if (config->mode != 'b' && config->mode != 's')
+            {
+                fprintf(stderr, "ERROR: Only bench (b) and solve (s) modes are supported.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+                exit(1);
+            }
+        }
+        else if (arg == "-rand_x")
+        {
+            config->random_init_x = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->random_init_x != 0 && config->random_init_x != 1)
+            {
+                fprintf(stderr, "ERROR: You can only choose to initialize x randomly (1, i.e. yes) or not (0, i.e. no).\n");
+                fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+                exit(1);
+            }
+        }
+        else if (arg == "-dp")
+        {
+            *value_type = "dp";
+        }
+        else if (arg == "-sp")
+        {
+            *value_type = "sp";
+        }
+        else if (arg == "-seg_rows")
+        {
+            *seg_method = "seg-rows";
+        }
+        else if (arg == "-seg_nnz")
+        {
+            *seg_method = "seg-nnz";
+        }
+        else
+        {
+            fprintf(stderr, "ERROR: unknown argument.\n");
+            fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+            exit(1);
+        }
+    }
+
+    if (config->sigma > config->chunk_size)
+    {
+        fprintf(stderr, "ERROR: sigma must be smaller than chunk size.\n");
+        fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
+                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c]\n",
+        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode);
+        exit(1);
+    }
+}
+
 
 #endif
