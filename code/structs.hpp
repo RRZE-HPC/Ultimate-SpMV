@@ -58,7 +58,7 @@ struct Config
     // converting it to a specific format.
     bool sort_matrix{true};
 
-    bool verbose_validation{true};
+    bool verbose_validation{false};
 
     // Configures if the code will be executed in bench mode or compute mode
     std::string mode = "bench"; 
