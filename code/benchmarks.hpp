@@ -76,14 +76,16 @@ void bench_spmv_scs(
 
     // IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
 
+    // clock_t begin_ahci_time = std::clock();
     adjust_halo_col_idxs<VT, IT>(local_mtx, &scs, work_sharing_arr, my_rank, comm_size); // scs specific
-
+    // if(config->log_prof)
+    //     log("adjust_halo_col_idxs", begin_ahci_time, std::clock());
     // Copy local_x to x_out for (optional) validation against mkl later
     // for(IT i = 0; i < local_x.size(); ++i){
     //     (*x_out)[i] = local_x[i];
     // }
 
-
+    // clock_t begin_main_loop_time = std::clock();
     if(config->mode == 'b'){ // Enter main COMM-SPMVM-SWAP loop, bench mode
         // int NITER = 2;
         // do
@@ -125,6 +127,8 @@ void bench_spmv_scs(
         //     (*y_out)[i] = local_x[scs.old_to_new_idx[i]];
         // }
     }
+    // if(config->log_prof)
+    //     log("main_loop", begin_main_loop_time, std::clock());
 
     double mem_matrix_b =
             (double)sizeof(VT) * scs.n_elements     // values

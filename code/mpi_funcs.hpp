@@ -738,10 +738,16 @@ void seg_and_send_mtx(
     {
         // NOTE: Matrix will be read in as SORTED by default
         // Only root proc will read entire matrix
+        clock_t begin_rmtxd_time = std::clock();
         MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str->c_str(), config->sort_matrix);
+        if(config->log_prof)
+            log("read_mtx_data", begin_rmtxd_time, std::clock());
 
         // Segment global row pointers, and place into an array
+        clock_t begin_swsa_time = std::clock();
         seg_work_sharing_arr<VT, IT>(&mtx, work_sharing_arr, seg_method, comm_size);
+        if(config->log_prof)
+            log("seg_work_sharing_arr", begin_swsa_time, std::clock());
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
@@ -752,7 +758,10 @@ void seg_and_send_mtx(
             std::vector<VT> local_vals;
 
             // Assign rows, columns, and values to process local vectors
+            clock_t begin_smtxs_time = std::clock();
             seg_mtx_struct<VT, IT>(&mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
+            if(config->log_prof)
+                log("seg_mtx_struct", begin_smtxs_time, std::clock());
 
             // Count the number of rows in each processes
             IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();

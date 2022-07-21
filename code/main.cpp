@@ -1,9 +1,9 @@
 #include "spmv.h"
+#include "structs.hpp"
 #include "mtx-reader.h"
 #include "vectors.h"
-
 #include "utilities.hpp"
-#include "structs.hpp"
+
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "format.hpp"
@@ -18,6 +18,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#include <ctime>
+
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -57,8 +60,12 @@ void init_structs(
     const int *comm_size,
     const int *amnt_local_elems
 ){
+
     std::vector<IT> local_needed_heri;
+    // clock_t begin_clnh_time = std::clock();
     collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr, my_rank, comm_size);
+    // if(config->log_prof)
+    //     log("collect_local_needed_heri", begin_clnh_time, std::clock());
 
     IT local_needed_heri_size = local_needed_heri.size();
     IT global_needed_heri_size;
@@ -81,6 +88,7 @@ void init_structs(
 
     // "to_send_heri" are all halo elements that this process is to send
     std::vector<IT> to_send_heri;
+    // clock_t begin_ctsh_time = std::clock();
     collect_to_send_heri<IT>(
         &to_send_heri,
         &local_needed_heri,
@@ -88,6 +96,8 @@ void init_structs(
         my_rank,
         comm_size
     );
+    // if(config->log_prof)
+    //     log("collect_to_send_heri", begin_clnh_time, std::clock());
 
     // The shift array is used in the tag-generation scheme in halo communication.
     // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
@@ -103,6 +113,7 @@ void init_structs(
         incidence_arr[i] = IT{};
     }
 
+    // clock_t begin_chs_time = std::clock();
     calc_heri_shifts<IT>(
         global_needed_heri, 
         &global_needed_heri_size, 
@@ -110,6 +121,8 @@ void init_structs(
         &incidence_arr, 
         comm_size
     ); // NOTE: always symmetric?
+    // if(config->log_prof)
+    //     log("calc_heri_shifts", begin_chs_time, std::clock());
 
     // if(*my_rank == 1){
     //     for(int row = 0; row < *comm_size; ++row){
@@ -183,6 +196,7 @@ void compute_result(
         work_sharing_arr[i] = IT{};
     }
 
+    clock_t begin_sasmtx_time = std::clock();
     seg_and_send_mtx<VT, IT>(
         &local_mtx, 
         config, 
@@ -192,6 +206,8 @@ void compute_result(
         my_rank, 
         comm_size
     );
+    if(config->log_prof)
+        log("seg_and_send_mtx", begin_sasmtx_time, std::clock());
 
     IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
 
@@ -202,6 +218,7 @@ void compute_result(
 
     // Resize and populate local x and y
     // populate local context
+    // clock_t begin_is_time = std::clock();
     init_structs<VT, IT>(
         &local_mtx, 
         work_sharing_arr, 
@@ -216,6 +233,8 @@ void compute_result(
         comm_size,
         &amnt_local_elems
     );
+    // if(config->log_prof)
+    //     log("init_structs", begin_is_time, std::clock());
 
     // if(*my_rank == 0){
     //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
@@ -224,6 +243,7 @@ void compute_result(
     // }
     // MPI_Barrier(MPI_COMM_WORLD);
 
+    // clock_t begin_bs_time = std::clock();
     bench_spmv<VT, IT>(
         config,
         &local_mtx,
@@ -235,6 +255,8 @@ void compute_result(
         my_rank,
         comm_size
     );
+    // if(config->log_prof)
+    //     log("bench_spmv", begin_bs_time, std::clock());
 
     // if(*my_rank == 0){
     //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
@@ -323,14 +345,17 @@ void compute_result(
 
 int main(int argc, char *argv[])
 {
+    clock_t begin_main_time = std::clock();
+    log("log start __________");
+
     MPI_Init(&argc, &argv);
 
     Config config;
     std::string matrix_file_name{};
 
     // Set defaults for cl inputs
-    std::string seg_method{"seg-rows"};
-    std::string value_type = {"dp"};
+    std::string seg_method = "seg-rows";
+    std::string value_type = "dp";
     int C = config.chunk_size;
     int sigma = config.sigma;
     int revisions = config.n_repetitions;
@@ -349,23 +374,24 @@ int main(int argc, char *argv[])
         compute_result<double, int>(&matrix_file_name, &seg_method, &config, &r, &my_rank, &comm_size);
 
         if(my_rank == 0){
-            std::cout << "SPMVM(s) completed. Mode: " << config.mode << std::endl;
+            log("SPMVM(s) completed");
 
             if(config.mode == 's'){
                 if(config.validate_result){
-                    std::string output_filename = {"spmv_mkl_compare_dp.txt"};
-                    std::cout << "Validating..." << std::endl;
+                    std::string output_filename = "spmv_mkl_compare_dp.txt";
+                    log("Validation start");
                     std::vector<double> mkl_dp_result;
                     validate_dp_result(&matrix_file_name, &seg_method, &config, &r, &mkl_dp_result);
+                    log("Validation end");
                     write_dp_result_to_file(&output_filename, &matrix_file_name, &seg_method, &config, &r, &mkl_dp_result, &comm_size);
-                    std::cout << "See " << output_filename << std::endl;
+                    // log(std::strcat("See ", &output_filename[0]));
                 }
                 else{
-                    std::cout << "Result not validated" << std::endl;
+                    log("Result not validated");
                 }
             }
             else if(config.mode == 'b'){
-                std::cout << "See BenchmarkResult" << std::endl;
+                log("See BenchmarkResult");
             }
         }
     }
@@ -375,23 +401,24 @@ int main(int argc, char *argv[])
         compute_result<float, int>(&matrix_file_name, &seg_method, &config, &r, &my_rank, &comm_size);
 
         if(my_rank == 0){
-            std::cout << "SPMVM(s) completed. Mode: " << config.mode << std::endl;
+            log("SPMVM(s) completed");
 
             if(config.mode == 's'){
                 if(config.validate_result){
-                    std::string output_filename = {"spmv_mkl_compare_sp.txt"};
-                    std::cout << "Validating..." << std::endl;
+                    std::string output_filename = "spmv_mkl_compare_sp.txt";
+                    log("Validation start");
                     std::vector<float> mkl_sp_result;
                     validate_sp_result(&matrix_file_name, &seg_method, &config, &r, &mkl_sp_result);
+                    log("Validation end");
                     write_sp_result_to_file(&output_filename, &matrix_file_name, &seg_method, &config, &r, &mkl_sp_result, &comm_size);
-                    std::cout << "See " << output_filename << std::endl;
+                    // log(std::strcat("See ", &output_filename[0]));
                 }
                 else{
-                    std::cout << "Result not validated" << std::endl;
+                    log("Result not validated");
                 }
             }
             else if(config.mode == 'b'){
-                std::cout << "See BenchmarkResult" << std::endl;
+                log("See BenchmarkResult");
             }
         }
     }
@@ -399,6 +426,11 @@ int main(int argc, char *argv[])
     MPI_Finalize();
 
     MARKER_DEINIT();
+
+    if(config.log_prof)
+        log("main", begin_main_time, std::clock());
+
+    log("log end __________");
 
     return 0;
 }

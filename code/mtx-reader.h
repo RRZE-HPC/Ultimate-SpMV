@@ -1,4 +1,5 @@
-#pragma once
+#ifndef MTX_READER
+#define MTX_READER
 
 #include <algorithm>
 #include <cinttypes>
@@ -778,7 +779,7 @@ read_mtx_data(const char * file_name, bool sort)
 
     MtxData<VT, IT> mtx;
 
-    log("reading mtx begin\n");
+    // log("reading mtx begin\n");
 
     if (is_bmtx_file(file_name)) {
         mtx = read_mtx_data_binary<VT, IT>(file_name);
@@ -788,19 +789,19 @@ read_mtx_data(const char * file_name, bool sort)
     }
 
     if (sort && !mtx.is_sorted) {
-        log("sorting mtx begin\n");
+        // log("sorting mtx begin\n");
         sort_mtx(mtx);
-        log("sorting mtx end\n");
+        // log("sorting mtx end\n");
         mtx.is_sorted = true;
     }
 
     if (!mtx.is_symmetric) {
-        log("check symmetry mtx begin\n");
+        // log("check symmetry mtx begin\n");
         mtx.is_symmetric = is_mtx_symmetric_fast(mtx);
-        log("check symmetry mtx end\n");
+        // log("check symmetry mtx end\n");
     }
 
-    log("reading mtx end\n");
+    // log("reading mtx end\n");
 
     return mtx;
 }
@@ -915,3 +916,4 @@ is_type_large_enough_for_mtx_sizes(const char * file_name)
 
     return n_rows <= it_max && n_cols <= it_max && nnz <= it_max;
 }
+#endif

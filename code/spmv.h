@@ -214,7 +214,7 @@ static double inline get_time()
     return tp.tv_sec + tp.tv_nsec * 1e-9;
 }
 
-void log(const char * format, ...);
+// void log(const char * format, ...);
 
 #ifdef __NVCC__
 
