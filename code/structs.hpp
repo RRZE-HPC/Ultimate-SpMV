@@ -182,15 +182,4 @@ struct MtxDataBookkeeping
     bool is_symmetric{};
 };
 
-// Functor to compare by the Mth element
-// template<int M, template<IT> class F = std::less>
-// struct TupleCompare
-// {
-//     template<typename T>
-//     bool operator()(T const &t1, T const &t2)
-//     {
-//         return F<typename tuple_element<M, T>::type>()(std::get<M>(t1), std::get<M>(t2));
-//     }
-// };
-
 #endif

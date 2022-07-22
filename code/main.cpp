@@ -6,8 +6,7 @@
 
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
-#include "format.hpp"
-#include "benchmarks.hpp"
+#include "benchmark.hpp"
 #include "write_results.hpp"
 
 

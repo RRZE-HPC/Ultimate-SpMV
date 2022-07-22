@@ -299,14 +299,13 @@ void validate_dp_result(
     mkl_dp_result->resize(num_rows, 0);
     std::vector<double> y(num_rows, 0);
 
-    V<double, int> values;
-    V<int, int> col_idxs;
-    V<int, int> row_ptrs;
+    ScsData<double, int> scs;
 
-    convert_to_csr<double, int>(*total_mtx, row_ptrs, col_idxs, values);
+    convert_to_scs<double, int>(total_mtx, 1, 1, &scs);
 
-    // Promote values to doubles
-    // std::vector<VT> values_vec(values.data(), values.data() + values.n_rows);
+    V<int, int>row_ptrs(total_mtx->n_rows + 1);
+
+    convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
         
     for (int i = 0; i < num_rows; i++) {
         (*mkl_dp_result)[i] = r->total_x[i];
@@ -328,7 +327,8 @@ void validate_dp_result(
     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
     for(int i = 0; i < config->n_repetitions; ++i){
-        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
+        // mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
+        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs.values.data(), scs.col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
         std::swap(*mkl_dp_result, y);
     }
 }
@@ -352,11 +352,13 @@ void validate_sp_result(
     mkl_sp_result->resize(num_rows, 0);
     std::vector<float> y(num_rows, 0);
 
-    V<float, int> values;
-    V<int, int> col_idxs;
-    V<int, int> row_ptrs;
+    ScsData<float, int> scs;
 
-    convert_to_csr<float, int>(*total_mtx, row_ptrs, col_idxs, values);
+    convert_to_scs<float, int>(total_mtx, 1, 1, &scs);
+
+    V<int, int>row_ptrs(total_mtx->n_rows + 1);
+
+    convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
         
     for (int i = 0; i < num_rows; i++) {
         (*mkl_sp_result)[i] = r->total_x[i];
@@ -378,7 +380,7 @@ void validate_sp_result(
     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
     for(int i = 0; i < config->n_repetitions; ++i){
-        mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
+        mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs.values.data(), scs.col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
         std::swap(*mkl_sp_result, y);
     }
 }
