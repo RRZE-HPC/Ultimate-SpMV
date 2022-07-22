@@ -965,7 +965,7 @@ void verify_and_assign_inputs(
     if (argc < 2)
     {
         fprintf(stderr, "Usage: %s martix-market-filename kernel_format [options]\n"
-                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], log_prof [%i]\n",
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i]\n",
                 argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof);
         exit(1);
     }

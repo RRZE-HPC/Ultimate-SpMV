@@ -288,17 +288,13 @@ void write_sp_result_to_file(
     @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
 */
 void validate_dp_result(
-    const std::string *matrix_file_name,
-    const std::string *seg_method,
+    MtxData<double, int> *total_mtx,
     Config *config,
     BenchmarkResult<double, int> *r,
     std::vector<double> *mkl_dp_result
 ){    
-    // Root process reads in matrix again, for mkl
-    MtxData<double, int> mtx = read_mtx_data<double, int>(matrix_file_name->c_str(), config->sort_matrix);
-
-    int num_rows = mtx.n_rows;
-    int num_cols = mtx.n_cols;
+    int num_rows = total_mtx->n_rows;
+    int num_cols = total_mtx->n_cols;
 
     mkl_dp_result->resize(num_rows, 0);
     std::vector<double> y(num_rows, 0);
@@ -307,7 +303,7 @@ void validate_dp_result(
     V<int, int> col_idxs;
     V<int, int> row_ptrs;
 
-    convert_to_csr<double, int>(mtx, row_ptrs, col_idxs, values);
+    convert_to_csr<double, int>(*total_mtx, row_ptrs, col_idxs, values);
 
     // Promote values to doubles
     // std::vector<VT> values_vec(values.data(), values.data() + values.n_rows);
@@ -345,17 +341,13 @@ void validate_dp_result(
     @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
 */
 void validate_sp_result(
-    const std::string *matrix_file_name,
-    const std::string *seg_method,
+    MtxData<float, int> *total_mtx,
     Config *config,
     BenchmarkResult<float, int> *r,
     std::vector<float> *mkl_sp_result
 ){    
-    // Root process reads in matrix again, for mkl
-    MtxData<float, int> mtx = read_mtx_data<float, int>(matrix_file_name->c_str(), config->sort_matrix);
-
-    int num_rows = mtx.n_rows;
-    int num_cols = mtx.n_cols;
+    int num_rows = total_mtx->n_rows;
+    int num_cols = total_mtx->n_cols;
 
     mkl_sp_result->resize(num_rows, 0);
     std::vector<float> y(num_rows, 0);
@@ -364,7 +356,7 @@ void validate_sp_result(
     V<int, int> col_idxs;
     V<int, int> row_ptrs;
 
-    convert_to_csr<float, int>(mtx, row_ptrs, col_idxs, values);
+    convert_to_csr<float, int>(*total_mtx, row_ptrs, col_idxs, values);
         
     for (int i = 0; i < num_rows; i++) {
         (*mkl_sp_result)[i] = r->total_x[i];

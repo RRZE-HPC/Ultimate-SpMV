@@ -9,66 +9,66 @@
 
 /**
     @brief Convert mtx struct to sell-c-sigma data structures.
-    @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h 
+    @param *local_mtx : process local mtx data structure, that was populated by  
     @param C : chunk height
     @param sigma : sorting scope
-    @param *d : The ScsData struct to populate with data
+    @param *scs : The ScsData struct to populate with data
 */
 template <typename VT, typename IT>
 void convert_to_scs(
-    const MtxData<VT, IT> * mtx,
+    const MtxData<VT, IT> *local_mtx,
     ST C,
     ST sigma,
-    ScsData<VT, IT> *d)
+    ScsData<VT, IT> *scs)
 {
-    d->nnz    = mtx->nnz;
-    d->n_rows = mtx->n_rows;
-    d->n_cols = mtx->n_cols;
+    scs->nnz    = local_mtx->nnz;
+    scs->n_rows = local_mtx->n_rows;
+    scs->n_cols = local_mtx->n_cols;
 
-    d->C = C;
-    d->sigma = sigma;
+    scs->C = C;
+    scs->sigma = sigma;
 
-    if (d->sigma % d->C != 0 && d->sigma != 1) {
+    if (scs->sigma % scs->C != 0 && scs->sigma != 1) {
         fprintf(stderr, "NOTE: sigma is not a multiple of C\n");
     }
 
-    if (will_add_overflow(d->n_rows, d->C)) {
+    if (will_add_overflow(scs->n_rows, scs->C)) {
         fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
         // return false;
     }
-    d->n_chunks      = (mtx->n_rows + d->C - 1) / d->C;
+    scs->n_chunks      = (local_mtx->n_rows + scs->C - 1) / scs->C;
 
-    if (will_mult_overflow(d->n_chunks, d->C)) {
+    if (will_mult_overflow(scs->n_chunks, scs->C)) {
         fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
         // return false;
     }
-    d->n_rows_padded = d->n_chunks * d->C;
+    scs->n_rows_padded = scs->n_chunks * scs->C;
 
     // first enty: original row index
     // second entry: population count of row
     using index_and_els_per_row = std::pair<ST, ST>;
 
-    std::vector<index_and_els_per_row> n_els_per_row(d->n_rows_padded);
+    std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded);
 
-    for (ST i = 0; i < d->n_rows_padded; ++i) {
+    for (ST i = 0; i < scs->n_rows_padded; ++i) {
         n_els_per_row[i].first = i;
     }
 
-    for (ST i = 0; i < mtx->nnz; ++i) {
-        ++n_els_per_row[mtx->I[i]].second;
+    for (ST i = 0; i < local_mtx->nnz; ++i) {
+        ++n_els_per_row[local_mtx->I[i]].second;
     }
 
     // sort rows in the scope of sigma
-    if (will_add_overflow(d->n_rows_padded, d->sigma)) {
+    if (will_add_overflow(scs->n_rows_padded, scs->sigma)) {
         fprintf(stderr, "ERROR: no. of padded rows + sigma exceeds size type.\n");
         // return false;
     }
 
-    for (ST i = 0; i < d->n_rows_padded; i += d->sigma) {
+    for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
         auto begin = &n_els_per_row[i];
-        auto end   = (i + d->sigma) < d->n_rows_padded
-                        ? &n_els_per_row[i + d->sigma]
-                        : &n_els_per_row[d->n_rows_padded];
+        auto end   = (i + scs->sigma) < scs->n_rows_padded
+                        ? &n_els_per_row[i + scs->sigma]
+                        : &n_els_per_row[scs->n_rows_padded];
 
         std::sort(begin, end,
                   // sort longer rows first
@@ -81,79 +81,79 @@ void convert_to_scs(
 
     // TODO: check chunk_ptrs can overflow
     // std::cout << d.n_chunks << std::endl;
-    d->chunk_lengths = V<IT, IT>(d->n_chunks); // init a vector of length d.n_chunks
-    d->chunk_ptrs    = V<IT, IT>(d->n_chunks + 1);
+    scs->chunk_lengths = V<IT, IT>(scs->n_chunks); // init a vector of length d.n_chunks
+    scs->chunk_ptrs    = V<IT, IT>(scs->n_chunks + 1);
 
     IT cur_chunk_ptr = 0;
     
-    for (ST i = 0; i < d->n_chunks; ++i) {
-        auto begin = &n_els_per_row[i * d->C];
-        auto end   = &n_els_per_row[i * d->C + d->C];
+    for (ST i = 0; i < scs->n_chunks; ++i) {
+        auto begin = &n_els_per_row[i * scs->C];
+        auto end   = &n_els_per_row[i * scs->C + scs->C];
 
-        d->chunk_lengths[i] =
+        scs->chunk_lengths[i] =
                 std::max_element(begin, end,
                     [](const auto & a, const auto & b) {
                         return a.second < b.second;
                     })->second;
 
-        if (will_add_overflow(cur_chunk_ptr, d->chunk_lengths[i] * (IT)d->C)) {
+        if (will_add_overflow(cur_chunk_ptr, scs->chunk_lengths[i] * (IT)scs->C)) {
             fprintf(stderr, "ERROR: chunck_ptrs exceed index type.\n");
             // return false;
         }
 
-        d->chunk_ptrs[i] = cur_chunk_ptr;
-        cur_chunk_ptr += d->chunk_lengths[i] * d->C;
+        scs->chunk_ptrs[i] = cur_chunk_ptr;
+        cur_chunk_ptr += scs->chunk_lengths[i] * scs->C;
     }
 
     
 
-    ST n_scs_elements = d->chunk_ptrs[d->n_chunks - 1]
-                        + d->chunk_lengths[d->n_chunks - 1] * d->C;
-    d->chunk_ptrs[d->n_chunks] = n_scs_elements;
+    ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
+                        + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
+    scs->chunk_ptrs[scs->n_chunks] = n_scs_elements;
 
     // construct permutation vector
 
-    d->old_to_new_idx = V<IT, IT>(d->n_rows);
+    scs->old_to_new_idx = V<IT, IT>(scs->n_rows);
 
-    for (ST i = 0; i < d->n_rows_padded; ++i) {
+    for (ST i = 0; i < scs->n_rows_padded; ++i) {
         IT old_row_idx = n_els_per_row[i].first;
 
-        if (old_row_idx < d->n_rows) {
-            d->old_to_new_idx[old_row_idx] = i;
+        if (old_row_idx < scs->n_rows) {
+            scs->old_to_new_idx[old_row_idx] = i;
         }
     }
     
 
-    d->values   = V<VT, IT>(n_scs_elements);
-    d->col_idxs = V<IT, IT>(n_scs_elements);
+    scs->values   = V<VT, IT>(n_scs_elements);
+    scs->col_idxs = V<IT, IT>(n_scs_elements);
 
     for (ST i = 0; i < n_scs_elements; ++i) {
-        d->values[i]   = VT{};
-        d->col_idxs[i] = IT{};
+        scs->values[i]   = VT{};
+        scs->col_idxs[i] = IT{};
     }
 
-    std::vector<IT> col_idx_in_row(d->n_rows_padded);
+    std::vector<IT> col_idx_in_row(scs->n_rows_padded);
 
     // fill values and col_idxs
-    for (ST i = 0; i < d->nnz; ++i) {
-        IT row_old = mtx->I[i];
+    for (ST i = 0; i < scs->nnz; ++i) {
+        IT row_old = local_mtx->I[i];
 
-        IT row = d->old_to_new_idx[row_old];
+        IT row = scs->old_to_new_idx[row_old];
 
-        ST chunk_index = row / d->C;
+        ST chunk_index = row / scs->C;
 
-        IT chunk_start = d->chunk_ptrs[chunk_index];
-        IT chunk_row   = row % d->C;
+        IT chunk_start = scs->chunk_ptrs[chunk_index];
+        IT chunk_row   = row % scs->C;
 
-        IT idx = chunk_start + col_idx_in_row[row] * d->C + chunk_row;
+        IT idx = chunk_start + col_idx_in_row[row] * scs->C + chunk_row;
 
-        d->col_idxs[idx] = mtx->J[i];
-        d->values[idx]   = mtx->values[i];
+        scs->col_idxs[idx] = local_mtx->J[i];
+        scs->values[idx]   = local_mtx->values[i];
 
         col_idx_in_row[row]++;
     }
 
-    d->n_elements = n_scs_elements;
+    scs->n_elements = n_scs_elements;
 
     // return true;
 }

@@ -51,7 +51,6 @@ void init_structs(
     IT *work_sharing_arr,
     Config *config,
     const std::string *seg_method,
-    const std::string *file_name_str,
     std::vector<VT> *dummy_x,
     std::vector<VT> *local_x,
     std::vector<VT> *local_y,
@@ -175,7 +174,7 @@ void init_structs(
 */
 template <typename VT, typename IT>
 void compute_result(
-    const std::string *file_name,
+    MtxData<VT, IT> *total_mtx,
     const std::string *seg_method,
     Config *config,
     BenchmarkResult<VT, IT> *r,
@@ -198,10 +197,10 @@ void compute_result(
 
     clock_t begin_sasmtx_time = std::clock();
     seg_and_send_mtx<VT, IT>(
+        total_mtx,
         &local_mtx, 
         config, 
         seg_method, 
-        file_name, 
         work_sharing_arr, 
         my_rank, 
         comm_size
@@ -224,7 +223,6 @@ void compute_result(
         work_sharing_arr, 
         config, 
         seg_method, 
-        file_name, 
         &local_x, 
         &dummy_x,
         &local_y, 
@@ -370,8 +368,17 @@ int main(int argc, char *argv[])
 
     if (value_type == "dp")
     {
+        MtxData<double, int> total_mtx;
         BenchmarkResult<double, int> r;
-        compute_result<double, int>(&matrix_file_name, &seg_method, &config, &r, &my_rank, &comm_size);
+
+        if(my_rank == 0){
+            clock_t begin_rmtxd_time = std::clock();
+            total_mtx = read_mtx_data<double, int>(matrix_file_name.c_str(), config.sort_matrix);
+            if(config.log_prof)
+                log("read_mtx_data", begin_rmtxd_time, std::clock());
+        }
+
+        compute_result<double, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
 
         if(my_rank == 0){
             log("SPMVM(s) completed");
@@ -381,7 +388,7 @@ int main(int argc, char *argv[])
                     std::string output_filename = "spmv_mkl_compare_dp.txt";
                     log("Validation start");
                     std::vector<double> mkl_dp_result;
-                    validate_dp_result(&matrix_file_name, &seg_method, &config, &r, &mkl_dp_result);
+                    validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
                     log("Validation end");
                     write_dp_result_to_file(&output_filename, &matrix_file_name, &seg_method, &config, &r, &mkl_dp_result, &comm_size);
                     // log(std::strcat("See ", &output_filename[0]));
@@ -397,8 +404,16 @@ int main(int argc, char *argv[])
     }
     else if (value_type == "sp")
     {
+        MtxData<float, int> total_mtx;
         BenchmarkResult<float, int> r;
-        compute_result<float, int>(&matrix_file_name, &seg_method, &config, &r, &my_rank, &comm_size);
+
+        if(my_rank == 0){
+            clock_t begin_rmtxd_time = std::clock();
+            total_mtx = read_mtx_data<float, int>(matrix_file_name.c_str(), config.sort_matrix);
+            if(config.log_prof)
+                log("read_mtx_data", begin_rmtxd_time, std::clock());
+        }
+        compute_result<float, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
 
         if(my_rank == 0){
             log("SPMVM(s) completed");
@@ -408,7 +423,7 @@ int main(int argc, char *argv[])
                     std::string output_filename = "spmv_mkl_compare_sp.txt";
                     log("Validation start");
                     std::vector<float> mkl_sp_result;
-                    validate_sp_result(&matrix_file_name, &seg_method, &config, &r, &mkl_sp_result);
+                    validate_sp_result(&total_mtx, &config, &r, &mkl_sp_result);
                     log("Validation end");
                     write_sp_result_to_file(&output_filename, &matrix_file_name, &seg_method, &config, &r, &mkl_sp_result, &comm_size);
                     // log(std::strcat("See ", &output_filename[0]));

@@ -545,14 +545,14 @@ void adjust_halo_col_idxs(
 /**
     @brief Partition the rows of the mtx structure, so that work is disributed (somewhat) evenly. The two options "seg-rows"
         and "seg-nnz" are there in an effort to have multiple load balancing techniques the segment work between processes.
-    @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h
+    @param *total_mtx : data structure that was populated by the matrix market format reader mtx-reader.h
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param comm_size : size of mpi communicator
 */
 template <typename VT, typename IT>
 void seg_work_sharing_arr(
-    const MtxData<VT, IT> *mtx,
+    const MtxData<VT, IT> *total_mtx,
     IT *work_sharing_arr,
     const std::string *seg_method,
     const IT *comm_size)
@@ -566,7 +566,7 @@ void seg_work_sharing_arr(
         IT rowsPerProc;
 
         // Evenly split the number of rows
-        rowsPerProc = mtx->n_rows / *comm_size;
+        rowsPerProc = total_mtx->n_rows / *comm_size;
 
         // Segment rows to work on via. array
         for (segment = 1; segment < *comm_size + 1; ++segment)
@@ -577,7 +577,7 @@ void seg_work_sharing_arr(
             {
                 // Set the last element to point to directly after the final row
                 // (takes care of remainder rows)
-                work_sharing_arr[*comm_size] = mtx->I[mtx->nnz - 1] + 1;
+                work_sharing_arr[*comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
             }
         }
     }
@@ -586,37 +586,36 @@ void seg_work_sharing_arr(
         IT nnzPerProc; //, remainderNnz;
 
         // Split the number of rows based on non zeros
-        nnzPerProc = mtx->nnz / *comm_size;
-        // remainderNnz = mtx.nnz % nnzPerProc;
+        nnzPerProc = total_mtx->nnz / *comm_size;
 
         IT global_ctr, local_ctr;
         segment = 1;
         local_ctr = 0;
 
         // Segment rows to work on via. array
-        for (global_ctr = 0; global_ctr < mtx->nnz; ++global_ctr)
+        for (global_ctr = 0; global_ctr < total_mtx->nnz; ++global_ctr)
         {
             if (local_ctr == nnzPerProc)
             {
                 // Assign rest of the current row to this segment
-                work_sharing_arr[segment] = mtx->I[global_ctr] + 1;
+                work_sharing_arr[segment] = total_mtx->I[global_ctr] + 1;
                 ++segment;
                 local_ctr = 0;
                 continue;
             }
             ++local_ctr;
         }
-        // Set the last element to poIT to directly after the final row
+        // Set the last element to point to directly after the final row
         // (takes care of remainder rows)
-        work_sharing_arr[*comm_size] = mtx->I[mtx->nnz - 1] + 1;
+        work_sharing_arr[*comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
     }
 
     // Protect against edge case, where last process gets no work
-    // if(work_sharing_arr[comm_size] == work_sharing_arr[comm_size]){
-    //     for(IT loop_rank = 1; loop_rank < comm_size; ++loop_rank){
-    //         work_sharing_arr[loop_rank] -= 1;
-    //     }
-    // }
+    if(work_sharing_arr[*comm_size] == work_sharing_arr[*comm_size + 1]){
+        for(IT loop_rank = 1; loop_rank < *comm_size; ++loop_rank){
+            work_sharing_arr[loop_rank] -= 1;
+        }
+    }
 }
 
 /**
@@ -633,7 +632,7 @@ void seg_work_sharing_arr(
 */
 template <typename VT, typename IT>
 void seg_mtx_struct(
-    const MtxData<VT, IT> *mtx,
+    const MtxData<VT, IT> *total_mtx,
     std::vector<IT> *local_I,
     std::vector<IT> *local_J,
     std::vector<VT> *local_vals,
@@ -643,37 +642,30 @@ void seg_mtx_struct(
     IT start_idx, run_idx, finish_idx;
     IT next_row;
 
-    // Assign rows, columns, and values to process local vectors
-    for (IT row = work_sharing_arr[loop_rank]; row < work_sharing_arr[loop_rank + 1]; ++row)
+    // Return the first instance of that row present in mtx.
+    start_idx = get_index<IT>(total_mtx->I, work_sharing_arr[loop_rank]);
+
+    // once we have the index of the first instance of the row,
+    // we calculate the index of the first instance of the next row
+    if (work_sharing_arr[loop_rank + 1] != total_mtx->n_rows)
     {
-        next_row = row + 1;
-
-        // Return the first instance of that row present in mtx.
-        start_idx = get_index<IT>(mtx->I, row);
-
-        // once we have the index of the first instance of the row,
-        // we calculate the index of the first instance of the next row
-        if (next_row != mtx->n_rows)
-        {
-            finish_idx = get_index<IT>(mtx->I, next_row);
-        }
-        else
-        {
-            // for the "last row" case, just set finish_idx to the number of non zeros in mtx
-            finish_idx = mtx->nnz;
-        }
-        run_idx = start_idx;
-
-        // This do-while loop will go "across the rows", basically filling the process local vectors
-        // TODO: is this better than a while loop here?
-        do
-        {
-            local_I->push_back(mtx->I[run_idx]);
-            local_J->push_back(mtx->J[run_idx]);
-            local_vals->push_back(mtx->values[run_idx]);
-            ++run_idx;
-        } while (run_idx != finish_idx);
+        finish_idx = get_index<IT>(total_mtx->I, work_sharing_arr[loop_rank + 1]);
     }
+    else
+    {
+        // for the "last row" case, just set finish_idx to the number of non zeros in mtx
+        finish_idx = total_mtx->nnz;
+    }
+    run_idx = start_idx;
+
+    // This do-while loop will go "across the rows", basically filling the process local vectors
+    do
+    {
+        local_I->push_back(total_mtx->I[run_idx]);
+        local_J->push_back(total_mtx->J[run_idx]);
+        local_vals->push_back(total_mtx->values[run_idx]);
+        ++run_idx;
+    } while (run_idx != finish_idx);
 }
 
 /**
@@ -717,10 +709,10 @@ void define_bookkeeping_type(
 */
 template <typename VT, typename IT>
 void seg_and_send_mtx(
+    MtxData<VT, IT> *total_mtx,
     MtxData<VT, IT> *local_mtx,
     Config *config, // shouldn't this be const?
     const std::string *seg_method,
-    const std::string *file_name_str,
     IT *work_sharing_arr,
     const IT *my_rank,
     const IT *comm_size)
@@ -736,30 +728,28 @@ void seg_and_send_mtx(
 
     if (*my_rank == 0)
     {
-        // NOTE: Matrix will be read in as SORTED by default
-        // Only root proc will read entire matrix
-        clock_t begin_rmtxd_time = std::clock();
-        MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str->c_str(), config->sort_matrix);
-        if(config->log_prof)
-            log("read_mtx_data", begin_rmtxd_time, std::clock());
-
         // Segment global row pointers, and place into an array
         clock_t begin_swsa_time = std::clock();
-        seg_work_sharing_arr<VT, IT>(&mtx, work_sharing_arr, seg_method, comm_size);
+        seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size);
         if(config->log_prof)
             log("seg_work_sharing_arr", begin_swsa_time, std::clock());
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
+        // STRONG CONTENDER FOR PRAGMA PARALELL
         for (IT loop_rank = 0; loop_rank < *comm_size; ++loop_rank)
         { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
+            // std::vector<IT> local_I(mtx.nnz / *comm_size);
+            // std::vector<IT> local_J(mtx.nnz / *comm_size);
+            // std::vector<VT> local_vals(mtx.nnz / *comm_size); // an attempt to not have so much resizing in seg_mtx_struct
+
             std::vector<IT> local_I;
             std::vector<IT> local_J;
-            std::vector<VT> local_vals;
+            std::vector<VT> local_vals; // an attempt to not have so much resizing in seg_mtx_struct
 
             // Assign rows, columns, and values to process local vectors
             clock_t begin_smtxs_time = std::clock();
-            seg_mtx_struct<VT, IT>(&mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
+            seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
             if(config->log_prof)
                 log("seg_mtx_struct", begin_smtxs_time, std::clock());
 
@@ -770,7 +760,7 @@ void seg_and_send_mtx(
             if (loop_rank == 0)
             {
                 local_mtx->n_rows = local_row_cnt;
-                local_mtx->n_cols = mtx.n_cols;
+                local_mtx->n_cols = total_mtx->n_cols;
                 local_mtx->nnz = local_vals.size();
                 local_mtx->is_sorted = config->sort_matrix;
                 local_mtx->is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
@@ -783,7 +773,7 @@ void seg_and_send_mtx(
             {
                 send_bk = {
                     local_row_cnt,
-                    mtx.n_cols, // TODO: Actually constant, do dont need to send to each proc
+                    total_mtx->n_cols, // TODO: Actually constant, do dont need to send to each proc
                     local_vals.size(),
                     config->sort_matrix,
                     0};

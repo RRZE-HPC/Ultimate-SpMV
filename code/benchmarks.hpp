@@ -46,7 +46,7 @@
     @brief Collect halo element row indices for each local x-vector, and perform SPMVM
     @param *config : struct to initialze default values and user input
     @param *local_mtx : pointer to local mtx struct
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows of the total mtx struct
     @param *y_out : the vector declared to either hold the process local result, 
         or the global result if verification is selected as an option
     @param *x_out : the local x-vector, which is collect to the root process for mkl validation later
@@ -69,6 +69,8 @@ void bench_spmv_scs(
     ScsData<VT, IT> scs;
 
     convert_to_scs<VT, IT>(local_mtx, config->chunk_size, config->sigma, &scs);
+
+    //init
 
 
     // TODO: How bad is this for scalability? Is there a way around this?
@@ -102,7 +104,7 @@ void bench_spmv_scs(
         //         std::swap(dummy_x, local_y_scs_vec);
         //     }
 
-        // } while (end - start < .1)
+        // } while (end - start < 1)
         // NITER = NITER / 2;
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode

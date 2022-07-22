@@ -42,9 +42,9 @@ struct ContextData
     std::vector<IT> shift_arr; //how does this work, with these on the heap?
     std::vector<IT> incidence_arr;
 
-    // rank?
-    // comm_size?
-    // padding?
+    // rank
+    // comm_size
+    // padding
     // what else?
 };
 
