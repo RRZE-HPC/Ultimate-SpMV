@@ -3,6 +3,47 @@
 
 #include "mkl.h"
 
+template<typename VT, typename IT>
+void write_bench_to_file(
+    const std::string *output_filename,
+    const std::string *matrix_file_name,
+    const std::string *seg_method,
+    Config *config,
+    BenchmarkResult<VT, IT> *r,
+    const int *comm_size
+){
+    std::fstream working_file;
+    int width = 16;
+
+    std::cout.precision(16);
+
+    // Print parameters
+    working_file.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
+    working_file << "C: " << config->chunk_size << ", data_type: " <<
+    'd' << ", repetitions: " << r->n_calls << ", and seg_method: " << *seg_method << std::endl;
+    working_file << std::endl;
+
+    working_file << std::left << std::setw(width) << "Perf per MPI proc:" << std::endl;
+    working_file << std::left << std::setw(width) << "------------------" << std::endl;
+
+    // Print Flops per MPI process
+    for(int proc = 0; proc < *comm_size; ++proc){
+        working_file << "Proc " << proc << ": ";
+        working_file << r->perfs_from_procs[proc] << " MF/s" << std::endl;
+    }
+    working_file << std::endl;
+
+    working_file << std::left << std::setw(width) << "Average Mflops per proc:" << std::endl;
+    working_file << std::left << std::setw(width) << "-----------------------" << std::endl;
+
+    double sum_flops = std::accumulate(r->perfs_from_procs.begin(), r->perfs_from_procs.end(), 0.0);
+    working_file << sum_flops << " MF/s" << std::endl;
+
+    // working_file << sum_flops / (double)*comm_size << " GF/s" << std::endl;
+    working_file << std::endl;
+}
+
 /**
     @brief Write the double precision comparison results to an external text file for validation
     @param *file_name_str : name of the matrix-matket format data, taken from the cli
@@ -26,7 +67,7 @@ void write_dp_result_to_file(
     int width;
     double relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
     double absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
-    std::fstream appendFileToWorkWith;
+    std::fstream working_file;
 
     max_relative_diff = 0;
     max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
@@ -39,29 +80,29 @@ void write_dp_result_to_file(
     std::cout.precision(16);
 
     // Print parameters
-    appendFileToWorkWith.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
-    appendFileToWorkWith << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
-    appendFileToWorkWith << "C: " << config->chunk_size << ", data_type: " <<
+    working_file.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
+    working_file << "C: " << config->chunk_size << ", data_type: " <<
     'd' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
-    appendFileToWorkWith << std::endl;
+    working_file << std::endl;
 
     // Print header
     if(config->verbose_validation == 1){
         width = 16;
 
-        appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
+        working_file << std::left << std::setw(width) << "mkl results:"
                     << std::left << std::setw(width) << "spmv results:"
                     << std::left << std::setw(width) << "rel. diff(%):" 
                     << std::left << std::setw(width) << "abs. diff:" << std::endl;
 
-        appendFileToWorkWith << std::left << std::setw(width) << "-----------"
+        working_file << std::left << std::setw(width) << "-----------"
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "---------" << std::endl;
     }
     else if(config->verbose_validation == 0){
         width = 18;
-        appendFileToWorkWith 
+        working_file 
                     << std::left << std::setw(width-2) << "mkl rel. elem:"
                     << std::left << std::setw(width) << "spmvm rel. elem:"
                     << std::left << std::setw(width) << "MAX rel. diff(%):" 
@@ -70,7 +111,7 @@ void write_dp_result_to_file(
                     << std::left << std::setw(width) << "MAX abs. diff:"
                     << std::endl;
 
-        appendFileToWorkWith 
+        working_file 
                     << std::left << std::setw(width-2) << "-------------"
                     << std::left << std::setw(width) << "---------------"
                     << std::left << std::setw(width) << "----------------"
@@ -84,19 +125,19 @@ void write_dp_result_to_file(
         
         if(config -> verbose_validation == 1)
         {
-            appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
+            working_file << std::left << std::setw(width) << (*x)[i]
                         << std::left << std::setw(width) << r->total_spmvm_result[i]
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
 
             if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
-                appendFileToWorkWith << std::left << std::setw(width) << "ERROR";
+                working_file << std::left << std::setw(width) << "ERROR";
             }
             else if(abs(relative_diff) > .0001){
-                appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+                working_file << std::left << std::setw(width) << "WARNING";
             }
 
-        appendFileToWorkWith << std::endl;
+        working_file << std::endl;
         }
         else if(config -> verbose_validation == 0)
         {
@@ -119,7 +160,7 @@ void write_dp_result_to_file(
     }
     if(config->verbose_validation == 0)
     {
-        appendFileToWorkWith 
+        working_file 
                     << std::left << std::setw(width) << max_relative_diff_elem_mkl
                     << std::left << std::setw(width) << max_relative_diff_elem_spmvm
                     << std::left << std::setw(width) << 100 * max_relative_diff
@@ -129,16 +170,16 @@ void write_dp_result_to_file(
                          
         if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
         ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
-        appendFileToWorkWith << std::left << std::setw(width) << "ERROR";       
+        working_file << std::left << std::setw(width) << "ERROR";       
         }
         else if(abs(max_relative_diff) > .0001){
-        appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+        working_file << std::left << std::setw(width) << "WARNING";
         }
 
-        appendFileToWorkWith << std::endl;
+        working_file << std::endl;
     }
-    appendFileToWorkWith << "\n";
-    appendFileToWorkWith.close();
+    working_file << "\n";
+    working_file.close();
 }
 
 
@@ -165,7 +206,7 @@ void write_sp_result_to_file(
     int width;
     float relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
     float absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
-    std::fstream appendFileToWorkWith;
+    std::fstream working_file;
 
     max_relative_diff = 0;
     max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
@@ -178,29 +219,29 @@ void write_sp_result_to_file(
     std::cout.precision(8);
 
     // Print parameters
-    appendFileToWorkWith.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
-    appendFileToWorkWith << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
-    appendFileToWorkWith << "C: " << config->chunk_size << ", data_type: " <<
+    working_file.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
+    working_file << "C: " << config->chunk_size << ", data_type: " <<
     'f' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
-    appendFileToWorkWith << std::endl;
+    working_file << std::endl;
 
     // Print header
     if(config->verbose_validation == 1){
         width = 16;
 
-        appendFileToWorkWith << std::left << std::setw(width) << "mkl results:"
+        working_file << std::left << std::setw(width) << "mkl results:"
                     << std::left << std::setw(width) << "spmv results:"
                     << std::left << std::setw(width) << "rel. diff(%):" 
                     << std::left << std::setw(width) << "abs. diff:" << std::endl;
 
-        appendFileToWorkWith << std::left << std::setw(width) << "-----------"
+        working_file << std::left << std::setw(width) << "-----------"
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "---------" << std::endl;
     }
     else if(config->verbose_validation == 0){
         width = 18;
-        appendFileToWorkWith 
+        working_file 
                     << std::left << std::setw(width-2) << "mkl rel. elem:"
                     << std::left << std::setw(width) << "spmvm rel. elem:"
                     << std::left << std::setw(width) << "MAX rel. diff(%):" 
@@ -209,7 +250,7 @@ void write_sp_result_to_file(
                     << std::left << std::setw(width) << "MAX abs. diff:"
                     << std::endl;
 
-        appendFileToWorkWith 
+        working_file 
                     << std::left << std::setw(width-2) << "-------------"
                     << std::left << std::setw(width) << "---------------"
                     << std::left << std::setw(width) << "----------------"
@@ -223,19 +264,19 @@ void write_sp_result_to_file(
         
         if(config -> verbose_validation == 1)
         {
-            appendFileToWorkWith << std::left << std::setw(width) << (*x)[i]
+            working_file << std::left << std::setw(width) << (*x)[i]
                         << std::left << std::setw(width) << r->total_spmvm_result[i]
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
 
             if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
-                appendFileToWorkWith << std::left << std::setw(width) << "ERROR";
+                working_file << std::left << std::setw(width) << "ERROR";
             }
             else if(abs(relative_diff) > .0001){
-                appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+                working_file << std::left << std::setw(width) << "WARNING";
             }
 
-        appendFileToWorkWith << std::endl;
+        working_file << std::endl;
         }
         else if(config -> verbose_validation == 0)
         {
@@ -258,7 +299,7 @@ void write_sp_result_to_file(
     }
     if(config->verbose_validation == 0)
     {
-        appendFileToWorkWith 
+        working_file 
                     << std::left << std::setw(width) << max_relative_diff_elem_mkl
                     << std::left << std::setw(width) << max_relative_diff_elem_spmvm
                     << std::left << std::setw(width) << 100 * max_relative_diff
@@ -268,16 +309,16 @@ void write_sp_result_to_file(
                          
         if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
         ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
-        appendFileToWorkWith << std::left << std::setw(width) << "ERROR";       
+        working_file << std::left << std::setw(width) << "ERROR";       
         }
         else if(abs(max_relative_diff) > .0001){
-        appendFileToWorkWith << std::left << std::setw(width) << "WARNING";
+        working_file << std::left << std::setw(width) << "WARNING";
         }
 
-        appendFileToWorkWith << std::endl;
+        working_file << std::endl;
     }
-    appendFileToWorkWith << "\n";
-    appendFileToWorkWith.close();
+    working_file << "\n";
+    working_file.close();
 }
 
 /**

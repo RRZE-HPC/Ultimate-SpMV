@@ -10,6 +10,7 @@ log.txt
 
 spmv_mkl_compare_sp.txt
 spmv_mkl_compare_dp.txt
+spmv_bench.txt
 
 *.o
 *.gch

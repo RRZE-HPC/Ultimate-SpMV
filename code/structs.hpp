@@ -125,8 +125,9 @@ struct DefaultValues
 template <typename VT, typename IT>
 struct BenchmarkResult
 {
-    double perf_gflops{};
+    double perf_mflops{};
     double mem_mb{};
+    std::vector<double> perfs_from_procs; // used in Gather
 
     unsigned int size_value_type{};
     unsigned int size_index_type{};

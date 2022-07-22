@@ -172,7 +172,7 @@ void bench_spmv(
     ContextData<IT> *local_context,
     const IT *work_sharing_arr,
     std::vector<VT> *local_y,
-    std::vector<VT> *dummy_x,
+    std::vector<VT> *local_x,
     BenchmarkResult<VT, IT> *r,
     const int *my_rank,
     const int *comm_size
@@ -182,67 +182,59 @@ void bench_spmv(
 
     convert_to_scs<VT, IT>(local_mtx, config->chunk_size, config->sigma, &scs);
 
-    //init
-
-
-    // TODO: How bad is this for scalability? Is there a way around this?
-    // std::vector<VT> local_y_scs_vec(scs.n_rows_padded, 0); //necessary ^^?
-
-    // IT updated_col_idx, initial_col_idx = scs.col_idxs[0];
-
     // clock_t begin_ahci_time = std::clock();
     adjust_halo_col_idxs<VT, IT>(local_mtx, &scs, work_sharing_arr, my_rank, comm_size); // scs specific
-    // if(config->log_prof)
-    //     log("adjust_halo_col_idxs", begin_ahci_time, std::clock());
-    // Copy local_x to x_out for (optional) validation against mkl later
-    // for(IT i = 0; i < local_x.size(); ++i){
-    //     (*x_out)[i] = local_x[i];
-    // }
 
-    // clock_t begin_main_loop_time = std::clock();
-    if(config->mode == 'b'){ // Enter main COMM-SPMVM-SWAP loop, bench mode
-        // int NITER = 2;
-        // do
-        // {
-        //     // get start time
-        //     // TODO
-        //     for(int k = 0; k < NITER; ++k){
-        //         communicate_halo_elements<VT, IT>(&local_needed_heri, &to_send_heri, &local_x, shift_arr, work_sharing_arr);
+    // Enter main COMM-SPMVM-SWAP loop, bench mode
+    if(config->mode == 'b'){
+        int local_x_size = local_x->size();
+        std::vector<VT> dummy_x(local_x_size, 1);
 
-        //         spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
-        //                             scs.chunk_lengths.data(), scs.col_idxs.data(),
-        //                             scs.values.data(), &(local_x)[0], &(local_y_scs_vec)[0]);
+        clock_t begin_bench_loop_time, end_bench_loop_time;
+        int n_iter = 1;
+        do
+        {
+            begin_bench_loop_time = std::clock();
+            MPI_Barrier(MPI_COMM_WORLD);
+            for(int k = 0; k < n_iter; ++k){
+                communicate_halo_elements<VT, IT>(local_context, &dummy_x, work_sharing_arr, my_rank, comm_size);
 
-        //         std::swap(dummy_x, local_y_scs_vec);
-        //     }
+                spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
+                                    scs.chunk_lengths.data(), scs.col_idxs.data(),
+                                    scs.values.data(), &(*local_x)[0], &(*local_y)[0]);
 
-        // } while (end - start < 1)
-        // NITER = NITER / 2;
+                std::swap(dummy_x, *local_y);
+
+                if(dummy_x[local_x_size]<0.) // prevent compiler from eliminating loop
+                    printf("%lf", dummy_x[local_x_size/2]);
+            }
+            MPI_Barrier(MPI_COMM_WORLD);
+            end_bench_loop_time = std::clock();
+            n_iter *= 2;
+        } while ((end_bench_loop_time - begin_bench_loop_time) / CLOCKS_PER_SEC < 1);
+
+        n_iter /= 2;
+
+        r->n_calls = n_iter;
+        r->duration_total_s = (end_bench_loop_time - begin_bench_loop_time) / CLOCKS_PER_SEC;
+        r->duration_kernel_s = r->duration_total_s/ r->n_calls;
+        r->perf_mflops = (double)scs.nnz * 2.0
+                            / r->duration_kernel_s
+                            / 1e6;                   // Only count usefull flops
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
         for (IT i = 0; i < config->n_repetitions; ++i)
         {
-            communicate_halo_elements<VT, IT>(local_context, dummy_x, work_sharing_arr, my_rank, comm_size);
+            communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
 
             spmv_omp_scs<VT, IT>(scs.C, scs.n_chunks, scs.chunk_ptrs.data(),
                                 scs.chunk_lengths.data(), scs.col_idxs.data(),
-                                scs.values.data(), &(*dummy_x)[0], &(*local_y)[0]);
+                                scs.values.data(), &(*local_x)[0], &(*local_y)[0]);
 
-            // if (i != config->n_repetitions - 1){
-            std::swap(*dummy_x, *local_y);
-            // }
+            std::swap(*local_x, *local_y);
         }
-
-        // NOTE: Is it better just to do the "if i != rev - 1" in the main loop?
-        std::swap(*dummy_x, *local_y);
-
-        // for (IT i = 0; i < scs.old_to_new_idx.n_rows; ++i)
-        // {
-        //     (*y_out)[i] = local_x[scs.old_to_new_idx[i]];
-        // }
+        std::swap(*local_x, *local_y);
     }
-    // if(config->log_prof)
-    //     log("main_loop", begin_main_loop_time, std::clock());
 
     double mem_matrix_b =
             (double)sizeof(VT) * scs.n_elements     // values
@@ -263,10 +255,7 @@ void bench_spmv(
     r->n_cols = local_mtx->n_cols;
     r->nnz    = scs.nnz;
 
-    r->duration_kernel_s = r->duration_total_s/ r->n_calls;
-    r->perf_gflops       = (double)scs.nnz * 2.0
-                          / r->duration_kernel_s
-                          / 1e9;                   // Only count usefull flops
+
 
     r->value_type_str = type_name_from_type<VT>();
     r->index_type_str = type_name_from_type<IT>();
@@ -278,7 +267,5 @@ void bench_spmv(
     r->fill_in_percent = ((double)scs.n_elements / scs.nnz - 1.0) * 100.0;
     r->C               = scs.C;
     r->sigma           = scs.sigma;
-
-    // TODO: compute code balances
 }
 #endif

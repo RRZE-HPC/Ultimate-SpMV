@@ -50,7 +50,6 @@ void init_structs(
     IT *work_sharing_arr,
     Config *config,
     const std::string *seg_method,
-    std::vector<VT> *dummy_x,
     std::vector<VT> *local_x,
     std::vector<VT> *local_y,
     ContextData<IT> *local_context,
@@ -138,7 +137,7 @@ void init_structs(
     IT x_y_padding = std::max(local_x_needed_padding, (int)config->chunk_size);
 
     // Prepare buffers for communication
-    dummy_x->resize(x_y_padding + *amnt_local_elems, 0);
+    // dummy_x->resize(x_y_padding + *amnt_local_elems, 0);
     local_x->resize(x_y_padding + *amnt_local_elems, 0);
     local_y->resize(x_y_padding + *amnt_local_elems, 0);
 
@@ -152,8 +151,8 @@ void init_structs(
         config->random_init_x
     );
 
-    // Copy x to the dummy vector, so spmvm can use this for swapping and multiplication
-    std::copy(local_x->begin(), local_x->end(), dummy_x->begin());
+    // // Copy x to the dummy vector, so spmvm can use this for swapping and multiplication
+    // std::copy(local_x->begin(), local_x->end(), dummy_x->begin());
 
     local_context->local_needed_heri = local_needed_heri;
     local_context->to_send_heri = to_send_heri;
@@ -212,48 +211,42 @@ void compute_result(
     ContextData<IT> local_context;
     std::vector<VT> local_y; //(amnt_local_elements, 0);
     std::vector<VT> local_x; //(amnt_local_elements, 0);
-    std::vector<VT> dummy_x; //(size of local x, 0);
 
     // Resize and populate local x and y
     // populate local context
-    // clock_t begin_is_time = std::clock();
+    clock_t begin_is_time = std::clock();
     init_structs<VT, IT>(
         &local_mtx, 
         work_sharing_arr, 
         config, 
         seg_method, 
         &local_x, 
-        &dummy_x,
         &local_y, 
         &local_context, 
         my_rank, 
         comm_size,
         &amnt_local_elems
     );
-    // if(config->log_prof)
-    //     log("init_structs", begin_is_time, std::clock());
+    if(config->log_prof)
+        log("init_structs", begin_is_time, std::clock());
 
-    // if(*my_rank == 0){
-    //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
-    //         std::cout << local_x[i] << std::endl;
-    //     }
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
+    // Copy contents of local_x for output, and validation against mkl
+    std::vector<VT> local_x_copy = local_x;
 
-    // clock_t begin_bs_time = std::clock();
+    clock_t begin_bs_time = std::clock();
     bench_spmv<VT, IT>(
         config,
         &local_mtx,
         &local_context,
         work_sharing_arr,
         &local_y,
-        &dummy_x,
+        &local_x,
         r,
         my_rank,
         comm_size
     );
-    // if(config->log_prof)
-    //     log("bench_spmv", begin_bs_time, std::clock());
+    if(config->log_prof)
+        log("bench_spmv", begin_bs_time, std::clock());
 
     // if(*my_rank == 0){
     //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
@@ -263,72 +256,91 @@ void compute_result(
     // MPI_Barrier(MPI_COMM_WORLD);
     // exit(0);
 
-    // Assign proc local x and y to benchmark result object
-    r->x_out = local_x;
-    r->y_out = local_y;
+    if(config->mode == 'b'){
+        double *perfs_from_procs_arr = new double[*comm_size];
 
-    if (config->validate_result)
-    {
-        // TODO: is the size correct here?
-        std::vector<VT> total_spmvm_result(work_sharing_arr[*comm_size], 0);
-        std::vector<VT> total_x(work_sharing_arr[*comm_size], 0);
+        MPI_Gather(&(r->perf_mflops),
+                1,
+                MPI_DOUBLE,
+                perfs_from_procs_arr,
+                1,
+                MPI_DOUBLE,
+                0,
+                MPI_COMM_WORLD);
 
-        IT counts_arr[*comm_size];
-        IT displ_arr_bk[*comm_size];
+        // NOTE: Garbage values for all but root process
+        r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + *comm_size);
 
-        for(IT i = 0; i < *comm_size; ++i){
-            counts_arr[i] = IT{};
-            displ_arr_bk[i] = IT{};
+        delete[] perfs_from_procs_arr;
+    }
+    else if(config->mode == 's'){
+        // Assign proc local x and y to benchmark result object
+        r->x_out = local_x_copy;
+        r->y_out = local_y;
+
+        if (config->validate_result)
+        {
+            // TODO: is the size correct here?
+            std::vector<VT> total_spmvm_result(work_sharing_arr[*comm_size], 0);
+            std::vector<VT> total_x(work_sharing_arr[*comm_size], 0);
+
+            IT counts_arr[*comm_size];
+            IT displ_arr_bk[*comm_size];
+
+            for(IT i = 0; i < *comm_size; ++i){
+                counts_arr[i] = IT{};
+                displ_arr_bk[i] = IT{};
+            }
+            
+            for (IT i = 0; i < *comm_size; ++i){
+                counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
+                displ_arr_bk[i] = work_sharing_arr[i];
+            }
+
+            // Collect each of the process local x and y vectors to a global/total vector for validation
+            if (typeid(VT) == typeid(double)){
+                MPI_Allgatherv(&local_y[0],
+                                amnt_local_elems,
+                                MPI_DOUBLE,
+                                &total_spmvm_result[0],
+                                counts_arr,
+                                displ_arr_bk,
+                                MPI_DOUBLE,
+                                MPI_COMM_WORLD);
+
+                MPI_Allgatherv(&local_x_copy[0],
+                                amnt_local_elems,
+                                MPI_DOUBLE,
+                                &total_x[0],
+                                counts_arr,
+                                displ_arr_bk,
+                                MPI_DOUBLE,
+                                MPI_COMM_WORLD);
+            }
+            else if (typeid(VT) == typeid(float)){
+                MPI_Allgatherv(&local_y[0],
+                                amnt_local_elems,
+                                MPI_FLOAT,
+                                &total_spmvm_result[0],
+                                counts_arr,
+                                displ_arr_bk,
+                                MPI_FLOAT,
+                                MPI_COMM_WORLD);
+
+                MPI_Allgatherv(&local_x_copy[0],
+                                amnt_local_elems,
+                                MPI_FLOAT,
+                                &total_x[0],
+                                counts_arr,
+                                displ_arr_bk,
+                                MPI_FLOAT,
+                                MPI_COMM_WORLD);
+            }
+
+            // If we're verifying results, assign total vectors to benchmark result object
+            r->total_x = total_x;
+            r->total_spmvm_result = total_spmvm_result;
         }
-        
-        for (IT i = 0; i < *comm_size; ++i){
-            counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
-            displ_arr_bk[i] = work_sharing_arr[i];
-        }
-
-        // Collect each of the process local x and y vectors to a global/total vector for validation
-        if (typeid(VT) == typeid(double)){
-            MPI_Allgatherv(&local_y[0],
-                            amnt_local_elems,
-                            MPI_DOUBLE,
-                            &total_spmvm_result[0],
-                            counts_arr,
-                            displ_arr_bk,
-                            MPI_DOUBLE,
-                            MPI_COMM_WORLD);
-
-            MPI_Allgatherv(&local_x[0],
-                            amnt_local_elems,
-                            MPI_DOUBLE,
-                            &total_x[0],
-                            counts_arr,
-                            displ_arr_bk,
-                            MPI_DOUBLE,
-                            MPI_COMM_WORLD);
-        }
-        else if (typeid(VT) == typeid(float)){
-            MPI_Allgatherv(&local_y[0],
-                            amnt_local_elems,
-                            MPI_FLOAT,
-                            &total_spmvm_result[0],
-                            counts_arr,
-                            displ_arr_bk,
-                            MPI_FLOAT,
-                            MPI_COMM_WORLD);
-
-            MPI_Allgatherv(&local_x[0],
-                            amnt_local_elems,
-                            MPI_FLOAT,
-                            &total_x[0],
-                            counts_arr,
-                            displ_arr_bk,
-                            MPI_FLOAT,
-                            MPI_COMM_WORLD);
-        }
-
-        // If we're verifying results, assign total vectors to benchmark result object
-        r->total_x = total_x;
-        r->total_spmvm_result = total_spmvm_result;
     }
     // if(*my_rank == 0){
     //     printf("\n");
@@ -397,7 +409,11 @@ int main(int argc, char *argv[])
                 }
             }
             else if(config.mode == 'b'){
-                log("See BenchmarkResult");
+                // std::string output_filename = "spmv_bench_dp.txt";
+                std::string output_filename = "spmv_bench.txt";
+
+                write_bench_to_file<double, int>(&output_filename, &matrix_file_name, &seg_method, &config, &r, &comm_size);
+
             }
         }
     }
@@ -432,7 +448,9 @@ int main(int argc, char *argv[])
                 }
             }
             else if(config.mode == 'b'){
-                log("See BenchmarkResult");
+                // std::string output_filename = "spmv_bench_sp.txt";
+                std::string output_filename = "spmv_bench.txt";
+                write_bench_to_file<float, int>(&output_filename, &matrix_file_name, &seg_method, &config, &r, &comm_size);
             }
         }
     }
