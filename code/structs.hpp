@@ -39,12 +39,12 @@ struct ContextData
     std::vector<IT> to_send_heri;
     std::vector<IT> local_needed_heri;
 
-    std::vector<IT> shift_arr; //how does this work, with these on the heap?
-    std::vector<IT> incidence_arr;
+    std::vector<IT> shift_vec; //how does this work, with these on the heap?
+    std::vector<IT> incidence_vec;
 
-    // rank
-    // comm_size
-    // padding
+    IT amnt_local_elems;
+    IT scs_padding;
+
     // what else?
 };
 

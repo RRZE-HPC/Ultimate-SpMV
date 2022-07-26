@@ -65,21 +65,13 @@ void compute_result(
 
     // Declare local structs on each process
     ScsData<VT, IT> local_scs;
-    std::vector<VT> local_x; //(amnt_local_elements, 0);
-    std::vector<VT> local_y; //(amnt_local_elements, 0);
     ContextData<IT> local_context;
 
-
-    // Allocate space for work sharing array. Is populated in seg_and_send_mtx function
+    // Allocate space for work sharing array
     IT work_sharing_arr[*comm_size + 1];
 
-    // for(IT i = 0; i < *comm_size + 1; ++i){
-    //     work_sharing_arr[i] = IT{};
-    // }
     mpi_init_local_structs<VT, IT>(
         &local_scs,
-        &local_x, 
-        &local_y, 
         &local_context, 
         total_mtx,
         config, 
@@ -89,8 +81,20 @@ void compute_result(
         comm_size
     );
 
+    SimpleDenseMatrix<VT, IT> local_x(&local_context);
+    SimpleDenseMatrix<VT, IT> local_y(&local_context);
+
+    // Initialize local_x, either randomly, with defaults, or with a predefined x_in
+    DefaultValues<VT, IT> default_values;
+    init_std_vec_with_ptr_or_value(
+        local_x.vec, 
+        local_x.vec.size(),
+        default_values.x, 
+        config->random_init_x
+    );
+
     // Copy contents of local_x for output, and validation against mkl
-    std::vector<VT> local_x_copy = local_x;
+    std::vector<VT> local_x_copy = local_x.vec;
 
     if(config->log_prof && *my_rank == 0) {log("Begin bench_spmv");}
     clock_t begin_bs_time = std::clock();
@@ -99,21 +103,13 @@ void compute_result(
         &local_scs,
         &local_context,
         work_sharing_arr,
-        &local_y,
-        &local_x,
+        &local_y.vec,
+        &local_x.vec,
         r,
         my_rank,
         comm_size
     );
     if(config->log_prof && *my_rank == 0) {log("Finish bench_spmv", begin_bs_time, std::clock());}
-
-    // if(*my_rank == 0){
-    //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
-    //         std::cout << local_y[i] << std::endl;
-    //     }
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 
     if(config->log_prof && *my_rank == 0) {log("Begin results gathering");}
     clock_t begin_rg_time = std::clock();
@@ -137,7 +133,7 @@ void compute_result(
     else if(config->mode == 's'){
         // Assign proc local x and y to benchmark result object
         r->x_out = local_x_copy;
-        r->y_out = local_y;
+        r->y_out = local_y.vec;
 
         if (config->validate_result)
         {
@@ -160,7 +156,7 @@ void compute_result(
 
             // Collect each of the process local x and y vectors to a global/total vector for validation on root proc
             if (typeid(VT) == typeid(double)){
-                MPI_Allgatherv(&local_y[0],
+                MPI_Allgatherv(&(local_y.vec)[0],
                                 work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
                                 MPI_DOUBLE,
                                 &total_spmvm_result[0],
@@ -179,7 +175,7 @@ void compute_result(
                                 MPI_COMM_WORLD);
             }
             else if (typeid(VT) == typeid(float)){
-                MPI_Allgatherv(&local_y[0],
+                MPI_Allgatherv(&(local_y.vec)[0],
                                 work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
                                 MPI_FLOAT,
                                 &total_spmvm_result[0],
@@ -204,14 +200,6 @@ void compute_result(
         }
     }
     if(config->log_prof && *my_rank == 0) {log("Finish results gathering", begin_rg_time, std::clock());}
-    // if(*my_rank == 0){
-    //     printf("\n");
-    //     for(int i = 0; i < work_sharing_arr[*comm_size]; ++i){
-    //         std::cout << (r->total_spmvm_result)[i] << std::endl;
-    //     }
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 }
 
 int main(int argc, char *argv[])

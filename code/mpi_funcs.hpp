@@ -285,7 +285,7 @@ void communicate_halo_elements(
             // std::cout << "to_prcc: " << to_proc << ", from proc "<< *my_rank << std::endl;
             from_proc = *my_rank;
 
-            send_shift = (local_context->shift_arr)[*comm_size * from_proc + to_proc];
+            send_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
             // std::cout << *comm_size << " * " << from_proc << " + " << to_proc << " =? " << *comm_size * from_proc + to_proc;
             // std::cout << "Send shift: " << send_shift << ", from proc "<< *my_rank << std::endl;
 
@@ -330,7 +330,7 @@ void communicate_halo_elements(
 
             // NOTE: Source of uniqueness for tag
             // NOTE: essentially "transpose" shift array here
-            recv_shift = (local_context->shift_arr)[*comm_size * from_proc + to_proc];
+            recv_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
             // std::cout << "Recv shift: " << recv_shift << ", from proc "<< *my_rank << std::endl;
 
 
@@ -360,7 +360,7 @@ void communicate_halo_elements(
             to_proc = (local_context->to_send_heri)[to_proc_idx];
             from_proc = *my_rank;
 
-            send_shift = (local_context->shift_arr)[*comm_size * from_proc + to_proc];
+            send_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
 
             MPI_Send(
                 &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[*my_rank]],
@@ -380,7 +380,7 @@ void communicate_halo_elements(
             to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
             from_proc = (local_context->local_needed_heri)[from_proc_idx];
 
-            recv_shift = (local_context->shift_arr)[*comm_size * from_proc + to_proc];
+            recv_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
 
             // MPI_Irecv(
             //     &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
@@ -703,8 +703,6 @@ void define_bookkeeping_type(
 template<typename VT, typename IT>
 void mpi_init_local_structs(
     ScsData<VT, IT> *local_scs,
-    std::vector<VT> *local_x,
-    std::vector<VT> *local_y,
     ContextData<IT> *local_context,
     MtxData<VT, IT> *total_mtx,
     Config *config, // shouldn't this be const?
@@ -912,11 +910,11 @@ void mpi_init_local_structs(
     // IT *shift_arr = new IT[(*comm_size) * (*comm_size)];
     // IT *incidence_arr = new IT[(*comm_size) * (*comm_size)];
 
-    for (IT i = 0; i < (*comm_size) * (*comm_size); ++i)
-    {
-        shift_arr[i] = IT{};
-        incidence_arr[i] = IT{};
-    }
+    // for (IT i = 0; i < (*comm_size) * (*comm_size); ++i)
+    // {
+    //     shift_arr[i] = IT{};
+    //     incidence_arr[i] = IT{};
+    // }
 
     if(config->log_prof && *my_rank == 0) {log("Begin calc_heri_shifts");}
     clock_t begin_chs_time = std::clock();
@@ -940,32 +938,13 @@ void mpi_init_local_structs(
     // MPI_Barrier(MPI_COMM_WORLD);
     // exit(0);
 
-    // NOTE: should always be a multiple of 3
-    IT local_x_needed_padding = local_needed_heri.size() / 3;
-    IT x_y_padding = std::max(local_x_needed_padding, (int)config->chunk_size);
-
-    // Prepare buffers for communication
-    // dummy_x->resize(x_y_padding + *amnt_local_elems, 0);
-    local_x->resize(x_y_padding + (work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank]), 0);
-    local_y->resize(x_y_padding + (work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank]), 0);
-
-    // Initialize local_x, either randomly, with defaults, or with a predefined x_in
-    DefaultValues<VT, IT> default_values;
-    // const std::vector<VT> x_in;// = nullptr; //what to do about this?
-    init_std_vec_with_ptr_or_value(
-        *local_x, 
-        local_x->size(),
-        default_values.x, 
-        config->random_init_x
-    );
-
-    // // Copy x to the dummy vector, so spmvm can use this for swapping and multiplication
-    // std::copy(local_x->begin(), local_x->end(), dummy_x->begin());
 
     local_context->local_needed_heri = local_needed_heri;
     local_context->to_send_heri = to_send_heri;
-    local_context->shift_arr = shift_arr;
-    local_context->incidence_arr = incidence_arr;
+    local_context->shift_vec = shift_arr;
+    local_context->incidence_vec = incidence_arr;
+    local_context->amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+    local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
 
     delete[] global_needed_heri;
 }
