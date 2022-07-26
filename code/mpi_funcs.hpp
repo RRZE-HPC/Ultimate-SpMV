@@ -16,7 +16,7 @@
 
     @brief Collect the row indicies of the halo elements needed for this process
     @param *local_needed_heri : pointer to vector that contains encoded 3-tuples of the form (proc_to, proc_from, global_row_idx)
-    @param *local_mtx : pointer to local mtx struct
+    @param *local_scs : pointer to local scs struct
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
 */
 template <typename VT, typename IT>
@@ -41,7 +41,6 @@ void collect_local_needed_heri(
     for (IT i = 0; i < local_scs->n_elements; ++i)
     {
         // If true, this is a remote element, and needs to be added to vector
-        // elem_col = local_mtx->J[i];
         elem_col = local_scs->col_idxs[i];
 
         // if this column corresponds to a padded element, continue to next nnz
@@ -89,7 +88,6 @@ void collect_local_needed_heri(
         local_needed_heri->push_back(std::get<1>(inner_tuple));
         local_needed_heri->push_back(std::get<2>(inner_tuple));
     }
-
 }
 
 /**
@@ -173,21 +171,13 @@ void collect_to_send_heri(
     }
 
     std::sort(unordered_heri_tuples_vec.begin(), unordered_heri_tuples_vec.end());
-    // MPI_Barrier(MPI_COMM_WORLD);
 
     for(auto& tuple : unordered_heri_tuples_vec){
         inner_tuple = std::get<1>(tuple);
         to_send_heri->push_back(std::get<0>(inner_tuple));
         to_send_heri->push_back(std::get<1>(inner_tuple));
         to_send_heri->push_back(std::get<2>(inner_tuple));
-
-        // if(my_rank == 0){
-        //     std::cout << "To proc: " << std::get<0>(inner_tuple) <<
-        //      ", we send the heri idx: " << std::get<2>(inner_tuple) << std::endl;
-        // }
     }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 }
 
 /**
@@ -238,12 +228,8 @@ void calc_heri_shifts(
         Since this function is in the benchmark loop, need to do as little work possible, ideally.
 
     @brief Communicate the halo elements to and from the local x-vectors
-    @param *local_needed_heri : the heri needed by this process
-    @param *to_send_heri : heri to send from this process
+    @param *local_context : 
     @param *local_x : the x vector corresponding to this process before the halo elements are communicated to it.
-        one can think of this as the partition of the "global x vector" corresponding to the rows of the local_mtx struct
-    @param *shift_arr : Essentially a cumulative from top -> bottom of incedence_arr. The row idx is the "from_proc",
-        the column is the "to_proc", and the element is the shift after the local element index to make for the incoming halo elements
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
 */
 template <typename VT, typename IT>
@@ -286,21 +272,6 @@ void communicate_halo_elements(
             from_proc = *my_rank;
 
             send_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
-            // std::cout << *comm_size << " * " << from_proc << " + " << to_proc << " =? " << *comm_size * from_proc + to_proc;
-            // std::cout << "Send shift: " << send_shift << ", from proc "<< *my_rank << std::endl;
-
-            // if(*my_rank == 1){
-            //     for(int row = 0; row < *comm_size; ++row){
-            //         for(int col = 0; col < *comm_size; ++col){
-            //             std::cout << (local_context->shift_arr)[*comm_size * row + col] << ", ";
-            //         }
-            //         printf("\n");
-            //     }
-            // }
-            // MPI_Barrier(MPI_COMM_WORLD);
-            // exit(0);
-
-            // std::cout << "Sending: " << (*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]] << " to " <<to_proc << std::endl;
 
             MPI_Send(
                 &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[*my_rank]],
@@ -310,11 +281,6 @@ void communicate_halo_elements(
                 send_shift + send_counts[to_proc],
                 MPI_COMM_WORLD);
 
-            // if (my_rank == test_rank)
-            // {
-            //     float data =  (*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]]; // assume this is the correct data to send for now
-            //     std::cout << "Proc: " << my_rank << " sends to " << to_proc << " the data " << data << " with a tag of " << send_shift + send_counts[to_proc] << std::endl;
-            // }
             ++send_counts[to_proc];
         }
         // TODO: definetly OpenMP this loop? Improve somehow
@@ -325,14 +291,11 @@ void communicate_halo_elements(
 
             to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
             from_proc = (local_context->local_needed_heri)[from_proc_idx];
-            // std::cout << "from_proc: " << from_proc << ", from proc "<< *my_rank << std::endl;
 
 
             // NOTE: Source of uniqueness for tag
             // NOTE: essentially "transpose" shift array here
             recv_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
-            // std::cout << "Recv shift: " << recv_shift << ", from proc "<< *my_rank << std::endl;
-
 
             MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
@@ -342,10 +305,6 @@ void communicate_halo_elements(
                 recv_shift + recv_counts[from_proc],
                 MPI_COMM_WORLD,
                 &status);
-
-            // if(my_rank == test_rank){
-            //     std::cout << "Proc " << my_rank << " asks for tag " << recv_shift + recv_counts[from_proc] << " from " << from_proc << std::endl;
-            // }
 
             ++recv_counts[from_proc];
         }
@@ -382,15 +341,6 @@ void communicate_halo_elements(
 
             recv_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
 
-            // MPI_Irecv(
-            //     &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
-            //     1,
-            //     MPI_DOUBLE,
-            //     from_proc,
-            //     recv_shift + recv_counts[from_proc],
-            //     MPI_COMM_WORLD,
-            //     &request);
-
             MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
                 1,
@@ -410,8 +360,7 @@ void communicate_halo_elements(
         "local" elements of scs.values have their col_idx adjusted differently than "remote" elements of scs.values.
 
     @brief Adjust the col_idx from the scs data structure
-    @param *local_mtx : Very similar to the original mtx struct, but constructed here with row, col, and value data sent to this particular process.
-    @param *scs : struct that contains the local_mtx struct data, where row idx, col idx, etc. adjusted to sell-c-sigma format
+    @param *local_scs : pointer to local scs struct
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
 */
 template <typename VT, typename IT>
@@ -447,6 +396,7 @@ void adjust_halo_col_idxs(
     // Then, reindex LOCAL elements
     for (IT i = 0; i < local_scs->n_elements; ++i)
     {
+        // NOTE: Is this enough? Or do we also need local_scs->col_idxs[i] != 0?
         if (local_scs->values[i] != 0) // ignore padding
         {
             if ((local_scs->col_idxs[i] >= work_sharing_arr[*my_rank]) && local_scs->col_idxs[i] < work_sharing_arr[*my_rank + 1])
@@ -473,7 +423,6 @@ void adjust_halo_col_idxs(
                         exists_nz_elem = 1;
                         break;
                     }
-                    // elem_idx = get_index(original_col_idxs, elem);
                     ++idx_ctr; // incremenet the corresponding index
                 }
 
@@ -512,7 +461,6 @@ void adjust_halo_col_idxs(
                         exists_nz_elem = 1;
                         break;
                     }
-                    // elem_idx = get_index(original_col_idxs, elem);
                     ++idx_ctr; // incremenet the corresponding index
                 }
 
@@ -551,7 +499,6 @@ void adjust_halo_col_idxs(
     @param *total_mtx : data structure that was populated by the matrix market format reader mtx-reader.h
     @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param comm_size : size of mpi communicator
 */
 template <typename VT, typename IT>
 void seg_work_sharing_arr(
@@ -626,7 +573,7 @@ void seg_work_sharing_arr(
         The idea is to reconstruct into local mtx structures on each process after communication.
 
     @brief Collect indices into local vectors
-    @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h
+    @param *total_mtx : data structure that was populated by the matrix market format reader mtx-reader.h
     @param *local_I : pointer to the vector to contain the row idx data, taken from original mtx struct
     @param *local_J : pointer to the vector to contain the col idx data, taken from original mtx struct
     @param *local_vals : pointer to the vector to contain the value data, taken from original mtx struct
@@ -700,6 +647,15 @@ void define_bookkeeping_type(
     MPI_Type_commit(bk_type);
 }
 
+/**
+    @brief Description...
+    @param *local_scs : 
+    @param *local_context : 
+    @param *total_mtx : 
+    @param *config : 
+    @param *seg_method : 
+    @param *work_sharing_arr : 
+*/
 template<typename VT, typename IT>
 void mpi_init_local_structs(
     ScsData<VT, IT> *local_scs,
@@ -733,9 +689,6 @@ void mpi_init_local_structs(
         // STRONG CONTENDER FOR PRAGMA PARALELL
         for (IT loop_rank = 0; loop_rank < *comm_size; ++loop_rank)
         { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
-            // std::vector<IT> local_I(mtx.nnz / *comm_size);
-            // std::vector<IT> local_J(mtx.nnz / *comm_size);
-            // std::vector<VT> local_vals(mtx.nnz / *comm_size); // an attempt to not have so much resizing in seg_mtx_struct
 
             std::vector<IT> local_I;
             std::vector<IT> local_J;
@@ -814,7 +767,6 @@ void mpi_init_local_structs(
             MPI_Recv(recv_buf_vals, msg_length, MPI_FLOAT, 0, 44, MPI_COMM_WORLD, &status_vals);
         }
         // TODO: Just how bad is this?... Are we copying array -> vector?
-        // TODO: is this doing what you think it is?
         std::vector<IT> global_rows_vec(recv_buf_global_row_coords, recv_buf_global_row_coords + msg_length);
         std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
         std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
@@ -859,14 +811,10 @@ void mpi_init_local_structs(
 
     MPI_Type_free(&bk_type);
 
-    //////////////////////////////////////////////////////////////////////////////////////////////
-
     std::vector<IT> local_needed_heri;
     if(config->log_prof && *my_rank == 0) {log("Begin collect_local_needed_heri");}
     clock_t begin_clnh_time = std::clock();
-    // collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
     collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
-
     if(config->log_prof && *my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, std::clock());}
 
     IT local_needed_heri_size = local_needed_heri.size();
@@ -907,14 +855,6 @@ void mpi_init_local_structs(
     // after the local element index to make for the incoming halo elements
     std::vector<IT> shift_arr((*comm_size) * (*comm_size), 0);
     std::vector<IT> incidence_arr((*comm_size) * (*comm_size), 0);
-    // IT *shift_arr = new IT[(*comm_size) * (*comm_size)];
-    // IT *incidence_arr = new IT[(*comm_size) * (*comm_size)];
-
-    // for (IT i = 0; i < (*comm_size) * (*comm_size); ++i)
-    // {
-    //     shift_arr[i] = IT{};
-    //     incidence_arr[i] = IT{};
-    // }
 
     if(config->log_prof && *my_rank == 0) {log("Begin calc_heri_shifts");}
     clock_t begin_chs_time = std::clock();
@@ -926,18 +866,6 @@ void mpi_init_local_structs(
         comm_size
     ); // NOTE: always symmetric?
     if(config->log_prof && *my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, std::clock());}
-
-    // if(*my_rank == 1){
-    //     for(int row = 0; row < *comm_size; ++row){
-    //         for(int col = 0; col < *comm_size; ++col){
-    //             std::cout << shift_arr[*comm_size * row + col] << ", ";
-    //         }
-    //         printf("\n");
-    //     }
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-
 
     local_context->local_needed_heri = local_needed_heri;
     local_context->to_send_heri = to_send_heri;

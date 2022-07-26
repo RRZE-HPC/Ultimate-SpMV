@@ -1279,16 +1279,7 @@ class SimpleDenseMatrix {
             IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
 
             vec.resize(needed_padding + local_context->amnt_local_elems, 0);
-            // std::vector<VT> local_vec(std::max(local_context->scs_padding, local_context->local_needed_heri.size() / 3) + local_context->amnt_local_elems);
-
         }
 };
-    // IT local_x_needed_padding = local_context.local_needed_heri.size() / 3;
-    // IT x_y_padding = std::max(local_x_needed_padding, (IT)(local_scs.n_rows_padded - local_scs.n_rows));
-
-    // // Prepare buffers for communication
-    // // dummy_x->resize(x_y_padding + *amnt_local_elems, 0);
-    // local_x.resize(x_y_padding + (work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank]), 0);
-    // local_y.resize(x_y_padding + (work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank]), 0);
 
 #endif

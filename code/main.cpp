@@ -45,7 +45,7 @@
 /**
     @brief The main harness for the rest of the functions, in which we segment and execute the work to be done.
         Validation happens outside this routine
-    @param *file_name : name of the matrix-matket format data, taken from the cli
+    @param *total_mtx
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
     @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
