@@ -179,14 +179,21 @@ void bench_spmv(
     )
 {
     ScsData<VT, IT> scs;
-
+    if(config->log_prof && *my_rank == 0) {log("Begin convert_to_scs");}
+    clock_t begin_ctscs_time = std::clock();
     convert_to_scs<VT, IT>(local_mtx, config->chunk_size, config->sigma, &scs);
+    if(config->log_prof && *my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, std::clock());}
 
-    // clock_t begin_ahci_time = std::clock();
-    adjust_halo_col_idxs<VT, IT>(local_mtx, &scs, work_sharing_arr, my_rank, comm_size); // scs specific
+    if(config->log_prof && *my_rank == 0) {log("Begin adjust_halo_col_idxs");}
+    clock_t begin_ahci_time = std::clock();
+    adjust_halo_col_idxs<VT, IT>(local_mtx, &scs, work_sharing_arr, my_rank, comm_size);
+    if(config->log_prof && *my_rank == 0) {log("Finish adjust_halo_col_idxs", begin_ahci_time, std::clock());}
 
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
+        if(config->log_prof && *my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, bench mode");}
+        clock_t begin_csslbm_time = std::clock();
+
         int local_x_size = local_x->size();
         std::vector<VT> dummy_x(local_x_size, 1);
 
@@ -221,8 +228,12 @@ void bench_spmv(
         r->perf_mflops = (double)scs.nnz * 2.0
                             / r->duration_kernel_s
                             / 1e6;                   // Only count usefull flops
+
+        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, bench mode", begin_csslbm_time, std::clock());}
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
+        if(config->log_prof && *my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
+        clock_t begin_csslsm_time = std::clock();
         for (IT i = 0; i < config->n_repetitions; ++i)
         {
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
@@ -234,6 +245,8 @@ void bench_spmv(
             std::swap(*local_x, *local_y);
         }
         std::swap(*local_x, *local_y);
+
+        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, solve mode", begin_csslsm_time, std::clock());}
     }
 
     double mem_matrix_b =

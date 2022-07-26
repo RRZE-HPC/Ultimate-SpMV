@@ -729,10 +729,7 @@ void seg_and_send_mtx(
     if (*my_rank == 0)
     {
         // Segment global row pointers, and place into an array
-        clock_t begin_swsa_time = std::clock();
         seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size);
-        if(config->log_prof)
-            log("seg_work_sharing_arr", begin_swsa_time, std::clock());
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
@@ -748,10 +745,10 @@ void seg_and_send_mtx(
             std::vector<VT> local_vals; // an attempt to not have so much resizing in seg_mtx_struct
 
             // Assign rows, columns, and values to process local vectors
+            if(config->log_prof && *my_rank == 0) {log("Begin seg_mtx_struct");}
             clock_t begin_smtxs_time = std::clock();
             seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
-            if(config->log_prof)
-                log("seg_mtx_struct", begin_smtxs_time, std::clock());
+            if(config->log_prof && *my_rank == 0) {log("Finish seg_mtx_struct", begin_smtxs_time, std::clock());}
 
             // Count the number of rows in each processes
             IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();

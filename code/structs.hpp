@@ -105,6 +105,16 @@ struct Config
 
     // Selects the default matrix storage format
     std::string kernel_format = "scs"; 
+
+    // filename for single precision results printing
+    std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
+
+    // filename for double precision results printing
+    std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
+
+    // filename for benchmark results printing
+    std::string output_filename_bench = "spmv_bench.txt";
+
 };
 
 template <typename VT, typename IT>

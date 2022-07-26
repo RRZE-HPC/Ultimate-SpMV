@@ -5,7 +5,6 @@
 
 template<typename VT, typename IT>
 void write_bench_to_file(
-    const std::string *output_filename,
     const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
@@ -18,7 +17,7 @@ void write_bench_to_file(
     std::cout.precision(16);
 
     // Print parameters
-    working_file.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
     working_file << "C: " << config->chunk_size << ", data_type: " <<
     'd' << ", repetitions: " << r->n_calls << ", and seg_method: " << *seg_method << std::endl;
@@ -55,7 +54,6 @@ void write_bench_to_file(
     @param *x : the output from the mkl routine, against which we verify our spmvm result
 */
 void write_dp_result_to_file(
-    const std::string *output_filename,
     const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
@@ -80,7 +78,7 @@ void write_dp_result_to_file(
     std::cout.precision(16);
 
     // Print parameters
-    working_file.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    working_file.open(config->output_filename_dp, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
     working_file << "C: " << config->chunk_size << ", data_type: " <<
     'd' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
@@ -194,7 +192,6 @@ void write_dp_result_to_file(
     @param *x : the output from the mkl routine, against which we verify our spmvm result
 */
 void write_sp_result_to_file(
-    const std::string *output_filename,
     const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
@@ -219,7 +216,7 @@ void write_sp_result_to_file(
     std::cout.precision(8);
 
     // Print parameters
-    working_file.open(*output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
+    working_file.open(config->output_filename_sp, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
     working_file << "C: " << config->chunk_size << ", data_type: " <<
     'f' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
