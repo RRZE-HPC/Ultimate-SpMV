@@ -7,6 +7,7 @@
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "benchmark.hpp"
+
 #include "write_results.hpp"
 
 
@@ -46,7 +47,7 @@
 */
 template <typename VT, typename IT>
 void init_structs(
-    MtxData<VT, IT> *local_mtx,
+    ScsData<VT, IT> *local_scs,
     IT *work_sharing_arr,
     Config *config,
     const std::string *seg_method,
@@ -61,7 +62,9 @@ void init_structs(
     std::vector<IT> local_needed_heri;
     if(config->log_prof && *my_rank == 0) {log("Begin collect_local_needed_heri");}
     clock_t begin_clnh_time = std::clock();
-    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_mtx, work_sharing_arr, my_rank, comm_size);
+    // collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
+    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
+
     if(config->log_prof && *my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, std::clock());}
 
     IT local_needed_heri_size = local_needed_heri.size();
@@ -184,8 +187,8 @@ void compute_result(
     // MatrixStats<double> matrix_stats;
     // bool matrix_stats_computed = false;
 
-    // Declare mtx struct on each process
-    MtxData<VT, IT> local_mtx;
+    // Declare scs struct on each process
+    ScsData<VT, IT> local_scs;
 
     // Allocate space for work sharing array. Is populated in seg_and_send_mtx function
     IT work_sharing_arr[*comm_size + 1];
@@ -197,8 +200,8 @@ void compute_result(
     if(config->log_prof && *my_rank == 0) {log("Begin seg_and_send_mtx");}
     clock_t begin_sasmtx_time = std::clock();
     seg_and_send_mtx<VT, IT>(
+        &local_scs,
         total_mtx,
-        &local_mtx, 
         config, 
         seg_method, 
         work_sharing_arr, 
@@ -218,7 +221,7 @@ void compute_result(
     if(config->log_prof && *my_rank == 0) {log("Begin init_structs");}
     clock_t begin_is_time = std::clock();
     init_structs<VT, IT>(
-        &local_mtx, 
+        &local_scs,
         work_sharing_arr, 
         config, 
         seg_method, 
@@ -238,7 +241,7 @@ void compute_result(
     clock_t begin_bs_time = std::clock();
     bench_spmv<VT, IT>(
         config,
-        &local_mtx,
+        &local_scs,
         &local_context,
         work_sharing_arr,
         &local_y,

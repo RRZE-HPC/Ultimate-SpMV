@@ -22,7 +22,7 @@
 template <typename VT, typename IT>
 void collect_local_needed_heri(
     std::vector<IT> *local_needed_heri,
-    const MtxData<VT, IT> *local_mtx,
+    ScsData<VT, IT> *local_scs,
     const IT *work_sharing_arr,
     const int *my_rank,
     const int *comm_size)
@@ -38,17 +38,21 @@ void collect_local_needed_heri(
     std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
     std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
 
-    for (IT i = 0; i < local_mtx->nnz; ++i)
+    for (IT i = 0; i < local_scs->n_elements; ++i)
     {
         // If true, this is a remote element, and needs to be added to vector
-        elem_col = local_mtx->J[i];
+        // elem_col = local_mtx->J[i];
+        elem_col = local_scs->col_idxs[i];
+
+        // if this column corresponds to a padded element, continue to next nnz
+        if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
+
         // Avoids double-adding the same column
-        // if (!std::contains(remote_elem_col_bk, elem_col)){
         if (!(std::find(remote_elem_col_bk.begin(), remote_elem_col_bk.end(), elem_col) != remote_elem_col_bk.end()))
         {
-            if (local_mtx->J[i] < work_sharing_arr[*my_rank] || local_mtx->J[i] > work_sharing_arr[*my_rank + 1] - 1)
+            if (elem_col < work_sharing_arr[*my_rank] || elem_col > work_sharing_arr[*my_rank + 1] - 1)
             { // i.e. if remote element
-                remote_elem_col = local_mtx->J[i];
+                remote_elem_col = elem_col;
                 // The rank of where this needed element resides is deduced from the work sharing array.
                 for (IT j = 0; j < *comm_size; ++j)
                 {
@@ -412,8 +416,7 @@ void communicate_halo_elements(
 */
 template <typename VT, typename IT>
 void adjust_halo_col_idxs(
-    MtxData<VT, IT> *local_mtx,
-    ScsData<VT, IT> *scs,
+    ScsData<VT, IT> *local_scs,
     const IT *work_sharing_arr,
     const int *my_rank,
     const int *comm_size)
@@ -429,26 +432,26 @@ void adjust_halo_col_idxs(
     // TODO: Better to recalculate here? Or get from arguement?
     IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
 
-    std::vector<IT> original_col_idxs(scs->col_idxs.data(), scs->col_idxs.data() + scs->n_elements);
+    std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
 
     if(show_steps){
         if(*my_rank == test_rank){
             std::cout << "column indices BEFORE adjustment: " << std::endl;
-            for(int idx = 0; idx < scs->n_elements; ++idx){
-                std::cout << scs->col_idxs[idx] << std::endl;
+            for(int idx = 0; idx < local_scs->n_elements; ++idx){
+                std::cout << local_scs->col_idxs[idx] << std::endl;
             }
             printf("\n");
         }
     }
 
     // Then, reindex LOCAL elements
-    for (IT i = 0; i < scs->n_elements; ++i)
+    for (IT i = 0; i < local_scs->n_elements; ++i)
     {
-        if (scs->values[i] != 0) // ignore padding
+        if (local_scs->values[i] != 0) // ignore padding
         {
-            if ((scs->col_idxs[i] >= work_sharing_arr[*my_rank]) && scs->col_idxs[i] < work_sharing_arr[*my_rank + 1])
+            if ((local_scs->col_idxs[i] >= work_sharing_arr[*my_rank]) && local_scs->col_idxs[i] < work_sharing_arr[*my_rank + 1])
             {
-                scs->col_idxs[i] -= work_sharing_arr[*my_rank];
+                local_scs->col_idxs[i] -= work_sharing_arr[*my_rank];
             }
         }
     }
@@ -465,7 +468,7 @@ void adjust_halo_col_idxs(
                 idx_ctr = 0;
                 for(auto elem : original_col_idxs)
                 {
-                    if(elem == col && scs->values[idx_ctr] != 0)
+                    if(elem == col && local_scs->values[idx_ctr] != 0)
                     {
                         exists_nz_elem = 1;
                         break;
@@ -479,9 +482,9 @@ void adjust_halo_col_idxs(
                     idx_ctr = 0;
                     for(auto elem : original_col_idxs)
                     { // 
-                        if(elem == col && scs->values[idx_ctr] != 0)
+                        if(elem == col && local_scs->values[idx_ctr] != 0)
                         {
-                            scs->col_idxs[idx_ctr] = amnt_local_elems + lhs_halo_col_ctr;
+                            local_scs->col_idxs[idx_ctr] = amnt_local_elems + lhs_halo_col_ctr;
                         }
                         ++idx_ctr;
                     }
@@ -504,7 +507,7 @@ void adjust_halo_col_idxs(
                 idx_ctr = 0;
                 for(auto elem : original_col_idxs)
                 {
-                    if(elem == col && scs->values[idx_ctr] != 0)
+                    if(elem == col && local_scs->values[idx_ctr] != 0)
                     {
                         exists_nz_elem = 1;
                         break;
@@ -518,9 +521,9 @@ void adjust_halo_col_idxs(
                     idx_ctr = 0;
                     for(auto elem : original_col_idxs)
                     { // 
-                        if(elem == col && scs->values[idx_ctr] != 0)
+                        if(elem == col && local_scs->values[idx_ctr] != 0)
                         {
-                            scs->col_idxs[idx_ctr] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                            local_scs->col_idxs[idx_ctr] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
                         }
                         ++idx_ctr;
                     }
@@ -534,8 +537,8 @@ void adjust_halo_col_idxs(
     if(show_steps){
         if(*my_rank == test_rank){
             std::cout << "column indices AFTER adjustment: " << std::endl;
-            for(int idx = 0; idx < scs->n_elements; ++idx){
-                std::cout << scs->col_idxs[idx] << std::endl;
+            for(int idx = 0; idx < local_scs->n_elements; ++idx){
+                std::cout << local_scs->col_idxs[idx] << std::endl;
             }
             printf("\n");
         }
@@ -709,14 +712,16 @@ void define_bookkeeping_type(
 */
 template <typename VT, typename IT>
 void seg_and_send_mtx(
+    ScsData<VT, IT> *local_scs,
     MtxData<VT, IT> *total_mtx,
-    MtxData<VT, IT> *local_mtx,
     Config *config, // shouldn't this be const?
     const std::string *seg_method,
     IT *work_sharing_arr,
     const IT *my_rank,
     const IT *comm_size)
 {
+    MtxData<VT, IT> local_mtx;
+
     MPI_Status status_bk, status_cols, status_rows, status_vals;
 
     MtxDataBookkeeping<ST> send_bk, recv_bk;
@@ -756,14 +761,14 @@ void seg_and_send_mtx(
             // Here, we segment data for the root process
             if (loop_rank == 0)
             {
-                local_mtx->n_rows = local_row_cnt;
-                local_mtx->n_cols = total_mtx->n_cols;
-                local_mtx->nnz = local_vals.size();
-                local_mtx->is_sorted = config->sort_matrix;
-                local_mtx->is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
-                local_mtx->I = local_I;      // should work as both local and global row ptr
-                local_mtx->J = local_J;
-                local_mtx->values = local_vals;
+                local_mtx.n_rows = local_row_cnt;
+                local_mtx.n_cols = total_mtx->n_cols;
+                local_mtx.nnz = local_vals.size();
+                local_mtx.is_sorted = config->sort_matrix;
+                local_mtx.is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
+                local_mtx.I = local_I;      // should work as both local and global row ptr
+                local_mtx.J = local_J;
+                local_mtx.values = local_vals;
             }
             // Here, we segment and send data to another proc
             else
@@ -822,30 +827,36 @@ void seg_and_send_mtx(
         std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
         std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
 
-        local_mtx->n_rows = recv_bk.n_rows;
-        local_mtx->n_cols = recv_bk.n_cols;
-        local_mtx->nnz = recv_bk.nnz;
-        local_mtx->is_sorted = recv_bk.is_sorted;
-        local_mtx->is_symmetric = recv_bk.is_symmetric;
-        local_mtx->I = global_rows_vec;
-        local_mtx->J = cols_vec;
-        local_mtx->values = vals_vec;
-
+        local_mtx.n_rows = recv_bk.n_rows;
+        local_mtx.n_cols = recv_bk.n_cols;
+        local_mtx.nnz = recv_bk.nnz;
+        local_mtx.is_sorted = recv_bk.is_sorted;
+        local_mtx.is_symmetric = recv_bk.is_symmetric;
+        local_mtx.I = global_rows_vec;
+        local_mtx.J = cols_vec;
+        local_mtx.values = vals_vec;
+        
         delete[] recv_buf_global_row_coords;
         delete[] recv_buf_col_coords;
         delete[] recv_buf_vals;
     }
 
-    std::vector<IT> local_row_coords(local_mtx->nnz, 0);
+    std::vector<IT> local_row_coords(local_mtx.nnz, 0);
 
-    for (IT i = 0; i < local_mtx->nnz; ++i)
+    for (IT i = 0; i < local_mtx.nnz; ++i)
     {
         // subtract first pointer from the rest, to make them "process local"
-        local_row_coords[i] = local_mtx->I[i] - local_mtx->I[0];
+        local_row_coords[i] = local_mtx.I[i] - local_mtx.I[0];
     }
 
     // assign local row ptrs to struct
-    local_mtx->I = local_row_coords;
+    local_mtx.I = local_row_coords;
+
+    // convert local_mtx to local_scs
+    if(config->log_prof && *my_rank == 0) {log("Begin convert_to_scs");}
+    clock_t begin_ctscs_time = std::clock();
+    convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs);
+    if(config->log_prof && *my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, std::clock());}
 
     // Broadcast work sharing array to other processes
     MPI_Bcast(work_sharing_arr,
