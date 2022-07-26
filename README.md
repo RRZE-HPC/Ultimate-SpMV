@@ -1,9 +1,9 @@
 # Ultimate-SpMV
 MPI+X SpMV with SELL-C-sigma format
 
-For the fifth attempt, the focus has been on restructuring/reorganizing of the code. Also, a nonblocking communication scheme is to be implemented, with proc-local buffers communicated instead of individual elements, as was the case in previous iterations of the code. Accuracy of results from att4 is to be sustained. 
+For the fifth attempt, the focus has been on restructuring/reorganizing of the code. Also, a better communication scheme is to be implemented, with proc-local buffers communicated instead of individual elements (as was the case in previous iterations of the code). 
 
-The sparse matrix storage formats crs, ell, and coo will have their first implementations, along side scs. The mtx struct, and proc-local x and y are initialized outside of bench_spmv(), so that all sotrage formats can use the same code.
+The sparse matrix storage formats crs and ell are implemented as special cases of scs. The proc local struct are initialized outside of bench_spmv(), so that all sotrage formats can use the same code.
 
 There is now two operational modes, "bench" and "solve", selected in cli by the user:
 
