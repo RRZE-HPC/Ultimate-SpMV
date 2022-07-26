@@ -700,19 +700,12 @@ void define_bookkeeping_type(
     MPI_Type_commit(bk_type);
 }
 
-/**
-    @brief Data from the original mtx data structure is partitioned and sent to corresponding processes.
-    @param *local_mtx : Very similar to the original mtx struct, but constructed here with row, col, and value data sent to this particular process.
-    @param *config : struct to initialze default values and user input
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
-    @param my_rank : current process number
-    @param comm_size : size of mpi communicator
-*/
-template <typename VT, typename IT>
-void seg_and_send_mtx(
+template<typename VT, typename IT>
+void mpi_init_local_structs(
     ScsData<VT, IT> *local_scs,
+    std::vector<VT> *local_x,
+    std::vector<VT> *local_y,
+    ContextData<IT> *local_context,
     MtxData<VT, IT> *total_mtx,
     Config *config, // shouldn't this be const?
     const std::string *seg_method,
@@ -720,6 +713,7 @@ void seg_and_send_mtx(
     const IT *my_rank,
     const IT *comm_size)
 {
+    ////////////////////////////////////////////////////////////////////////////////////////////
     MtxData<VT, IT> local_mtx;
 
     MPI_Status status_bk, status_cols, status_rows, status_vals;
@@ -866,5 +860,113 @@ void seg_and_send_mtx(
               MPI_COMM_WORLD);
 
     MPI_Type_free(&bk_type);
+
+    //////////////////////////////////////////////////////////////////////////////////////////////
+
+    std::vector<IT> local_needed_heri;
+    if(config->log_prof && *my_rank == 0) {log("Begin collect_local_needed_heri");}
+    clock_t begin_clnh_time = std::clock();
+    // collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
+    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
+
+    if(config->log_prof && *my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, std::clock());}
+
+    IT local_needed_heri_size = local_needed_heri.size();
+    IT global_needed_heri_size;
+
+    // TODO: Is this actually necessary?
+    MPI_Allreduce(&local_needed_heri_size,
+                  &global_needed_heri_size,
+                  1,
+                  MPI_INT,
+                  MPI_SUM,
+                  MPI_COMM_WORLD
+    );
+
+    IT *global_needed_heri = new IT[global_needed_heri_size];
+
+    for (IT i = 0; i < global_needed_heri_size; ++i)
+    {
+        global_needed_heri[i] = IT{};
+    }
+
+    // "to_send_heri" are all halo elements that this process is to send
+    std::vector<IT> to_send_heri;
+    if(config->log_prof && *my_rank == 0) {log("Begin collect_to_send_heri");}
+    clock_t begin_ctsh_time = std::clock();
+    collect_to_send_heri<IT>(
+        &to_send_heri,
+        &local_needed_heri,
+        global_needed_heri,
+        my_rank,
+        comm_size
+    );
+    if(config->log_prof && *my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, std::clock());}
+
+
+    // The shift array is used in the tag-generation scheme in halo communication.
+    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
+    // after the local element index to make for the incoming halo elements
+    std::vector<IT> shift_arr((*comm_size) * (*comm_size), 0);
+    std::vector<IT> incidence_arr((*comm_size) * (*comm_size), 0);
+    // IT *shift_arr = new IT[(*comm_size) * (*comm_size)];
+    // IT *incidence_arr = new IT[(*comm_size) * (*comm_size)];
+
+    for (IT i = 0; i < (*comm_size) * (*comm_size); ++i)
+    {
+        shift_arr[i] = IT{};
+        incidence_arr[i] = IT{};
+    }
+
+    if(config->log_prof && *my_rank == 0) {log("Begin calc_heri_shifts");}
+    clock_t begin_chs_time = std::clock();
+    calc_heri_shifts<IT>(
+        global_needed_heri, 
+        &global_needed_heri_size, 
+        &shift_arr, 
+        &incidence_arr, 
+        comm_size
+    ); // NOTE: always symmetric?
+    if(config->log_prof && *my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, std::clock());}
+
+    // if(*my_rank == 1){
+    //     for(int row = 0; row < *comm_size; ++row){
+    //         for(int col = 0; col < *comm_size; ++col){
+    //             std::cout << shift_arr[*comm_size * row + col] << ", ";
+    //         }
+    //         printf("\n");
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
+    // NOTE: should always be a multiple of 3
+    IT local_x_needed_padding = local_needed_heri.size() / 3;
+    IT x_y_padding = std::max(local_x_needed_padding, (int)config->chunk_size);
+
+    // Prepare buffers for communication
+    // dummy_x->resize(x_y_padding + *amnt_local_elems, 0);
+    local_x->resize(x_y_padding + (work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank]), 0);
+    local_y->resize(x_y_padding + (work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank]), 0);
+
+    // Initialize local_x, either randomly, with defaults, or with a predefined x_in
+    DefaultValues<VT, IT> default_values;
+    // const std::vector<VT> x_in;// = nullptr; //what to do about this?
+    init_std_vec_with_ptr_or_value(
+        *local_x, 
+        local_x->size(),
+        default_values.x, 
+        config->random_init_x
+    );
+
+    // // Copy x to the dummy vector, so spmvm can use this for swapping and multiplication
+    // std::copy(local_x->begin(), local_x->end(), dummy_x->begin());
+
+    local_context->local_needed_heri = local_needed_heri;
+    local_context->to_send_heri = to_send_heri;
+    local_context->shift_arr = shift_arr;
+    local_context->incidence_arr = incidence_arr;
+
+    delete[] global_needed_heri;
 }
 #endif

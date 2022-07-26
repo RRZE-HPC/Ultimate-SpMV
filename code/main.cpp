@@ -41,130 +41,6 @@
 #include <omp.h>
 #endif
 
-/**
-    @brief 
-    @param 
-*/
-template <typename VT, typename IT>
-void init_structs(
-    ScsData<VT, IT> *local_scs,
-    IT *work_sharing_arr,
-    Config *config,
-    const std::string *seg_method,
-    std::vector<VT> *local_x,
-    std::vector<VT> *local_y,
-    ContextData<IT> *local_context,
-    const int *my_rank,
-    const int *comm_size,
-    const int *amnt_local_elems
-){
-
-    std::vector<IT> local_needed_heri;
-    if(config->log_prof && *my_rank == 0) {log("Begin collect_local_needed_heri");}
-    clock_t begin_clnh_time = std::clock();
-    // collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
-    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
-
-    if(config->log_prof && *my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, std::clock());}
-
-    IT local_needed_heri_size = local_needed_heri.size();
-    IT global_needed_heri_size;
-
-    // TODO: Is this actually necessary?
-    MPI_Allreduce(&local_needed_heri_size,
-                  &global_needed_heri_size,
-                  1,
-                  MPI_INT,
-                  MPI_SUM,
-                  MPI_COMM_WORLD
-    );
-
-    IT *global_needed_heri = new IT[global_needed_heri_size];
-
-    for (IT i = 0; i < global_needed_heri_size; ++i)
-    {
-        global_needed_heri[i] = IT{};
-    }
-
-    // "to_send_heri" are all halo elements that this process is to send
-    std::vector<IT> to_send_heri;
-    if(config->log_prof && *my_rank == 0) {log("Begin collect_to_send_heri");}
-    clock_t begin_ctsh_time = std::clock();
-    collect_to_send_heri<IT>(
-        &to_send_heri,
-        &local_needed_heri,
-        global_needed_heri,
-        my_rank,
-        comm_size
-    );
-    if(config->log_prof && *my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, std::clock());}
-
-
-    // The shift array is used in the tag-generation scheme in halo communication.
-    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
-    // after the local element index to make for the incoming halo elements
-    std::vector<IT> shift_arr((*comm_size) * (*comm_size), 0);
-    std::vector<IT> incidence_arr((*comm_size) * (*comm_size), 0);
-    // IT *shift_arr = new IT[(*comm_size) * (*comm_size)];
-    // IT *incidence_arr = new IT[(*comm_size) * (*comm_size)];
-
-    for (IT i = 0; i < (*comm_size) * (*comm_size); ++i)
-    {
-        shift_arr[i] = IT{};
-        incidence_arr[i] = IT{};
-    }
-
-    if(config->log_prof && *my_rank == 0) {log("Begin calc_heri_shifts");}
-    clock_t begin_chs_time = std::clock();
-    calc_heri_shifts<IT>(
-        global_needed_heri, 
-        &global_needed_heri_size, 
-        &shift_arr, 
-        &incidence_arr, 
-        comm_size
-    ); // NOTE: always symmetric?
-    if(config->log_prof && *my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, std::clock());}
-
-    // if(*my_rank == 1){
-    //     for(int row = 0; row < *comm_size; ++row){
-    //         for(int col = 0; col < *comm_size; ++col){
-    //             std::cout << shift_arr[*comm_size * row + col] << ", ";
-    //         }
-    //         printf("\n");
-    //     }
-    // }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-
-    // NOTE: should always be a multiple of 3
-    IT local_x_needed_padding = local_needed_heri.size() / 3;
-    IT x_y_padding = std::max(local_x_needed_padding, (int)config->chunk_size);
-
-    // Prepare buffers for communication
-    // dummy_x->resize(x_y_padding + *amnt_local_elems, 0);
-    local_x->resize(x_y_padding + *amnt_local_elems, 0);
-    local_y->resize(x_y_padding + *amnt_local_elems, 0);
-
-    // Initialize local_x, either randomly, with defaults, or with a predefined x_in
-    DefaultValues<VT, IT> default_values;
-    // const std::vector<VT> x_in;// = nullptr; //what to do about this?
-    init_std_vec_with_ptr_or_value(
-        *local_x, 
-        local_x->size(),
-        default_values.x, 
-        config->random_init_x
-    );
-
-    // // Copy x to the dummy vector, so spmvm can use this for swapping and multiplication
-    // std::copy(local_x->begin(), local_x->end(), dummy_x->begin());
-
-    local_context->local_needed_heri = local_needed_heri;
-    local_context->to_send_heri = to_send_heri;
-    local_context->shift_arr = shift_arr;
-    local_context->incidence_arr = incidence_arr;
-
-    delete[] global_needed_heri;
-}
 
 /**
     @brief The main harness for the rest of the functions, in which we segment and execute the work to be done.
@@ -187,20 +63,24 @@ void compute_result(
     // MatrixStats<double> matrix_stats;
     // bool matrix_stats_computed = false;
 
-    // Declare scs struct on each process
+    // Declare local structs on each process
     ScsData<VT, IT> local_scs;
+    std::vector<VT> local_x; //(amnt_local_elements, 0);
+    std::vector<VT> local_y; //(amnt_local_elements, 0);
+    ContextData<IT> local_context;
+
 
     // Allocate space for work sharing array. Is populated in seg_and_send_mtx function
     IT work_sharing_arr[*comm_size + 1];
 
-    for(IT i = 0; i < *comm_size + 1; ++i){
-        work_sharing_arr[i] = IT{};
-    }
-
-    if(config->log_prof && *my_rank == 0) {log("Begin seg_and_send_mtx");}
-    clock_t begin_sasmtx_time = std::clock();
-    seg_and_send_mtx<VT, IT>(
+    // for(IT i = 0; i < *comm_size + 1; ++i){
+    //     work_sharing_arr[i] = IT{};
+    // }
+    mpi_init_local_structs<VT, IT>(
         &local_scs,
+        &local_x, 
+        &local_y, 
+        &local_context, 
         total_mtx,
         config, 
         seg_method, 
@@ -208,31 +88,6 @@ void compute_result(
         my_rank, 
         comm_size
     );
-    if(config->log_prof && *my_rank == 0) {log("Finish seg_and_send_mtx", begin_sasmtx_time, std::clock());}
-
-    IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
-
-    ContextData<IT> local_context;
-    std::vector<VT> local_y; //(amnt_local_elements, 0);
-    std::vector<VT> local_x; //(amnt_local_elements, 0);
-
-    // Resize and populate local x and y
-    // populate local context
-    if(config->log_prof && *my_rank == 0) {log("Begin init_structs");}
-    clock_t begin_is_time = std::clock();
-    init_structs<VT, IT>(
-        &local_scs,
-        work_sharing_arr, 
-        config, 
-        seg_method, 
-        &local_x, 
-        &local_y, 
-        &local_context, 
-        my_rank, 
-        comm_size,
-        &amnt_local_elems
-    );
-    if(config->log_prof && *my_rank == 0) {log("Finish init_structs", begin_is_time, std::clock());}
 
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x;
@@ -303,10 +158,10 @@ void compute_result(
                 displ_arr_bk[i] = work_sharing_arr[i];
             }
 
-            // Collect each of the process local x and y vectors to a global/total vector for validation
+            // Collect each of the process local x and y vectors to a global/total vector for validation on root proc
             if (typeid(VT) == typeid(double)){
                 MPI_Allgatherv(&local_y[0],
-                                amnt_local_elems,
+                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
                                 MPI_DOUBLE,
                                 &total_spmvm_result[0],
                                 counts_arr,
@@ -315,7 +170,7 @@ void compute_result(
                                 MPI_COMM_WORLD);
 
                 MPI_Allgatherv(&local_x_copy[0],
-                                amnt_local_elems,
+                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
                                 MPI_DOUBLE,
                                 &total_x[0],
                                 counts_arr,
@@ -325,7 +180,7 @@ void compute_result(
             }
             else if (typeid(VT) == typeid(float)){
                 MPI_Allgatherv(&local_y[0],
-                                amnt_local_elems,
+                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
                                 MPI_FLOAT,
                                 &total_spmvm_result[0],
                                 counts_arr,
@@ -334,7 +189,7 @@ void compute_result(
                                 MPI_COMM_WORLD);
 
                 MPI_Allgatherv(&local_x_copy[0],
-                                amnt_local_elems,
+                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
                                 MPI_FLOAT,
                                 &total_x[0],
                                 counts_arr,
