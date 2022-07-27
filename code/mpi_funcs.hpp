@@ -378,6 +378,8 @@ void adjust_halo_col_idxs(
     IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
 
     std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
+    std::vector<IT> col_all_inst_idx;
+
 
     if(show_steps){
         if(*my_rank == test_rank){
@@ -389,14 +391,14 @@ void adjust_halo_col_idxs(
         }
     }
 
-    // Then, reindex LOCAL elements
+    // #pragma omp parallel for
     for (IT i = 0; i < local_scs->n_elements; ++i)
     {
         // NOTE: Is this enough? Or do we also need local_scs->col_idxs[i] != 0?
         if (local_scs->values[i] != 0) // ignore padding
         {
             if ((local_scs->col_idxs[i] >= work_sharing_arr[*my_rank]) && local_scs->col_idxs[i] < work_sharing_arr[*my_rank + 1])
-            {
+            { // i.e. if local
                 local_scs->col_idxs[i] -= work_sharing_arr[*my_rank];
             }
         }
@@ -411,30 +413,30 @@ void adjust_halo_col_idxs(
         {
             if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
             { // if there exists ANY element in this column...
-                idx_ctr = 0;
-                for(auto elem : original_col_idxs)
+
+                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
+
+                for(auto idx : col_all_inst_idx)
                 {
-                    if(elem == col && local_scs->values[idx_ctr] != 0)
+                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                     {
                         exists_nz_elem = 1;
                         break;
                     }
-                    ++idx_ctr; // incremenet the corresponding index
                 }
 
                 if(exists_nz_elem)
                 { // and if this element is not padding
-                    idx_ctr = 0;
-                    for(auto elem : original_col_idxs)
-                    { // 
-                        if(elem == col && local_scs->values[idx_ctr] != 0)
+                    // #pragma omp parallel for
+                    for(auto idx : col_all_inst_idx)
+                    {
+                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                         {
-                            local_scs->col_idxs[idx_ctr] = amnt_local_elems + lhs_halo_col_ctr;
+                            local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
                         }
-                        ++idx_ctr;
                     }
-                    // If at least one nonzero element exists in this column, increment counter
-                    ++lhs_halo_col_ctr;
+                // If at least one nonzero element exists in this column, increment counter
+                ++lhs_halo_col_ctr;
                 }
             }
         }   
@@ -449,27 +451,26 @@ void adjust_halo_col_idxs(
         {
             if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
             { // if there exists ANY element in this column...
-                idx_ctr = 0;
-                for(auto elem : original_col_idxs)
+                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
+
+                for(auto idx : col_all_inst_idx)
                 {
-                    if(elem == col && local_scs->values[idx_ctr] != 0)
+                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                     {
                         exists_nz_elem = 1;
                         break;
                     }
-                    ++idx_ctr; // incremenet the corresponding index
                 }
 
                 if(exists_nz_elem)
                 { // and if this element is not padding
-                    idx_ctr = 0;
-                    for(auto elem : original_col_idxs)
-                    { // 
-                        if(elem == col && local_scs->values[idx_ctr] != 0)
+                    // #pragma omp parallel for
+                    for(auto idx : col_all_inst_idx)
+                    {
+                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                         {
-                            local_scs->col_idxs[idx_ctr] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                            local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
                         }
-                        ++idx_ctr;
                     }
                     // If at least one element exists in this column, increment counter
                     ++rhs_halo_col_ctr;
@@ -690,9 +691,9 @@ void mpi_init_local_structs(
 
             // Assign rows, columns, and values to process local vectors
             if(config->log_prof && *my_rank == 0) {log("Begin seg_mtx_struct");}
-            clock_t begin_smtxs_time = std::clock();
+            double begin_smtxs_time = MPI_Wtime();
             seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
-            if(config->log_prof && *my_rank == 0) {log("Finish seg_mtx_struct", begin_smtxs_time, std::clock());}
+            if(config->log_prof && *my_rank == 0) {log("Finish seg_mtx_struct", begin_smtxs_time, MPI_Wtime());}
 
             // Count the number of rows in each processes
             IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();
@@ -792,9 +793,9 @@ void mpi_init_local_structs(
 
     // convert local_mtx to local_scs
     if(config->log_prof && *my_rank == 0) {log("Begin convert_to_scs");}
-    clock_t begin_ctscs_time = std::clock();
+    double begin_ctscs_time = MPI_Wtime();
     convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs);
-    if(config->log_prof && *my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, std::clock());}
+    if(config->log_prof && *my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, MPI_Wtime());}
 
     // Broadcast work sharing array to other processes
     MPI_Bcast(work_sharing_arr,
@@ -807,9 +808,9 @@ void mpi_init_local_structs(
 
     std::vector<IT> local_needed_heri;
     if(config->log_prof && *my_rank == 0) {log("Begin collect_local_needed_heri");}
-    clock_t begin_clnh_time = std::clock();
+    double begin_clnh_time = MPI_Wtime();
     collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
-    if(config->log_prof && *my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, std::clock());}
+    if(config->log_prof && *my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, MPI_Wtime());}
 
     IT local_needed_heri_size = local_needed_heri.size();
     IT global_needed_heri_size;
@@ -833,7 +834,7 @@ void mpi_init_local_structs(
     // "to_send_heri" are all halo elements that this process is to send
     std::vector<IT> to_send_heri;
     if(config->log_prof && *my_rank == 0) {log("Begin collect_to_send_heri");}
-    clock_t begin_ctsh_time = std::clock();
+    double begin_ctsh_time = MPI_Wtime();
     collect_to_send_heri<IT>(
         &to_send_heri,
         &local_needed_heri,
@@ -841,7 +842,7 @@ void mpi_init_local_structs(
         my_rank,
         comm_size
     );
-    if(config->log_prof && *my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, std::clock());}
+    if(config->log_prof && *my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, MPI_Wtime());}
 
 
     // The shift array is used in the tag-generation scheme in halo communication.
@@ -851,7 +852,7 @@ void mpi_init_local_structs(
     std::vector<IT> incidence_arr((*comm_size) * (*comm_size), 0);
 
     if(config->log_prof && *my_rank == 0) {log("Begin calc_heri_shifts");}
-    clock_t begin_chs_time = std::clock();
+    double begin_chs_time = MPI_Wtime();
     calc_heri_shifts<IT>(
         global_needed_heri, 
         &global_needed_heri_size, 
@@ -859,7 +860,7 @@ void mpi_init_local_structs(
         &incidence_arr, 
         comm_size
     ); // NOTE: always symmetric?
-    if(config->log_prof && *my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, std::clock());}
+    if(config->log_prof && *my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, MPI_Wtime());}
 
     local_context->local_needed_heri = local_needed_heri;
     local_context->to_send_heri = to_send_heri;

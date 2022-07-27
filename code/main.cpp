@@ -34,12 +34,10 @@ void bench_spmv(
     const int *comm_size
     )
 {
-    log("Begin adjust_halo_col_idxs");
-    // if(config->log_prof && *my_rank == 0) {log("Begin adjust_halo_col_idxs");}
+    if(config->log_prof && *my_rank == 0) {log("Begin adjust_halo_col_idxs");}
     double begin_ahci_time = MPI_Wtime();
     adjust_halo_col_idxs<VT, IT>(local_scs, work_sharing_arr, my_rank, comm_size);
-    // if(config->log_prof && *my_rank == 0) {log("Finish adjust_halo_col_idxs", begin_ahci_time, MPI_Wtime());}
-    log("Finish adjust_halo_col_idxs", begin_ahci_time, MPI_Wtime());
+    if(config->log_prof && *my_rank == 0) {log("Finish adjust_halo_col_idxs", begin_ahci_time, MPI_Wtime());}
 
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
@@ -202,8 +200,7 @@ void compute_result(
         my_rank,
         comm_size
     );
-    // if(config->log_prof && *my_rank == 0) {log("Finish bench_spmv", begin_bs_time, MPI_Wtime());}
-    log("Finish bench_spmv", begin_bs_time, MPI_Wtime());
+    if(config->log_prof && *my_rank == 0) {log("Finish bench_spmv", begin_bs_time, MPI_Wtime());}
 
     if(config->log_prof && *my_rank == 0) {log("Begin results gathering");}
     double begin_rg_time = MPI_Wtime();
@@ -323,11 +320,8 @@ int main(int argc, char *argv[])
 
     verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config);
     
-    // if(config.log_prof && my_rank == 0) {log("__________ log start __________");}
-    // if(config.log_prof && my_rank == 0) {log("Begin main");}
-
-    log("__________ log start __________");
-    log("Begin main");
+    if(config.log_prof && my_rank == 0) {log("__________ log start __________");}
+    if(config.log_prof && my_rank == 0) {log("Begin main");}
 
     if (value_type == "dp")
     {
@@ -344,9 +338,6 @@ int main(int argc, char *argv[])
         double begin_cr_time = MPI_Wtime();
         compute_result<double, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
-
-        log("SPMVM(s) finished!");
-
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -383,8 +374,6 @@ int main(int argc, char *argv[])
         compute_result<float, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
 
-        log("SPMVM(s) finished!");
-
         if(my_rank == 0){
             if(config.mode == 's'){
                 if(config.validate_result){
@@ -406,17 +395,10 @@ int main(int argc, char *argv[])
         }
     }
 
-    // if(config.log_prof && my_rank == 0) {log("Finish main", begin_main_time, MPI_Wtime());}
-
-    // MPI_Finalize();
-
-    // if(config.log_prof && my_rank == 0) {log("__________ log end __________");}
-    // log(itoamy_rank);
-    log("Finish main", begin_main_time, MPI_Wtime());
+    if(config.log_prof && my_rank == 0) {log("Finish main", begin_main_time, MPI_Wtime());}
+    if(config.log_prof && my_rank == 0) {log("__________ log end __________");}
 
     MPI_Finalize();
-
-    // log("__________ log end __________");
 
     return 0;
 }

@@ -1287,4 +1287,31 @@ class SimpleDenseMatrix {
         }
 };
 
+template<typename IT>
+std::vector<IT> find_items1(std::vector<IT> const &v, int target) {
+    std::vector<int> indices;
+    auto it = v.begin();
+    while ((it = std::find_if(it, v.end(), [&] (IT const &e) { return e == target; }))
+        != v.end())
+    {
+        indices.push_back(std::distance(v.begin(), it));
+        it++;
+    }
+    return indices;
+}
+
+template<typename IT>
+std::vector<IT> find_items(std::vector<IT> const &v, int target) {
+    std::vector<IT> indices;
+ 
+    for (int i = 0; i < v.size(); i++) {
+        if (v[i] == target) {
+            indices.push_back(i);
+        }
+    }
+ 
+    return indices;
+}
+ 
+
 #endif
