@@ -1,11 +1,7 @@
 #ifndef UTILITIES
 #define UTILITIES
 
-#include "spmv.h"
-#include "vectors.h"
-#include "structs.hpp"
 #include <mpi.h>
-
 #include <cstdarg>
 #include <random>
 #include <iomanip>
@@ -152,45 +148,45 @@ bool will_mult_overflow(T a, T b)
     return std::numeric_limits<T>::max() / a < b;
 }
 
-std::tuple<std::string, uint64_t>
-type_info_from_type_index(const std::type_index &ti)
-{
-    static std::unordered_map<std::type_index, std::tuple<std::string, uint64_t>> type_map = {
-        {std::type_index(typeid(double)), std::make_tuple("dp", sizeof(double))},
-        {std::type_index(typeid(float)), std::make_tuple("sp", sizeof(float))},
+// std::tuple<std::string, uint64_t>
+// type_info_from_type_index(const std::type_index &ti)
+// {
+//     static std::unordered_map<std::type_index, std::tuple<std::string, uint64_t>> type_map = {
+//         {std::type_index(typeid(double)), std::make_tuple("dp", sizeof(double))},
+//         {std::type_index(typeid(float)), std::make_tuple("sp", sizeof(float))},
 
-        {std::type_index(typeid(int)), std::make_tuple("int", sizeof(int))},
-        {std::type_index(typeid(long)), std::make_tuple("long", sizeof(long))},
-        {std::type_index(typeid(int32_t)), std::make_tuple("int32_t", sizeof(int32_t))},
-        {std::type_index(typeid(int64_t)), std::make_tuple("int64_t", sizeof(int64_t))},
+//         {std::type_index(typeid(int)), std::make_tuple("int", sizeof(int))},
+//         {std::type_index(typeid(long)), std::make_tuple("long", sizeof(long))},
+//         {std::type_index(typeid(int32_t)), std::make_tuple("int32_t", sizeof(int32_t))},
+//         {std::type_index(typeid(int64_t)), std::make_tuple("int64_t", sizeof(int64_t))},
 
-        {std::type_index(typeid(unsigned int)), std::make_tuple("uint", sizeof(unsigned int))},
-        {std::type_index(typeid(unsigned long)), std::make_tuple("ulong", sizeof(unsigned long))},
-        {std::type_index(typeid(uint32_t)), std::make_tuple("uint32_t", sizeof(uint32_t))},
-        {std::type_index(typeid(uint64_t)), std::make_tuple("uint64_t", sizeof(uint64_t))}};
+//         {std::type_index(typeid(unsigned int)), std::make_tuple("uint", sizeof(unsigned int))},
+//         {std::type_index(typeid(unsigned long)), std::make_tuple("ulong", sizeof(unsigned long))},
+//         {std::type_index(typeid(uint32_t)), std::make_tuple("uint32_t", sizeof(uint32_t))},
+//         {std::type_index(typeid(uint64_t)), std::make_tuple("uint64_t", sizeof(uint64_t))}};
 
-    auto it = type_map.find(ti);
+//     auto it = type_map.find(ti);
 
-    if (it == type_map.end())
-    {
-        return std::make_tuple(std::string{"unknown"}, uint64_t{0});
-    }
+//     if (it == type_map.end())
+//     {
+//         return std::make_tuple(std::string{"unknown"}, uint64_t{0});
+//     }
 
-    return it->second;
-}
+//     return it->second;
+// }
 
-std::string
-type_name_from_type_index(const std::type_index &ti)
-{
-    return std::get<0>(type_info_from_type_index(ti));
-}
+// std::string
+// type_name_from_type_index(const std::type_index &ti)
+// {
+//     return std::get<0>(type_info_from_type_index(ti));
+// }
 
-template <typename T>
-std::string
-type_name_from_type()
-{
-    return type_name_from_type_index(std::type_index(typeid(T)));
-}
+// template <typename T>
+// std::string
+// type_name_from_type()
+// {
+//     return type_name_from_type_index(std::type_index(typeid(T)));
+// }
 
 class Histogram
 {

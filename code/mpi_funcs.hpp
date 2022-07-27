@@ -1,13 +1,9 @@
 #ifndef MPI_FUNCS
 #define MPI_FUNCS
 
-#include "structs.hpp"
+#include "classes_structs.hpp"
 
-#include <vector>
-#include <tuple>
-#include <algorithm>
 #include <set>
-#include <mpi.h>
 
 /**
     Collect the row indicies of the halo elements needed for THIS process, which is used to generate a valid local_x to perform the SPMVM.
@@ -17,7 +13,7 @@
     @brief Collect the row indicies of the halo elements needed for this process
     @param *local_needed_heri : pointer to vector that contains encoded 3-tuples of the form (proc_to, proc_from, global_row_idx)
     @param *local_scs : pointer to local scs struct
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template <typename VT, typename IT>
 void collect_local_needed_heri(
@@ -230,7 +226,7 @@ void calc_heri_shifts(
     @brief Communicate the halo elements to and from the local x-vectors
     @param *local_context : 
     @param *local_x : the x vector corresponding to this process before the halo elements are communicated to it.
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template <typename VT, typename IT>
 void communicate_halo_elements(
@@ -361,7 +357,7 @@ void communicate_halo_elements(
 
     @brief Adjust the col_idx from the scs data structure
     @param *local_scs : pointer to local scs struct
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template <typename VT, typename IT>
 void adjust_halo_col_idxs(
@@ -496,8 +492,8 @@ void adjust_halo_col_idxs(
 /**
     @brief Partition the rows of the mtx structure, so that work is disributed (somewhat) evenly. The two options "seg-rows"
         and "seg-nnz" are there in an effort to have multiple load balancing techniques the segment work between processes.
-    @param *total_mtx : data structure that was populated by the matrix market format reader mtx-reader.h
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *total_mtx : data structure that was populated by the matrix market format reader mtx_reader.h
+    @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
 */
 template <typename VT, typename IT>
@@ -573,7 +569,7 @@ void seg_work_sharing_arr(
         The idea is to reconstruct into local mtx structures on each process after communication.
 
     @brief Collect indices into local vectors
-    @param *total_mtx : data structure that was populated by the matrix market format reader mtx-reader.h
+    @param *total_mtx : data structure that was populated by the matrix market format reader mtx_reader.h
     @param *local_I : pointer to the vector to contain the row idx data, taken from original mtx struct
     @param *local_J : pointer to the vector to contain the col idx data, taken from original mtx struct
     @param *local_vals : pointer to the vector to contain the value data, taken from original mtx struct
@@ -628,7 +624,6 @@ void define_bookkeeping_type(
     MtxDataBookkeeping<ST> *send_bk,
     MPI_Datatype *bk_type)
 {
-
     // Declare and define MPI Datatype
     IT block_length_arr[2];
     MPI_Aint displ_arr_bk[2], first_address, second_address;
@@ -647,14 +642,14 @@ void define_bookkeeping_type(
     MPI_Type_commit(bk_type);
 }
 
-/**
-    @brief Description...
-    @param *local_scs : 
-    @param *local_context : 
-    @param *total_mtx : 
-    @param *config : 
-    @param *seg_method : 
-    @param *work_sharing_arr : 
+/** TODO: make longer description
+    @brief Initialize total_mtx, segment and send this to local_mtx, then to local_scs format
+    @param *local_scs : pointer to local scs struct
+    @param *local_context : struct containing information about local_scs communication needs
+    @param *total_mtx : complete mtx struct, read .mtx file with mtx_reader.h
+    @param *config : struct to initialze default values and user input
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template<typename VT, typename IT>
 void mpi_init_local_structs(

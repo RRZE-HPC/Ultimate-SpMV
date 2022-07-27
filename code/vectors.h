@@ -1,6 +1,5 @@
-#pragma once
-
-#include "spmv.h"
+#ifndef VECTORS
+#define VECTORS
 
 #include <complex>
 #include <fstream>
@@ -10,6 +9,8 @@
 #include <sstream>
 #include <type_traits>
 #include <vector>
+#include <cstring>
+#include <string>
 
 // TODO: rename float_type to value_type
 
@@ -206,4 +207,6 @@ public:
         return dv;
     }
 };
+
+#endif
 
