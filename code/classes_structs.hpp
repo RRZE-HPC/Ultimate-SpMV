@@ -3,12 +3,13 @@
 
 #include "vectors.h"
 #include <ctime>
+#include <mpi.h>
 
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
 using ST = long;
 
-void log(const char *log_msg, const clock_t begin_time = 0, const clock_t end_time = 0)
+void log(const char *log_msg, const double begin_time = 0, const double end_time = 0)
 {
         std::fstream log_file_to_append;
         const std::string log_file_name = "log.txt";
@@ -22,7 +23,7 @@ void log(const char *log_msg, const clock_t begin_time = 0, const clock_t end_ti
 
         // If timing measurement provided, print that as well
         if(end_time > 0 && begin_time > 0){
-            log_file_to_append << ": " << double( end_time - begin_time ) / CLOCKS_PER_SEC << std::endl;
+            log_file_to_append << ": " << end_time - begin_time << std::endl;
         }
 
         // Close the log

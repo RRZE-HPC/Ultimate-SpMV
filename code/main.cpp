@@ -34,59 +34,67 @@ void bench_spmv(
     const int *comm_size
     )
 {
-    if(config->log_prof && *my_rank == 0) {log("Begin adjust_halo_col_idxs");}
-    clock_t begin_ahci_time = std::clock();
+    log("Begin adjust_halo_col_idxs");
+    // if(config->log_prof && *my_rank == 0) {log("Begin adjust_halo_col_idxs");}
+    double begin_ahci_time = MPI_Wtime();
     adjust_halo_col_idxs<VT, IT>(local_scs, work_sharing_arr, my_rank, comm_size);
-    if(config->log_prof && *my_rank == 0) {log("Finish adjust_halo_col_idxs", begin_ahci_time, std::clock());}
+    // if(config->log_prof && *my_rank == 0) {log("Finish adjust_halo_col_idxs", begin_ahci_time, MPI_Wtime());}
+    log("Finish adjust_halo_col_idxs", begin_ahci_time, MPI_Wtime());
 
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
         if(config->log_prof && *my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, bench mode");}
-        clock_t begin_csslbm_time = std::clock();
+        double begin_csslbm_time = MPI_Wtime();
 
-        int local_x_size = local_x->size();
-        std::vector<VT> dummy_x(local_x_size, 1);
+        std::vector<VT> dummy_x(local_x->size(), 1.0);
+        std::vector<VT> dummy_y(local_y->size(), 0.0);
 
-        clock_t begin_bench_loop_time, end_bench_loop_time;
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        double begin_bench_loop_time, end_bench_loop_time;
         int n_iter = 1;
         do
         {
-            begin_bench_loop_time = std::clock();
-            MPI_Barrier(MPI_COMM_WORLD);
+            begin_bench_loop_time = MPI_Wtime();
+            
             for(int k = 0; k < n_iter; ++k){
-                communicate_halo_elements<VT, IT>(local_context, &dummy_x, work_sharing_arr, my_rank, comm_size);
+                communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
 
                 spmv_omp_scs<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
-                std::swap(dummy_x, *local_y);
+                std::swap(dummy_x, dummy_y);
 
-                if(dummy_x[local_x_size]<0.) // prevent compiler from eliminating loop
-                    printf("%lf", dummy_x[local_x_size/2]);
+                if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                    printf("%lf", dummy_x[local_x->size() / 2]);
+                    exit(0);
+                }
             }
-            MPI_Barrier(MPI_COMM_WORLD);
-            end_bench_loop_time = std::clock();
+            end_bench_loop_time = MPI_Wtime();
             n_iter *= 2;
-        } while ((end_bench_loop_time - begin_bench_loop_time) / CLOCKS_PER_SEC < 1);
+            
+        } while (end_bench_loop_time - begin_bench_loop_time < 1);
+        MPI_Barrier(MPI_COMM_WORLD);
 
         n_iter /= 2;
 
         r->n_calls = n_iter;
-        r->duration_total_s = (end_bench_loop_time - begin_bench_loop_time) / CLOCKS_PER_SEC;
+        r->duration_total_s = end_bench_loop_time - begin_bench_loop_time;
         r->duration_kernel_s = r->duration_total_s/ r->n_calls;
         r->perf_mflops = (double)local_scs->nnz * 2.0
                             / r->duration_kernel_s
                             / 1e6;                   // Only count usefull flops
 
-        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, bench mode", begin_csslbm_time, std::clock());}
+        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, bench mode", begin_csslbm_time, MPI_Wtime());}
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
         if(config->log_prof && *my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
-        clock_t begin_csslsm_time = std::clock();
+        double begin_csslsm_time = MPI_Wtime();
         for (IT i = 0; i < config->n_repetitions; ++i)
         {
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+            MPI_Barrier(MPI_COMM_WORLD);
 
             spmv_omp_scs<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                 local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
@@ -96,7 +104,7 @@ void bench_spmv(
         }
         std::swap(*local_x, *local_y);
 
-        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, solve mode", begin_csslsm_time, std::clock());}
+        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, solve mode", begin_csslsm_time, MPI_Wtime());}
     }
 
     double mem_matrix_b =
@@ -174,14 +182,15 @@ void compute_result(
     SimpleDenseMatrix<VT, IT> local_x(&local_context);
     SimpleDenseMatrix<VT, IT> local_y(&local_context);
 
-    // Initialize local_x, either randomly, or with defaults (defined in classes_structs.hpp)
+    // Initialize local_x, either randomly, with default values defined in classes_structs.hpp,
+    // or with 0s (by default)
     local_x.init(config);
 
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x.vec;
 
     if(config->log_prof && *my_rank == 0) {log("Begin bench_spmv");}
-    clock_t begin_bs_time = std::clock();
+    double begin_bs_time = MPI_Wtime();
     bench_spmv<VT, IT>(
         config,
         &local_scs,
@@ -193,10 +202,11 @@ void compute_result(
         my_rank,
         comm_size
     );
-    if(config->log_prof && *my_rank == 0) {log("Finish bench_spmv", begin_bs_time, std::clock());}
+    // if(config->log_prof && *my_rank == 0) {log("Finish bench_spmv", begin_bs_time, MPI_Wtime());}
+    log("Finish bench_spmv", begin_bs_time, MPI_Wtime());
 
     if(config->log_prof && *my_rank == 0) {log("Begin results gathering");}
-    clock_t begin_rg_time = std::clock();
+    double begin_rg_time = MPI_Wtime();
     if(config->mode == 'b'){
         double *perfs_from_procs_arr = new double[*comm_size];
 
@@ -288,7 +298,7 @@ void compute_result(
             r->total_spmvm_result = total_spmvm_result;
         }
     }
-    if(config->log_prof && *my_rank == 0) {log("Finish results gathering", begin_rg_time, std::clock());}
+    if(config->log_prof && *my_rank == 0) {log("Finish results gathering", begin_rg_time, MPI_Wtime());}
 }
 
 int main(int argc, char *argv[])
@@ -298,7 +308,7 @@ int main(int argc, char *argv[])
     Config config;
     std::string matrix_file_name{};
 
-    clock_t begin_main_time = std::clock();
+    double begin_main_time = MPI_Wtime();
 
     // Set defaults for cl inputs
     std::string seg_method = "seg-rows";
@@ -313,8 +323,11 @@ int main(int argc, char *argv[])
 
     verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config);
     
-    if(config.log_prof && my_rank == 0) {log("__________ log start __________");}
-    if(config.log_prof && my_rank == 0) {log("Begin main");}
+    // if(config.log_prof && my_rank == 0) {log("__________ log start __________");}
+    // if(config.log_prof && my_rank == 0) {log("Begin main");}
+
+    log("__________ log start __________");
+    log("Begin main");
 
     if (value_type == "dp")
     {
@@ -323,23 +336,26 @@ int main(int argc, char *argv[])
 
         if(my_rank == 0){
             if(config.log_prof && my_rank == 0) {log("Begin read_mtx_data");}
-            clock_t begin_rmtxd_time = std::clock();
+            double begin_rmtxd_time = MPI_Wtime();
             total_mtx = read_mtx_data<double, int>(matrix_file_name.c_str(), config.sort_matrix);
-            if(config.log_prof && my_rank == 0) {log("Finish read_mtx_data", begin_rmtxd_time, std::clock());}
+            if(config.log_prof && my_rank == 0) {log("Finish read_mtx_data", begin_rmtxd_time, MPI_Wtime());}
         }
         if(config.log_prof && my_rank == 0) {log("Begin compute_result");}
-        clock_t begin_cr_time = std::clock();
+        double begin_cr_time = MPI_Wtime();
         compute_result<double, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
-        if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, std::clock());}
+        if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
+
+        log("SPMVM(s) finished!");
+
 
         if(my_rank == 0){
             if(config.mode == 's'){
                 if(config.validate_result){
                     std::vector<double> mkl_dp_result;
                     if(config.log_prof && my_rank == 0) {log("Begin mkl validation");}
-                    clock_t begin_mklv_time = std::clock();
+                    double begin_mklv_time = MPI_Wtime();
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
-                    if(config.log_prof && my_rank == 0) {log("Finish mkl validation",  begin_mklv_time, std::clock());}
+                    if(config.log_prof && my_rank == 0) {log("Finish mkl validation",  begin_mklv_time, MPI_Wtime());}
                     write_dp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_dp_result, &comm_size);
                 }
                 else{
@@ -358,14 +374,16 @@ int main(int argc, char *argv[])
 
         if(my_rank == 0){
             if(config.log_prof && my_rank == 0) {log("Begin read_mtx_data");}
-            clock_t begin_rmtxd_time = std::clock();
+            double begin_rmtxd_time = MPI_Wtime();
             total_mtx = read_mtx_data<float, int>(matrix_file_name.c_str(), config.sort_matrix);
-            if(config.log_prof && my_rank == 0) {log("Finish read_mtx_data", begin_rmtxd_time, std::clock());}
+            if(config.log_prof && my_rank == 0) {log("Finish read_mtx_data", begin_rmtxd_time, MPI_Wtime());}
         }
         if(config.log_prof && my_rank == 0) {log("Begin compute_result");}
-        clock_t begin_cr_time = std::clock();
+        double begin_cr_time = MPI_Wtime();
         compute_result<float, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
-        if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, std::clock());}
+        if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
+
+        log("SPMVM(s) finished!");
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -373,9 +391,9 @@ int main(int argc, char *argv[])
                     std::vector<float> mkl_sp_result;
 
                     if(config.log_prof && my_rank == 0) {log("Begin mkl validation");}
-                    clock_t begin_mklv_time = std::clock();
+                    double begin_mklv_time = MPI_Wtime();
                     validate_sp_result(&total_mtx, &config, &r, &mkl_sp_result);
-                    if(config.log_prof && my_rank == 0) {log("Finish mkl validation",  begin_mklv_time, std::clock());}
+                    if(config.log_prof && my_rank == 0) {log("Finish mkl validation",  begin_mklv_time, MPI_Wtime());}
                     write_sp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_sp_result, &comm_size);
                 }
                 else{
@@ -388,11 +406,17 @@ int main(int argc, char *argv[])
         }
     }
 
-    if(config.log_prof && my_rank == 0) {log("Finish main", begin_main_time, std::clock());}
+    // if(config.log_prof && my_rank == 0) {log("Finish main", begin_main_time, MPI_Wtime());}
+
+    // MPI_Finalize();
+
+    // if(config.log_prof && my_rank == 0) {log("__________ log end __________");}
+    // log(itoamy_rank);
+    log("Finish main", begin_main_time, MPI_Wtime());
 
     MPI_Finalize();
 
-    if(config.log_prof && my_rank == 0) {log("__________ log end __________");}
+    // log("__________ log end __________");
 
     return 0;
 }
