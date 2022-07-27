@@ -667,7 +667,6 @@ void mpi_init_local_structs(
     const IT *my_rank,
     const IT *comm_size)
 {
-    ////////////////////////////////////////////////////////////////////////////////////////////
     MtxData<VT, IT> local_mtx;
 
     MPI_Status status_bk, status_cols, status_rows, status_vals;

@@ -37,9 +37,8 @@ void write_bench_to_file(
     working_file << std::left << std::setw(width) << "-----------------------" << std::endl;
 
     double sum_flops = std::accumulate(r->perfs_from_procs.begin(), r->perfs_from_procs.end(), 0.0);
-    working_file << sum_flops << " MF/s" << std::endl;
-
-    // working_file << sum_flops / (double)*comm_size << " GF/s" << std::endl;
+    
+    working_file << sum_flops / (double)*comm_size << " MF/s" << std::endl;
     working_file << std::endl;
 }
 
@@ -365,7 +364,6 @@ void validate_dp_result(
     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
     for(int i = 0; i < config->n_repetitions; ++i){
-        // mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], values.data(), col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
         mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs.values.data(), scs.col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
         std::swap(*mkl_dp_result, y);
     }

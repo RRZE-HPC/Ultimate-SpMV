@@ -84,14 +84,8 @@ void compute_result(
     SimpleDenseMatrix<VT, IT> local_x(&local_context);
     SimpleDenseMatrix<VT, IT> local_y(&local_context);
 
-    // Initialize local_x, either randomly, with defaults, or with a predefined x_in
-    DefaultValues<VT, IT> default_values;
-    init_std_vec_with_ptr_or_value(
-        local_x.vec, 
-        local_x.vec.size(),
-        default_values.x, 
-        config->random_init_x
-    );
+    // Initialize local_x, either randomly, or with defaults (defined in structs.hpp)
+    local_x.init(config);
 
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x.vec;
@@ -141,6 +135,7 @@ void compute_result(
             std::vector<VT> total_spmvm_result(work_sharing_arr[*comm_size], 0);
             std::vector<VT> total_x(work_sharing_arr[*comm_size], 0);
 
+            IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
             IT counts_arr[*comm_size];
             IT displ_arr_bk[*comm_size];
 
@@ -154,47 +149,51 @@ void compute_result(
                 displ_arr_bk[i] = work_sharing_arr[i];
             }
 
-            // Collect each of the process local x and y vectors to a global/total vector for validation on root proc
             if (typeid(VT) == typeid(double)){
-                MPI_Allgatherv(&(local_y.vec)[0],
-                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
-                                MPI_DOUBLE,
-                                &total_spmvm_result[0],
-                                counts_arr,
-                                displ_arr_bk,
-                                MPI_DOUBLE,
-                                MPI_COMM_WORLD);
+                MPI_Gatherv(&(local_y.vec)[0],
+                            amnt_local_elems,
+                            MPI_DOUBLE,
+                            &total_spmvm_result[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_DOUBLE,
+                            0,
+                            MPI_COMM_WORLD);
 
-                MPI_Allgatherv(&local_x_copy[0],
-                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
-                                MPI_DOUBLE,
-                                &total_x[0],
-                                counts_arr,
-                                displ_arr_bk,
-                                MPI_DOUBLE,
-                                MPI_COMM_WORLD);
+                MPI_Gatherv(&local_x_copy[0],
+                            amnt_local_elems,
+                            MPI_DOUBLE,
+                            &total_x[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_DOUBLE,
+                            0,
+                            MPI_COMM_WORLD);
             }
             else if (typeid(VT) == typeid(float)){
-                MPI_Allgatherv(&(local_y.vec)[0],
-                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
-                                MPI_FLOAT,
-                                &total_spmvm_result[0],
-                                counts_arr,
-                                displ_arr_bk,
-                                MPI_FLOAT,
-                                MPI_COMM_WORLD);
+                MPI_Gatherv(&(local_y.vec)[0],
+                            amnt_local_elems,
+                            MPI_FLOAT,
+                            &total_spmvm_result[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_FLOAT,
+                            0,
+                            MPI_COMM_WORLD);
 
-                MPI_Allgatherv(&local_x_copy[0],
-                                work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank],
-                                MPI_FLOAT,
-                                &total_x[0],
-                                counts_arr,
-                                displ_arr_bk,
-                                MPI_FLOAT,
-                                MPI_COMM_WORLD);
+                MPI_Gatherv(&local_x_copy[0],
+                            amnt_local_elems,
+                            MPI_FLOAT,
+                            &total_x[0],
+                            counts_arr,
+                            displ_arr_bk,
+                            MPI_FLOAT,
+                            0,
+                            MPI_COMM_WORLD);
             }
 
             // If we're verifying results, assign total vectors to benchmark result object
+            // NOTE: Garbage values for all but root process
             r->total_x = total_x;
             r->total_spmvm_result = total_spmvm_result;
         }

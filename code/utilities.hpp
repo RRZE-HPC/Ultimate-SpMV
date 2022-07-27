@@ -1280,6 +1280,15 @@ class SimpleDenseMatrix {
 
             vec.resize(needed_padding + local_context->amnt_local_elems, 0);
         }
+
+        void init(Config *config){
+            DefaultValues<VT, IT> default_values;
+            init_std_vec_with_ptr_or_value(
+                vec, 
+                vec.size(),
+                default_values.x, 
+                config->random_init_x);
+        }
 };
 
 #endif

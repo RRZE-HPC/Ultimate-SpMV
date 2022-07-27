@@ -1,5 +1,5 @@
-#include "spmv.h"
-
+#ifndef KERNELS
+#define KERNELS
 
 // SpMV kernels for computing  y = A * x, where A is a sparse matrix
 // represented by different formats.
@@ -191,3 +191,5 @@ spmv_omp_scs_adv(
         exit(1);
     }
 }
+
+#endif
