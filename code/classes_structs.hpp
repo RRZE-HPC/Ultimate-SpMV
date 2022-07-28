@@ -86,21 +86,25 @@ struct Config
     unsigned long n_repetitions{5};
 
     // Verify result of SpVM.
-    bool validate_result{true};
+    int validate_result = 1;
 
     // Verify result against solution of COO kernel.
-    bool verify_result_with_coo{true};
+    int verify_result_with_coo = 0;
 
     // Print incorrect elements from solution.
     // bool verbose_verification{true};
 
     // Sort rows/columns of sparse matrix before
     // converting it to a specific format.
-    bool sort_matrix{true};
+    int sort_matrix = 1;
 
-    bool verbose_validation{false};
+    int verbose_validation = 0;
 
-    bool log_prof{false};
+    // activate profile logs, only root process
+    int log_prof = 0;
+
+    // communicate the halo elements in benchmark loop
+    int comm_halos = 1;
 
     // Configures if the code will be executed in bench mode (b) or solve mode (s)
     char mode = 'b'; 
@@ -135,7 +139,7 @@ struct DefaultValues
 };
 
 template <typename VT, typename IT>
-struct BenchmarkResult
+struct Result
 {
     double perf_mflops{};
     double mem_mb{};

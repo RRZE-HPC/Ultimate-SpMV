@@ -8,28 +8,33 @@ void write_bench_to_file(
     const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
-    BenchmarkResult<VT, IT> *r,
+    Result<VT, IT> *r,
+    const double *total_walltimes,
     const int *comm_size
 ){
     std::fstream working_file;
-    int width = 16;
+    int width = 32;
 
-    std::cout.precision(16);
+    
 
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
     working_file << "C: " << config->chunk_size << ", data_type: " <<
-    'd' << ", repetitions: " << r->n_calls << ", and seg_method: " << *seg_method << std::endl;
+    typeid(VT).name() << ", repetitions: " << r->n_calls << ", comm_halos: " << config->comm_halos << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
-    working_file << std::left << std::setw(width) << "Perf per MPI proc:" << std::endl;
-    working_file << std::left << std::setw(width) << "------------------" << std::endl;
+    working_file << std::left << std::setw(width) << "Perf per MPI proc [MF/s]:" <<
+                    std::left << std::setw(width) << "Walltime per MPI proc [s]:" << std::endl;
+    working_file << std::left << std::setw(width) << "-------------------------" <<
+                    std::left << std::setw(width) << "--------------------------" << std::endl;
 
     // Print Flops per MPI process
     for(int proc = 0; proc < *comm_size; ++proc){
-        working_file << "Proc " << proc << ": ";
-        working_file << r->perfs_from_procs[proc] << " MF/s" << std::endl;
+        working_file << std::left << std::setprecision(16) << std::setw(0) << "Proc " <<
+                        std::left << std::setw(0) << proc << ": " <<
+                        std::left << std::setw(width) << r->perfs_from_procs[proc] <<
+                        std::left << std::setw(width) << total_walltimes[proc] <<  std::endl;
     }
     working_file << std::endl;
 
@@ -49,14 +54,14 @@ void write_bench_to_file(
     @param *config : struct to initialze default values and user input
     @param *y_out : the vector declared to either hold the process local result, 
         or the global result if verification is selected as an option
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *r : a Result struct, in which results of the computations are stored
     @param *x : the output from the mkl routine, against which we verify our spmvm result
 */
 void write_dp_result_to_file(
     const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
-    BenchmarkResult<double, int> *r,
+    Result<double, int> *r,
     std::vector<double> *x,
     const int *comm_size
 
@@ -122,7 +127,7 @@ void write_dp_result_to_file(
         
         if(config -> verbose_validation == 1)
         {
-            working_file << std::left << std::setw(width) << (*x)[i]
+            working_file << std::left << std::setprecision(16) << std::setw(width) << (*x)[i]
                         << std::left << std::setw(width) << r->total_spmvm_result[i]
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
@@ -187,14 +192,14 @@ void write_dp_result_to_file(
     @param *config : struct to initialze default values and user input
     @param *y_out : the vector declared to either hold the process local result, 
         or the global result if verification is selected as an option
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *r : a Result struct, in which results of the computations are stored
     @param *x : the output from the mkl routine, against which we verify our spmvm result
 */
 void write_sp_result_to_file(
     const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
-    BenchmarkResult<float, int> *r,
+    Result<float, int> *r,
     std::vector<float> *x,
     const int *comm_size
 ){
@@ -260,7 +265,7 @@ void write_sp_result_to_file(
         
         if(config -> verbose_validation == 1)
         {
-            working_file << std::left << std::setw(width) << (*x)[i]
+            working_file << std::left << std::setprecision(16) << std::setw(width) << (*x)[i]
                         << std::left << std::setw(width) << r->total_spmvm_result[i]
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
@@ -322,12 +327,12 @@ void write_sp_result_to_file(
     @param *matrix_file_name : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *r : a Result struct, in which results of the comoputations are stored
 */
 void validate_dp_result(
     MtxData<double, int> *total_mtx,
     Config *config,
-    BenchmarkResult<double, int> *r,
+    Result<double, int> *r,
     std::vector<double> *mkl_dp_result
 ){    
     int num_rows = total_mtx->n_rows;
@@ -374,12 +379,12 @@ void validate_dp_result(
     @param *matrix_file_name : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *r : a Result struct, in which results of the computations are stored
 */
 void validate_sp_result(
     MtxData<float, int> *total_mtx,
     Config *config,
-    BenchmarkResult<float, int> *r,
+    Result<float, int> *r,
     std::vector<float> *mkl_sp_result
 ){    
     int num_rows = total_mtx->n_rows;

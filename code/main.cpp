@@ -18,7 +18,7 @@
     @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *local_y : local results vector, instance of SimpleDenseMatrix class
     @param *local_x : local RHS vector, instance of SimpleDenseMatrix class
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *r : a Result struct, in which results of the benchmark are stored
     @param *defaults : a DefaultValues struct, in which default values of x and y can be defined
 */
 template <typename VT, typename IT>
@@ -29,7 +29,7 @@ void bench_spmv(
     const IT *work_sharing_arr,
     std::vector<VT> *local_y,
     std::vector<VT> *local_x,
-    BenchmarkResult<VT, IT> *r,
+    Result<VT, IT> *r,
     const int *my_rank,
     const int *comm_size
     )
@@ -56,9 +56,10 @@ void bench_spmv(
             begin_bench_loop_time = MPI_Wtime();
             
             for(int k = 0; k < n_iter; ++k){
-                communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+                if(config->comm_halos)
+                    communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
 
-                spmv_omp_scs<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
@@ -92,11 +93,10 @@ void bench_spmv(
         for (IT i = 0; i < config->n_repetitions; ++i)
         {
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
-            MPI_Barrier(MPI_COMM_WORLD);
 
-            spmv_omp_scs<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+            spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                    local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                    local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
             std::swap(*local_x, *local_y);
         }
@@ -143,14 +143,14 @@ void bench_spmv(
     @param *total_mtx : complete mtx struct, read .mtx file with mtx_reader.h
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
-    @param *r : a BenchmarkResult struct, in which results of the benchmark are stored
+    @param *r : a Result struct, in which results of the computation are stored
 */
 template <typename VT, typename IT>
 void compute_result(
     MtxData<VT, IT> *total_mtx,
     const std::string *seg_method,
     Config *config,
-    BenchmarkResult<VT, IT> *r,
+    Result<VT, IT> *r,
     const int *my_rank,
     const int *comm_size)
 {
@@ -222,7 +222,7 @@ void compute_result(
         delete[] perfs_from_procs_arr;
     }
     else if(config->mode == 's'){
-        // Assign proc local x and y to benchmark result object
+        // Assign proc local x and y to Result object
         r->x_out = local_x_copy;
         r->y_out = local_y.vec;
 
@@ -289,7 +289,7 @@ void compute_result(
                             MPI_COMM_WORLD);
             }
 
-            // If we're verifying results, assign total vectors to benchmark result object
+            // If we're verifying results, assign total vectors to Result object
             // NOTE: Garbage values for all but root process
             r->total_x = total_x;
             r->total_spmvm_result = total_spmvm_result;
@@ -301,11 +301,10 @@ void compute_result(
 int main(int argc, char *argv[])
 {
     MPI_Init(&argc, &argv);
+    double begin_main_time = MPI_Wtime();
 
     Config config;
     std::string matrix_file_name{};
-
-    double begin_main_time = MPI_Wtime();
 
     // Set defaults for cl inputs
     std::string seg_method = "seg-rows";
@@ -318,6 +317,8 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
+    double total_walltimes[comm_size];
+
     verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config);
     
     if(config.log_prof && my_rank == 0) {log("__________ log start __________");}
@@ -326,7 +327,7 @@ int main(int argc, char *argv[])
     if (value_type == "dp")
     {
         MtxData<double, int> total_mtx;
-        BenchmarkResult<double, int> r;
+        Result<double, int> r;
 
         if(my_rank == 0){
             if(config.log_prof && my_rank == 0) {log("Begin read_mtx_data");}
@@ -338,6 +339,19 @@ int main(int argc, char *argv[])
         double begin_cr_time = MPI_Wtime();
         compute_result<double, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
+
+        double time_per_proc = MPI_Wtime() - begin_main_time;
+        // Gather all times for printing of results
+        MPI_Gather(
+            &time_per_proc,
+            1,
+            MPI_DOUBLE,
+            total_walltimes,
+            1,
+            MPI_DOUBLE,
+            0,
+            MPI_COMM_WORLD
+        );
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -354,14 +368,14 @@ int main(int argc, char *argv[])
                 }
             }
             else if(config.mode == 'b'){
-                write_bench_to_file<double, int>(&matrix_file_name, &seg_method, &config, &r, &comm_size);
+                write_bench_to_file<double, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, &comm_size);
             }
         }
     }
     else if (value_type == "sp")
     {
         MtxData<float, int> total_mtx;
-        BenchmarkResult<float, int> r;
+        Result<float, int> r;
 
         if(my_rank == 0){
             if(config.log_prof && my_rank == 0) {log("Begin read_mtx_data");}
@@ -373,6 +387,19 @@ int main(int argc, char *argv[])
         double begin_cr_time = MPI_Wtime();
         compute_result<float, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
+
+        double time_per_proc = MPI_Wtime() - begin_main_time;
+        // Gather all times for printing of results
+        MPI_Gather(
+            &time_per_proc,
+            1,
+            MPI_DOUBLE,
+            total_walltimes,
+            1,
+            MPI_DOUBLE,
+            0,
+            MPI_COMM_WORLD
+        );
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -390,7 +417,7 @@ int main(int argc, char *argv[])
                 }
             }
             else if(config.mode == 'b'){
-                write_bench_to_file<float, int>(&matrix_file_name, &seg_method, &config, &r, &comm_size);
+                write_bench_to_file<float, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, &comm_size);
             }
         }
     }
