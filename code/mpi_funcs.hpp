@@ -26,6 +26,12 @@ void collect_local_needed_heri(
     IT from_proc, to_proc;
     IT total_x_row_idx, remote_elem_candidate_col, elem_col, remote_elem_col;
     IT needed_heri_count = 0;
+    IT amnt_lhs_halo_elems = 0;
+    IT lhs_halo_col_ctr = 0;
+    IT rhs_halo_col_ctr = 0;
+
+    // Pre-defined needed space for local_x
+    IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
 
     // To remember which columns have already been accounted for
     std::vector<int> remote_elem_col_bk;
@@ -33,6 +39,16 @@ void collect_local_needed_heri(
     std::tuple<IT, IT, IT> inner_tuple;
     std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
     std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
+
+    // Make copy of original column indexes in this proc to compare against
+    std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
+    std::vector<IT> col_all_inst_idx;
+
+    // initially scan to count number of LHS halo elements we have
+    for (IT i = 0; i < local_scs->n_elements; ++i)
+    {
+        if (local_scs->col_idxs[i] < work_sharing_arr[*my_rank]) {++amnt_lhs_halo_elems;}
+    }
 
     for (IT i = 0; i < local_scs->n_elements; ++i)
     {
@@ -42,11 +58,61 @@ void collect_local_needed_heri(
         // if this column corresponds to a padded element, continue to next nnz
         if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
 
-        // Avoids double-adding the same column
-        if (!(std::find(remote_elem_col_bk.begin(), remote_elem_col_bk.end(), elem_col) != remote_elem_col_bk.end()))
-        {
-            if (elem_col < work_sharing_arr[*my_rank] || elem_col > work_sharing_arr[*my_rank + 1] - 1)
-            { // i.e. if remote element
+        if (elem_col < work_sharing_arr[*my_rank])
+        { // if LHS remote element
+            if (!(std::find(remote_elem_col_bk.begin(), remote_elem_col_bk.end(), elem_col) != remote_elem_col_bk.end()))
+            { // if this column has not yet been seen
+                remote_elem_col = elem_col;
+                // First, determine which rank this needed element will come from
+                // The rank of where this needed element resides is deduced from the work sharing array.
+                for (IT j = 0; j < *comm_size; ++j)
+                {
+                    if (remote_elem_col >= work_sharing_arr[j] && remote_elem_col < work_sharing_arr[j + 1])
+                    {
+                        // Remember column corresponding to remote element
+                        remote_elem_col_bk.push_back(remote_elem_col);
+
+                        // Just to make process more clear
+                        from_proc = j;
+                        to_proc = *my_rank;
+
+                        // The heri tuple, which is then used inside another tuple for ordering later
+                        heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
+
+                        unordered_heri_tuple = std::make_tuple(remote_elem_col, heri_tuple);
+
+                        unordered_heri_tuples_vec.push_back(unordered_heri_tuple);
+
+                        ++needed_heri_count;
+                        break;
+                    }
+                }
+
+                // Then, we adjust column indicies for elements that reside in this remote column
+                // Ignore this work for the first process
+                // The reason for this, is because the first process will never have LHS halo elements
+                if(*my_rank != 0)
+                {
+                    // Need all instances of this remote column from original column indices
+                    col_all_inst_idx = find_items<IT>(original_col_idxs, remote_elem_col);
+
+                    // Finally, for this column we only see a single time, update all corresponding col_idx
+                    for(auto idx : col_all_inst_idx)
+                    {
+                        if(original_col_idxs[idx] == remote_elem_col && local_scs->values[idx] != 0) //second condition needed?
+                        {
+                            local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
+                        }
+                    }
+                    // Only increments for "new" columns it sees
+                    ++lhs_halo_col_ctr;
+                }
+            }
+        }
+        else if (elem_col > work_sharing_arr[*my_rank + 1] - 1)
+        { // i.e. if RHS remote element
+            if (!(std::find(remote_elem_col_bk.begin(), remote_elem_col_bk.end(), elem_col) != remote_elem_col_bk.end()))
+            { // if this column has not yet been seen
                 remote_elem_col = elem_col;
                 // The rank of where this needed element resides is deduced from the work sharing array.
                 for (IT j = 0; j < *comm_size; ++j)
@@ -71,8 +137,40 @@ void collect_local_needed_heri(
                         break;
                     }
                 }
+                // Last proc will never have RHS remote elements
+                if(*my_rank != (*comm_size - 1))
+                {
+                    // Need all instances of this remote column from original column indices
+                    col_all_inst_idx = find_items<IT>(original_col_idxs, remote_elem_col);
+
+                    for(auto idx : col_all_inst_idx)
+                    {
+                        if(original_col_idxs[idx] == remote_elem_col && local_scs->values[idx] != 0) //second condition needed?
+                        {
+                            local_scs->col_idxs[idx] = amnt_local_elems + amnt_lhs_halo_elems + rhs_halo_col_ctr;
+                        }
+                    }
+                    // Only increments for "new" columns it sees
+                    ++rhs_halo_col_ctr;
+                }
+
+            }
+            else{ // i.e. local element
+
+                // Adjust col_idx of local element
+                local_scs->col_idxs[i] -= work_sharing_arr[*my_rank];
+                // Already checked that it's not a padded element^
             }
         }
+        // else{
+        //     for(auto idx : col_all_inst_idx)
+        //     {
+        //         if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
+        //         {
+        //             local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
+        //         }
+        //     }
+        // }
     }
 
     std::sort(unordered_heri_tuples_vec.begin(), unordered_heri_tuples_vec.end());
@@ -420,7 +518,7 @@ void adjust_halo_col_idxs(
                 {
                     if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                     {
-                        exists_nz_elem = 1;
+                        exists_nz_elem = 1; // is this harness loop necessary?
                         break;
                     }
                 }
@@ -430,7 +528,7 @@ void adjust_halo_col_idxs(
                     // #pragma omp parallel for
                     for(auto idx : col_all_inst_idx)
                     {
-                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
+                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0) //second condition needed?
                         {
                             local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
                         }
@@ -796,6 +894,8 @@ void mpi_init_local_structs(
     double begin_ctscs_time = MPI_Wtime();
     convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs);
     if(config->log_prof && *my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, MPI_Wtime());}
+
+    // HERE: adjust halo col idx
 
     // Broadcast work sharing array to other processes
     MPI_Bcast(work_sharing_arr,
