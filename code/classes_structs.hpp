@@ -141,7 +141,7 @@ struct DefaultValues
 template <typename VT, typename IT>
 struct Result
 {
-    double perf_mflops{};
+    double perf_gflops{};
     double mem_mb{};
     std::vector<double> perfs_from_procs; // used in Gather
 
