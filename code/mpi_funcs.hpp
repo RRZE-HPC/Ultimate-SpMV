@@ -3,16 +3,18 @@
 
 // #include <iostream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "classes_structs.hpp"
 
 #include <set>
 
 template <typename VT, typename IT>
-void gen_halo_hms(
+void new_gen_halo_hms(
     ScsData<VT, IT> *local_scs,
     std::unordered_map<int, int> *lhs_halo_hm,
     std::unordered_map<int, int> *rhs_halo_hm,
+    std::vector<IT> *original_col_idxs,
     const IT *work_sharing_arr,
     const int *my_rank,
     const int *comm_size
@@ -21,63 +23,13 @@ void gen_halo_hms(
     IT remote_elem_count = 0;
     IT amnt_lhs_remote_elems = 0;
     IT amnt_rhs_remote_elems = 0;
-    // IT test_rank = 1, show_steps = 0;
     IT exists_nz_elem = 0;
-    // IT idx_ctr;
-    // IT elem_idx;
-    // remote_elem_col_bk.clear();
     std::vector<IT> col_all_inst_idx;
-    std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
+
+    // std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
+    std::unordered_set<IT> original_col_idxs_uset(original_col_idxs->begin(), original_col_idxs->end());
     IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
-    // IT lhs_halo_col_ctr = 0;
-    // IT rhs_halo_col_ctr = 0;
 
-
-    // if(*my_rank != 0)
-    // {
-    //     for (IT i = 0; i < local_scs->n_elements; ++i)
-    //     {
-    //         int col = original_col_idxs[i];
-
-    //         if(col == 0 && local_scs->values[i] == 0) {continue;}
-    //         // of course there will be elements in this column, since we're iterating over n_elements
-    //         // taking padding into account?
-    //         if (!(std::find(remote_elem_col_bk.begin(), remote_elem_col_bk.end(), col) != remote_elem_col_bk.end()))
-    //         {// if the column has already been "seen", skip
-    //             if (col < work_sharing_arr[*my_rank])
-    //             { // if lhs remote
-
-    //                 // Remember column corresponding to remote element
-    //                 remote_elem_col_bk.push_back(col);
-
-    //                 col_all_inst_idx = find_items<IT>(original_col_idxs, col);
-
-    //                 for(auto idx : col_all_inst_idx)
-    //                 {
-    //                     if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
-    //                     {
-    //                         exists_nz_elem = 1; // is this harness loop necessary?
-    //                         break;
-    //                     }
-    //                 }
-
-    //                 if(exists_nz_elem)
-    //                 { // and if this element is not padding
-    //                     // #pragma omp parallel for
-    //                     for(auto idx : col_all_inst_idx)
-    //                     {
-    //                         if(original_col_idxs[idx] == col && local_scs->values[idx] != 0) //second condition needed?
-    //                         {
-    //                             local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
-    //                         }
-    //                     }
-    //                 // If at least one nonzero element exists in this column, increment counter
-    //                 ++lhs_halo_col_ctr;
-    //                 }
-    //             }
-    //         }
-    //     }   
-    // }
 
     int lhs_halo_col_ctr = 0;
     // Proc 0 will never have LHS remote elements
@@ -86,14 +38,124 @@ void gen_halo_hms(
         // start at the "left wall" of the matrix, and iterate columns until we reach local elements
         for (int col = 0; col < work_sharing_arr[*my_rank]; ++col)
         {
-            if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
+            if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
+             // if there exists ANY element in this column...
+
+                col_all_inst_idx = find_items<IT>(*original_col_idxs, col);
+
+                // TODO: make faster
+                // First need to know if there are any non zero elements with nonzero value 
+                // exists_nz_elem = 0;
+                for(auto idx : col_all_inst_idx)
+                {
+                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
+                    {
+                            // (*lhs_halo_hm)[original_col_idxs[idx]] = amnt_local_elems + lhs_halo_col_ctr;
+                            // ++lhs_halo_col_ctr;
+                            // break;
+                        exists_nz_elem = 1; // is this harness loop necessary?
+                        break;
+                    }
+                }
+
+                // Then, is a nonzero element does exist in this column, assign to hm (this column idx : new column idx)
+                if(exists_nz_elem)
+                { // and if this element is not padding
+                    // #pragma omp parallel for
+                    // for(auto idx : col_all_inst_idx)
+                    // {
+                    //     if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0) //second condition needed?
+                    //     {
+                            (*lhs_halo_hm)[col] = amnt_local_elems + lhs_halo_col_ctr;
+                            ++lhs_halo_col_ctr;
+                            // break;
+                            // (*lhs_halo_hm)[idx] = amnt_local_elems + lhs_halo_col_ctr;
+                            // local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
+                    //     }
+                    // }
+                // If at least one nonzero element exists in this column, increment counter
+                // ++lhs_halo_col_ctr;
+                }
+            }
+        }   
+    }
+
+
+    int rhs_halo_col_ctr = 0;
+    // Last proc will never have RHS remote elements
+    if(*my_rank != (*comm_size - 1)){
+        // start at the "left wall" of the matrix, and iterate columns until we reach local elements
+        for (int col = work_sharing_arr[*my_rank + 1]; col < work_sharing_arr[*comm_size]; ++col)
+        {
+            if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
+             // if there exists ANY element in this column...
+
+                col_all_inst_idx = find_items<IT>(*original_col_idxs, col);
+                // exists_nz_elem = 0;
+                for(auto idx : col_all_inst_idx)
+                {
+                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
+                    {
+                        exists_nz_elem = 1;
+                        break;
+                    }
+                }
+
+                if(exists_nz_elem)
+                { // and if this element is not padding
+                    // #pragma omp parallel for
+                    // for(auto idx : col_all_inst_idx)
+                    // {
+                    //     if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
+                    //     {
+                            (*rhs_halo_hm)[col] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                            ++rhs_halo_col_ctr;
+                            // break;
+                            // (*rhs_halo_hm)[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                            // local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                    //     }
+                    // }
+                    // If at least one element exists in this column, increment counter
+                    // ++rhs_halo_col_ctr;
+                }
+            }
+        }   
+    }
+}
+
+template <typename VT, typename IT>
+void original_gen_halo_hms(
+    ScsData<VT, IT> *local_scs,
+    std::unordered_map<int, int> *lhs_halo_hm,
+    std::unordered_map<int, int> *rhs_halo_hm,
+    std::vector<IT> *original_col_idxs,
+    const IT *work_sharing_arr,
+    const int *my_rank,
+    const int *comm_size
+){
+    
+    IT remote_elem_count = 0;
+    IT amnt_lhs_remote_elems = 0;
+    IT amnt_rhs_remote_elems = 0;
+    IT exists_nz_elem = 0;
+    std::vector<IT> col_all_inst_idx;
+    IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+
+    int lhs_halo_col_ctr = 0;
+    // Proc 0 will never have LHS remote elements
+    if(*my_rank != 0)
+    {
+        // start at the "left wall" of the matrix, and iterate columns until we reach local elements
+        for (int col = 0; col < work_sharing_arr[*my_rank]; ++col)
+        {
+            if ((std::find(original_col_idxs->begin(), original_col_idxs->end(), col) != original_col_idxs->end()))
             { // if there exists ANY element in this column...
 
-                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
+                col_all_inst_idx = find_items<IT>(*original_col_idxs, col);
 
                 for(auto idx : col_all_inst_idx)
                 {
-                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
+                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
                     {
                         exists_nz_elem = 1; // is this harness loop necessary?
                         break;
@@ -105,7 +167,7 @@ void gen_halo_hms(
                     // #pragma omp parallel for
                     for(auto idx : col_all_inst_idx)
                     {
-                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0) //second condition needed?
+                        if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0) //second condition needed?
                         {
                             (*lhs_halo_hm)[idx] = amnt_local_elems + lhs_halo_col_ctr;
                             // local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
@@ -125,13 +187,13 @@ void gen_halo_hms(
         // start at the "left wall" of the matrix, and iterate columns until we reach local elements
         for (int col = work_sharing_arr[*my_rank + 1]; col < work_sharing_arr[*comm_size]; ++col)
         {
-            if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
+            if ((std::find(original_col_idxs->begin(), original_col_idxs->end(), col) != original_col_idxs->end()))
             { // if there exists ANY element in this column...
-                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
+                col_all_inst_idx = find_items<IT>(*original_col_idxs, col);
 
                 for(auto idx : col_all_inst_idx)
                 {
-                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
+                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
                     {
                         exists_nz_elem = 1;
                         break;
@@ -143,7 +205,7 @@ void gen_halo_hms(
                     // #pragma omp parallel for
                     for(auto idx : col_all_inst_idx)
                     {
-                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
+                        if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
                         {
                             (*rhs_halo_hm)[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
                             // local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
@@ -179,10 +241,6 @@ void collect_local_needed_heri(
     IT total_x_row_idx, remote_elem_candidate_col, elem_col, remote_elem_col;
     IT needed_heri_count = 0;
     IT amnt_lhs_halo_elems = 0;
-    // IT lhs_halo_col_ctr = 0;
-    // // IT rhs_halo_col_ctr = 0;
-
-
 
     // To remember which columns have already been accounted for
     std::vector<int> remote_elem_col_bk;
@@ -190,27 +248,13 @@ void collect_local_needed_heri(
     std::tuple<IT, IT, IT> inner_tuple;
     std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
     std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
-
-    // Pre-defined needed space for local_x
-    // IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
-    
-    // std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
-    // std::vector<IT> col_all_inst_idx;
-
-    // Make copy of original column indexes in this proc to compare against
-    // std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
-    // std::vector<IT> col_all_inst_idx;
-
-    // initially scan to count number of LHS halo elements we have
-    // TODO: Is this needed?
-    // for (IT i = 0; i < local_scs->n_elements; ++i)
-    // {
-    //     if (local_scs->col_idxs[i] < work_sharing_arr[*my_rank]) {++amnt_lhs_halo_elems;}
-    // }
+    std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
 
     std::unordered_map<int, int> lhs_halo_hm;
     std::unordered_map<int, int> rhs_halo_hm;
-    gen_halo_hms<VT, IT>(local_scs, &lhs_halo_hm, &rhs_halo_hm, work_sharing_arr, my_rank, comm_size);
+    // original_gen_halo_hms<VT, IT>(local_scs, &lhs_halo_hm, &rhs_halo_hm, &original_col_idxs, work_sharing_arr, my_rank, comm_size);
+    new_gen_halo_hms<VT, IT>(local_scs, &lhs_halo_hm, &rhs_halo_hm, &original_col_idxs, work_sharing_arr, my_rank, comm_size);
+
 
     for (IT i = 0; i < local_scs->n_elements; ++i)
     {
@@ -250,8 +294,8 @@ void collect_local_needed_heri(
                     }
                 }
             }
-            // local_scs->col_idxs[i] = lhs_halo_hm[local_scs->col_idxs[i]];
-            local_scs->col_idxs[i] = lhs_halo_hm[i];
+            // local_scs->col_idxs[i] = lhs_halo_hm[i];
+            local_scs->col_idxs[i] = lhs_halo_hm[original_col_idxs[i]];
 
         }
         else if (elem_col > work_sharing_arr[*my_rank + 1] - 1)
@@ -284,8 +328,8 @@ void collect_local_needed_heri(
                 }
 
             }
-            // local_scs->col_idxs[i] = rhs_halo_hm[local_scs->col_idxs[i]];
-            local_scs->col_idxs[i] = rhs_halo_hm[i];
+            // local_scs->col_idxs[i] = rhs_halo_hm[i];
+            local_scs->col_idxs[i] = rhs_halo_hm[original_col_idxs[i]];
         }
         else
         { // i.e. local element
