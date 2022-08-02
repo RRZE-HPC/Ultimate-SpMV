@@ -34,11 +34,6 @@ void bench_spmv(
     const int *comm_size
     )
 {
-    if(config->log_prof && *my_rank == 0) {log("Begin adjust_halo_col_idxs");}
-    double begin_ahci_time = MPI_Wtime();
-    adjust_halo_col_idxs<VT, IT>(local_scs, work_sharing_arr, my_rank, comm_size);
-    if(config->log_prof && *my_rank == 0) {log("Finish adjust_halo_col_idxs", begin_ahci_time, MPI_Wtime());}
-
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
         if(config->log_prof && *my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, bench mode");}
