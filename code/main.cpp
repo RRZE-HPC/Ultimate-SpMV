@@ -32,13 +32,13 @@ void bench_spmv(
     std::vector<VT> *local_y,
     std::vector<VT> *local_x,
     Result<VT, IT> *r,
-    const int *my_rank,
-    const int *comm_size
+    int my_rank,
+    int comm_size
     )
 {
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
-        if(config->log_prof && *my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, bench mode");}
+        if(config->log_prof && my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, bench mode");}
         double begin_csslbm_time = MPI_Wtime();
 
         std::vector<VT> dummy_x(local_x->size(), 1.0);
@@ -70,6 +70,8 @@ void bench_spmv(
         // Use warm-up to calculate n_iter for real benchmark
         int n_iter = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
 
+        // std::cout << "Proc: " << my_rank << ", niter: " << n_iter << std::endl;
+
         double begin_bench_loop_time, end_bench_loop_time;
 
         begin_bench_loop_time = MPI_Wtime();
@@ -87,10 +89,10 @@ void bench_spmv(
 
             std::swap(dummy_x, dummy_y);
 
-            if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-                printf("%lf", dummy_x[local_x->size() / 2]);
-                exit(0);
-            }
+            // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+            //     printf("%lf", dummy_x[local_x->size() / 2]);
+            //     exit(0);
+            // }
         }
             
         MPI_Barrier(MPI_COMM_WORLD);
@@ -99,14 +101,14 @@ void bench_spmv(
         r->n_calls = n_iter;
         r->duration_total_s = end_bench_loop_time - begin_bench_loop_time;
         r->duration_kernel_s = r->duration_total_s/ r->n_calls;
-        r->perf_gflops = (double)local_scs->nnz * 2.0 // TODO: GLOBAL NNZ
+        r->perf_gflops = (double)local_context->total_nnz * 2.0
                             / r->duration_kernel_s
                             / 1e9;                   // Only count usefull flops
 
-        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, bench mode", begin_csslbm_time, MPI_Wtime());}
+        if(config->log_prof && my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, bench mode", begin_csslbm_time, MPI_Wtime());}
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
-        if(config->log_prof && *my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
+        if(config->log_prof && my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
         double begin_csslsm_time = MPI_Wtime();
         for (IT i = 0; i < config->n_repetitions; ++i)
         {
@@ -121,7 +123,7 @@ void bench_spmv(
         }
         std::swap(*local_x, *local_y);
 
-        if(config->log_prof && *my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, solve mode", begin_csslsm_time, MPI_Wtime());}
+        if(config->log_prof && my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, solve mode", begin_csslsm_time, MPI_Wtime());}
     }
 
     double mem_matrix_b =
@@ -170,8 +172,8 @@ void compute_result(
     const std::string *seg_method,
     Config *config,
     Result<VT, IT> *r,
-    const int *my_rank,
-    const int *comm_size)
+    int my_rank,
+    int comm_size)
 {
     // TODO: bring back matrix stats
     // MatrixStats<double> matrix_stats;
@@ -182,7 +184,7 @@ void compute_result(
     ContextData<IT> local_context;
 
     // Allocate space for work sharing array
-    IT work_sharing_arr[*comm_size + 1];
+    IT work_sharing_arr[comm_size + 1];
 
     mpi_init_local_structs<VT, IT>(
         &local_scs,
@@ -206,7 +208,7 @@ void compute_result(
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x.vec;
 
-    if(config->log_prof && *my_rank == 0) {log("Begin bench_spmv");}
+    if(config->log_prof && my_rank == 0) {log("Begin bench_spmv");}
     double begin_bs_time = MPI_Wtime();
     bench_spmv<VT, IT>(
         config,
@@ -219,12 +221,12 @@ void compute_result(
         my_rank,
         comm_size
     );
-    if(config->log_prof && *my_rank == 0) {log("Finish bench_spmv", begin_bs_time, MPI_Wtime());}
+    if(config->log_prof && my_rank == 0) {log("Finish bench_spmv", begin_bs_time, MPI_Wtime());}
 
-    if(config->log_prof && *my_rank == 0) {log("Begin results gathering");}
+    if(config->log_prof && my_rank == 0) {log("Begin results gathering");}
     double begin_rg_time = MPI_Wtime();
     if(config->mode == 'b'){
-        double *perfs_from_procs_arr = new double[*comm_size];
+        double *perfs_from_procs_arr = new double[comm_size];
 
         MPI_Gather(&(r->perf_gflops),
                 1,
@@ -236,7 +238,7 @@ void compute_result(
                 MPI_COMM_WORLD);
 
         // NOTE: Garbage values for all but root process
-        r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + *comm_size);
+        r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + comm_size);
 
         delete[] perfs_from_procs_arr;
     }
@@ -248,19 +250,19 @@ void compute_result(
         if (config->validate_result)
         {
             // TODO: is the size correct here?
-            std::vector<VT> total_spmvm_result(work_sharing_arr[*comm_size], 0);
-            std::vector<VT> total_x(work_sharing_arr[*comm_size], 0);
+            std::vector<VT> total_spmvm_result(work_sharing_arr[comm_size], 0);
+            std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
 
-            IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
-            IT counts_arr[*comm_size];
-            IT displ_arr_bk[*comm_size];
+            IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+            IT counts_arr[comm_size];
+            IT displ_arr_bk[comm_size];
 
-            for(IT i = 0; i < *comm_size; ++i){
+            for(IT i = 0; i < comm_size; ++i){
                 counts_arr[i] = IT{};
                 displ_arr_bk[i] = IT{};
             }
             
-            for (IT i = 0; i < *comm_size; ++i){
+            for (IT i = 0; i < comm_size; ++i){
                 counts_arr[i] = work_sharing_arr[i + 1] - work_sharing_arr[i];
                 displ_arr_bk[i] = work_sharing_arr[i];
             }
@@ -314,7 +316,7 @@ void compute_result(
             r->total_spmvm_result = total_spmvm_result;
         }
     }
-    if(config->log_prof && *my_rank == 0) {log("Finish results gathering", begin_rg_time, MPI_Wtime());}
+    if(config->log_prof && my_rank == 0) {log("Finish results gathering", begin_rg_time, MPI_Wtime());}
 }
 
 int main(int argc, char *argv[])
@@ -356,7 +358,7 @@ int main(int argc, char *argv[])
         }
         if(config.log_prof && my_rank == 0) {log("Begin compute_result");}
         double begin_cr_time = MPI_Wtime();
-        compute_result<double, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
+        compute_result<double, int>(&total_mtx, &seg_method, &config, &r, my_rank, comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
 
         double time_per_proc = MPI_Wtime() - begin_main_time;
@@ -380,14 +382,14 @@ int main(int argc, char *argv[])
                     double begin_mklv_time = MPI_Wtime();
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
                     if(config.log_prof && my_rank == 0) {log("Finish mkl validation",  begin_mklv_time, MPI_Wtime());}
-                    write_dp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_dp_result, &comm_size);
+                    write_dp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_dp_result, comm_size);
                 }
                 else{
                     if(config.log_prof && my_rank == 0) {log("Result not validated");}
                 }
             }
             else if(config.mode == 'b'){
-                write_bench_to_file<double, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, &comm_size);
+                write_bench_to_file<double, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, comm_size);
             }
         }
     }
@@ -404,7 +406,7 @@ int main(int argc, char *argv[])
         }
         if(config.log_prof && my_rank == 0) {log("Begin compute_result");}
         double begin_cr_time = MPI_Wtime();
-        compute_result<float, int>(&total_mtx, &seg_method, &config, &r, &my_rank, &comm_size);
+        compute_result<float, int>(&total_mtx, &seg_method, &config, &r, my_rank, comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
 
         double time_per_proc = MPI_Wtime() - begin_main_time;
@@ -429,14 +431,14 @@ int main(int argc, char *argv[])
                     double begin_mklv_time = MPI_Wtime();
                     validate_sp_result(&total_mtx, &config, &r, &mkl_sp_result);
                     if(config.log_prof && my_rank == 0) {log("Finish mkl validation",  begin_mklv_time, MPI_Wtime());}
-                    write_sp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_sp_result, &comm_size);
+                    write_sp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_sp_result, comm_size);
                 }
                 else{
                     if(config.log_prof && my_rank == 0) {log("Result not validated");}
                 }
             }
             else if(config.mode == 'b'){
-                write_bench_to_file<float, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, &comm_size);
+                write_bench_to_file<float, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, comm_size);
             }
         }
     }

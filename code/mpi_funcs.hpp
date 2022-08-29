@@ -17,8 +17,8 @@ void gen_halo_hms(
     std::unordered_map<int, int> *rhs_halo_hm,
     std::vector<IT> *original_col_idxs,
     const IT *work_sharing_arr,
-    const int *my_rank,
-    const int *comm_size
+    int my_rank,
+    int comm_size
 ){
     
     IT remote_elem_count = 0;
@@ -27,16 +27,16 @@ void gen_halo_hms(
     IT exists_nz_elem;
 
     std::unordered_set<IT> original_col_idxs_uset(original_col_idxs->begin(), original_col_idxs->end());
-    IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+    IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
     int lhs_halo_col_ctr = 0;
     exists_nz_elem = 0;
 
     // Proc 0 will never have LHS remote elements
-    if(*my_rank != 0)
+    if(my_rank != 0)
     {
         // start at the "left wall" of the matrix, and iterate columns until we reach local elements
-        for (int col = 0; col < work_sharing_arr[*my_rank]; ++col)
+        for (int col = 0; col < work_sharing_arr[my_rank]; ++col)
         {
             // exists_nz_elem = 0;
             if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
@@ -66,9 +66,9 @@ void gen_halo_hms(
     int rhs_halo_col_ctr = 0;
     exists_nz_elem = 0;
     // Last proc will never have RHS remote elements
-    if(*my_rank != (*comm_size - 1)){
+    if(my_rank != (comm_size - 1)){
         // start at the "right wall" of the local matrix, and iterate columns until we reach right wall of the local_scs 
-        for (int col = work_sharing_arr[*my_rank + 1]; col < work_sharing_arr[*comm_size]; ++col)
+        for (int col = work_sharing_arr[my_rank + 1]; col < work_sharing_arr[comm_size]; ++col)
         {
             // exists_nz_elem = 0;
             if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
@@ -109,8 +109,8 @@ void collect_local_needed_heri(
     std::vector<IT> *local_needed_heri,
     ScsData<VT, IT> *local_scs,
     const IT *work_sharing_arr,
-    const int *my_rank,
-    const int *comm_size)
+    int my_rank,
+    int comm_size)
 {
     IT from_proc, to_proc;
     IT total_x_row_idx, remote_elem_candidate_col, elem_col, remote_elem_col;
@@ -138,14 +138,14 @@ void collect_local_needed_heri(
         // if this column corresponds to a padded element, continue to next nnz
         if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
 
-        if (elem_col < work_sharing_arr[*my_rank])
+        if (elem_col < work_sharing_arr[my_rank])
         { // if LHS remote element
             if(!(remote_elem_col_bk.find(elem_col) != remote_elem_col_bk.end())){
                 // if this column has not yet been seen
                 remote_elem_col = elem_col;
                 // First, determine which rank this needed element will come from
                 // The rank of where this needed element resides is deduced from the work sharing array.
-                for (IT j = 0; j < *comm_size; ++j)
+                for (IT j = 0; j < comm_size; ++j)
                 {
                     if (remote_elem_col >= work_sharing_arr[j] && remote_elem_col < work_sharing_arr[j + 1])
                     {
@@ -154,7 +154,7 @@ void collect_local_needed_heri(
 
                         // Just to make process more clear
                         from_proc = j;
-                        to_proc = *my_rank;
+                        to_proc = my_rank;
 
                         // The heri tuple, which is then used inside another tuple for ordering later
                         heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
@@ -171,13 +171,13 @@ void collect_local_needed_heri(
             local_scs->col_idxs[i] = lhs_halo_hm[original_col_idxs[i]];
 
         }
-        else if (elem_col > work_sharing_arr[*my_rank + 1] - 1)
+        else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
         { // i.e. if RHS remote element
             if(!(remote_elem_col_bk.find(elem_col) != remote_elem_col_bk.end())){
                 // if this column has not yet been seen
                 remote_elem_col = elem_col;
                 // The rank of where this needed element resides is deduced from the work sharing array.
-                for (IT j = 0; j < *comm_size; ++j)
+                for (IT j = 0; j < comm_size; ++j)
                 {
                     if (remote_elem_col >= work_sharing_arr[j] && remote_elem_col < work_sharing_arr[j + 1])
                     {
@@ -186,7 +186,7 @@ void collect_local_needed_heri(
 
                         // Just to make process more clear
                         from_proc = j;
-                        to_proc = *my_rank;
+                        to_proc = my_rank;
 
                         // The heri tuple, which is then used inside another tuple for ordering later
                         heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
@@ -205,7 +205,7 @@ void collect_local_needed_heri(
         }
         else
         { // i.e. local element
-            local_scs->col_idxs[i] -= work_sharing_arr[*my_rank];
+            local_scs->col_idxs[i] -= work_sharing_arr[my_rank];
         }
     }
 
@@ -230,8 +230,8 @@ void collect_to_send_heri(
     std::vector<IT> *to_send_heri,
     const std::vector<IT> *local_needed_heri,
     IT *global_needed_heri,
-    const int *my_rank,
-    const int *comm_size)
+    int my_rank,
+    int comm_size)
 {
     std::tuple<IT, IT, IT> heri_tuple;
     std::tuple<IT, IT, IT> inner_tuple;
@@ -241,10 +241,10 @@ void collect_to_send_heri(
 
 
     // NOTE: Do these need to be on the heap?
-    IT all_local_needed_heri_sizes[*comm_size];
-    IT global_needed_heri_displ_arr[*comm_size];
+    IT all_local_needed_heri_sizes[comm_size];
+    IT global_needed_heri_displ_arr[comm_size];
 
-    for (IT i = 0; i < *comm_size; ++i)
+    for (IT i = 0; i < comm_size; ++i)
     {
         all_local_needed_heri_sizes[i] = IT{};
         global_needed_heri_displ_arr[i] = IT{};
@@ -263,7 +263,7 @@ void collect_to_send_heri(
 
     IT intermediate_size = IT{};
 
-    for (IT i = 0; i < *comm_size; ++i)
+    for (IT i = 0; i < comm_size; ++i)
     {
         global_needed_heri_displ_arr[i] = intermediate_size;
         intermediate_size += all_local_needed_heri_sizes[i];
@@ -282,13 +282,13 @@ void collect_to_send_heri(
     // Finally, sort the global_needed_heri into "to_send_heri". Encoded 3-tuples as array
     for (IT from_proc_idx = 1; from_proc_idx < intermediate_size; from_proc_idx += 3)
     {
-        if (global_needed_heri[from_proc_idx] == *my_rank)
+        if (global_needed_heri[from_proc_idx] == my_rank)
         {// i.e. if were sending FROM this rank
 
             // Just to make process more clear
             remote_elem_col = global_needed_heri[from_proc_idx + 1];
             to_proc = global_needed_heri[from_proc_idx - 1];
-            from_proc = *my_rank;
+            from_proc = my_rank;
 
             // The heri tuple, which is then used inside another tuple for ordering later
             heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
@@ -323,7 +323,7 @@ void calc_heri_shifts(
     const IT *global_needed_heri_size,
     std::vector<IT> *shift_arr,
     std::vector<IT> *incidence_arr,
-    const int *comm_size)
+    int comm_size)
 {
     IT current_row, current_col, from_proc, to_proc;
 
@@ -332,17 +332,17 @@ void calc_heri_shifts(
         to_proc = global_needed_heri[i];
         from_proc = global_needed_heri[i + 1];
 
-        (*incidence_arr)[*comm_size * from_proc + to_proc] += 1;
+        (*incidence_arr)[comm_size * from_proc + to_proc] += 1;
     }
 
-    for (IT row = 1; row < *comm_size; ++row)
+    for (IT row = 1; row < comm_size; ++row)
     {
-        IT rows_remaining = *comm_size - row;
+        IT rows_remaining = comm_size - row;
         for (IT i = 0; i < rows_remaining; ++i)
         {
-            for (IT col = 0; col < *comm_size; ++col)
+            for (IT col = 0; col < comm_size; ++col)
             {
-                (*shift_arr)[*comm_size * (row + i) + col] += (*incidence_arr)[*comm_size * (row - 1) + col];
+                (*shift_arr)[comm_size * (row + i) + col] += (*incidence_arr)[comm_size * (row - 1) + col];
             }
         }
     }
@@ -366,8 +366,8 @@ void communicate_halo_elements(
     ContextData<IT> *local_context,
     std::vector<VT> *local_x,
     const IT *work_sharing_arr,
-    const int *my_rank,
-    const int *comm_size)
+    int my_rank,
+    int comm_size)
 {
     IT rows_in_to_proc, rows_in_from_proc, to_proc, from_proc, global_row_idx, num_local_elems;
     IT recv_shift = 0, send_shift = 0; // TODO: calculate more efficiently
@@ -379,10 +379,10 @@ void communicate_halo_elements(
 
     // Declare and populate arrays to keep track of number of elements already
     // recieved or sent to respective procs
-    IT recv_counts[*comm_size];
-    IT send_counts[*comm_size];
+    IT recv_counts[comm_size];
+    IT send_counts[comm_size];
 
-    for (IT i = 0; i < *comm_size; ++i)
+    for (IT i = 0; i < comm_size; ++i)
     {
         recv_counts[i] = 0;
         send_counts[i] = 0;
@@ -392,18 +392,18 @@ void communicate_halo_elements(
     if (typeid(VT) == typeid(float))
     {
         // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
-        rows_in_to_proc = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+        rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
         for (IT to_proc_idx = 0; to_proc_idx < (local_context->to_send_heri).size(); to_proc_idx += 3)
         {
             global_row_idx = to_proc_idx + 2;
             to_proc = (local_context->to_send_heri)[to_proc_idx];
-            // std::cout << "to_prcc: " << to_proc << ", from proc "<< *my_rank << std::endl;
-            from_proc = *my_rank;
+            // std::cout << "to_prcc: " << to_proc << ", from proc "<< my_rank << std::endl;
+            from_proc = my_rank;
 
-            send_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
+            send_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Send(
-                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[*my_rank]],
+                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
                 1,
                 MPI_FLOAT,
                 to_proc,
@@ -416,7 +416,7 @@ void communicate_halo_elements(
         for (IT from_proc_idx = 1; from_proc_idx < (local_context->local_needed_heri).size(); from_proc_idx += 3)
         {
             // How is this calculated, and is it totally necessary?
-            rows_in_from_proc = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+            rows_in_from_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
             to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
             from_proc = (local_context->local_needed_heri)[from_proc_idx];
@@ -424,7 +424,7 @@ void communicate_halo_elements(
 
             // NOTE: Source of uniqueness for tag
             // NOTE: essentially "transpose" shift array here
-            recv_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
+            recv_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
@@ -440,18 +440,18 @@ void communicate_halo_elements(
     }
     else if (typeid(VT) == typeid(double))
     {
-        rows_in_to_proc = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+        rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
         for (IT to_proc_idx = 0; to_proc_idx < (local_context->to_send_heri).size(); to_proc_idx += 3)
         {
             global_row_idx = to_proc_idx + 2;
             to_proc = (local_context->to_send_heri)[to_proc_idx];
-            from_proc = *my_rank;
+            from_proc = my_rank;
 
-            send_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
+            send_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Send(
-                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[*my_rank]],
+                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
                 1,
                 MPI_DOUBLE,
                 to_proc,
@@ -463,12 +463,12 @@ void communicate_halo_elements(
 
         for (IT from_proc_idx = 1; from_proc_idx < (local_context->local_needed_heri).size(); from_proc_idx += 3)
         {
-            rows_in_from_proc = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+            rows_in_from_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
             to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
             from_proc = (local_context->local_needed_heri)[from_proc_idx];
 
-            recv_shift = (local_context->shift_vec)[*comm_size * from_proc + to_proc];
+            recv_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
@@ -496,8 +496,8 @@ template <typename VT, typename IT>
 void adjust_halo_col_idxs(
     ScsData<VT, IT> *local_scs,
     const IT *work_sharing_arr,
-    const int *my_rank,
-    const int *comm_size)
+    int my_rank,
+    int comm_size)
 {
     IT remote_elem_count = 0;
     IT amnt_lhs_remote_elems = 0;
@@ -508,14 +508,14 @@ void adjust_halo_col_idxs(
     IT elem_idx;
 
     // TODO: Better to recalculate here? Or get from arguement?
-    IT amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+    IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
     std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
     std::vector<IT> col_all_inst_idx;
 
 
     if(show_steps){
-        if(*my_rank == test_rank){
+        if(my_rank == test_rank){
             std::cout << "column indices BEFORE adjustment: " << std::endl;
             for(int idx = 0; idx < local_scs->n_elements; ++idx){
                 std::cout << local_scs->col_idxs[idx] << std::endl;
@@ -530,19 +530,19 @@ void adjust_halo_col_idxs(
         // NOTE: Is this enough? Or do we also need local_scs->col_idxs[i] != 0?
         if (local_scs->values[i] != 0) // ignore padding
         {
-            if ((local_scs->col_idxs[i] >= work_sharing_arr[*my_rank]) && local_scs->col_idxs[i] < work_sharing_arr[*my_rank + 1])
+            if ((local_scs->col_idxs[i] >= work_sharing_arr[my_rank]) && local_scs->col_idxs[i] < work_sharing_arr[my_rank + 1])
             { // i.e. if local
-                local_scs->col_idxs[i] -= work_sharing_arr[*my_rank];
+                local_scs->col_idxs[i] -= work_sharing_arr[my_rank];
             }
         }
     }
 
     int lhs_halo_col_ctr = 0;
     // Proc 0 will never have LHS remote elements
-    if(*my_rank != 0)
+    if(my_rank != 0)
     {
         // start at the "left wall" of the matrix, and iterate columns until we reach local elements
-        for (int col = 0; col < work_sharing_arr[*my_rank]; ++col)
+        for (int col = 0; col < work_sharing_arr[my_rank]; ++col)
         {
             if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
             { // if there exists ANY element in this column...
@@ -578,9 +578,9 @@ void adjust_halo_col_idxs(
 
     int rhs_halo_col_ctr = 0;
     // Last proc will never have RHS remote elements
-    if(*my_rank != (*comm_size - 1)){
+    if(my_rank != (comm_size - 1)){
         // start at the "left wall" of the matrix, and iterate columns until we reach local elements
-        for (int col = work_sharing_arr[*my_rank + 1]; col < work_sharing_arr[*comm_size]; ++col)
+        for (int col = work_sharing_arr[my_rank + 1]; col < work_sharing_arr[comm_size]; ++col)
         {
             if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
             { // if there exists ANY element in this column...
@@ -613,7 +613,7 @@ void adjust_halo_col_idxs(
     }
 
     if(show_steps){
-        if(*my_rank == test_rank){
+        if(my_rank == test_rank){
             std::cout << "column indices AFTER adjustment: " << std::endl;
             for(int idx = 0; idx < local_scs->n_elements; ++idx){
                 std::cout << local_scs->col_idxs[idx] << std::endl;
@@ -635,7 +635,7 @@ void seg_work_sharing_arr(
     const MtxData<VT, IT> *total_mtx,
     IT *work_sharing_arr,
     const std::string *seg_method,
-    const IT *comm_size)
+    const IT comm_size)
 {
     work_sharing_arr[0] = 0;
 
@@ -646,18 +646,18 @@ void seg_work_sharing_arr(
         IT rowsPerProc;
 
         // Evenly split the number of rows
-        rowsPerProc = total_mtx->n_rows / *comm_size;
+        rowsPerProc = total_mtx->n_rows / comm_size;
 
         // Segment rows to work on via. array
-        for (segment = 1; segment < *comm_size + 1; ++segment)
+        for (segment = 1; segment < comm_size + 1; ++segment)
         {
             // Can only do this because of "constant sized" segments
             work_sharing_arr[segment] = segment * rowsPerProc;
-            if (segment == *comm_size)
+            if (segment == comm_size)
             {
                 // Set the last element to point to directly after the final row
                 // (takes care of remainder rows)
-                work_sharing_arr[*comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
+                work_sharing_arr[comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
             }
         }
     }
@@ -666,7 +666,7 @@ void seg_work_sharing_arr(
         IT nnzPerProc; //, remainderNnz;
 
         // Split the number of rows based on non zeros
-        nnzPerProc = total_mtx->nnz / *comm_size;
+        nnzPerProc = total_mtx->nnz / comm_size;
 
         IT global_ctr, local_ctr;
         segment = 1;
@@ -687,12 +687,12 @@ void seg_work_sharing_arr(
         }
         // Set the last element to point to directly after the final row
         // (takes care of remainder rows)
-        work_sharing_arr[*comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
+        work_sharing_arr[comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
     }
 
     // Protect against edge case, where last process gets no work
-    if(work_sharing_arr[*comm_size] == work_sharing_arr[*comm_size + 1]){
-        for(IT loop_rank = 1; loop_rank < *comm_size; ++loop_rank){
+    if(work_sharing_arr[comm_size] == work_sharing_arr[comm_size + 1]){
+        for(IT loop_rank = 1; loop_rank < comm_size; ++loop_rank){
             work_sharing_arr[loop_rank] -= 1;
         }
     }
@@ -793,8 +793,8 @@ void mpi_init_local_structs(
     Config *config, // shouldn't this be const?
     const std::string *seg_method,
     IT *work_sharing_arr,
-    const IT *my_rank,
-    const IT *comm_size)
+    const IT my_rank,
+    const IT comm_size)
 {
     MtxData<VT, IT> local_mtx;
 
@@ -807,7 +807,7 @@ void mpi_init_local_structs(
 
     IT msg_length;
 
-    if (*my_rank == 0)
+    if (my_rank == 0)
     {
         // Segment global row pointers, and place into an array
         seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size);
@@ -815,7 +815,7 @@ void mpi_init_local_structs(
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
         // STRONG CONTENDER FOR PRAGMA PARALELL
-        for (IT loop_rank = 0; loop_rank < *comm_size; ++loop_rank)
+        for (IT loop_rank = 0; loop_rank < comm_size; ++loop_rank)
         { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
 
             std::vector<IT> local_I;
@@ -823,10 +823,13 @@ void mpi_init_local_structs(
             std::vector<VT> local_vals; // an attempt to not have so much resizing in seg_mtx_struct
 
             // Assign rows, columns, and values to process local vectors
-            if(config->log_prof && *my_rank == 0) {log("Begin seg_mtx_struct");}
+            if(config->log_prof && my_rank == 0) {log("Begin seg_mtx_struct");}
             double begin_smtxs_time = MPI_Wtime();
             seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
-            if(config->log_prof && *my_rank == 0) {log("Finish seg_mtx_struct", begin_smtxs_time, MPI_Wtime());}
+            if(config->log_prof && my_rank == 0) {log("Finish seg_mtx_struct", begin_smtxs_time, MPI_Wtime());}
+
+            // Give the total nnz count to root process
+            local_context->total_nnz = total_mtx->nnz;
 
             // Count the number of rows in each processes
             IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();
@@ -870,7 +873,7 @@ void mpi_init_local_structs(
             }
         }
     }
-    else if (*my_rank != 0)
+    else if (my_rank != 0)
     {
         // TODO: should these be blocking?
         // First, recieve BK struct
@@ -924,26 +927,34 @@ void mpi_init_local_structs(
     // assign local row ptrs to struct
     local_mtx.I = local_row_coords;
 
+    // just let every process know the total number of nnz.
+    // TODO: necessary?
+    MPI_Bcast(&(local_context->total_nnz),
+            1,
+            MPI_INT,
+            0,
+            MPI_COMM_WORLD);
+
     // Broadcast work sharing array to other processes
     MPI_Bcast(work_sharing_arr,
-              *comm_size + 1,
+              comm_size + 1,
               MPI_INT,
               0,
               MPI_COMM_WORLD);
 
     // convert local_mtx to local_scs
-    if(config->log_prof && *my_rank == 0) {log("Begin convert_to_scs");}
+    if(config->log_prof && my_rank == 0) {log("Begin convert_to_scs");}
     double begin_ctscs_time = MPI_Wtime();
-    convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, *my_rank);
-    if(config->log_prof && *my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, MPI_Wtime());}
+    convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+    if(config->log_prof && my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, MPI_Wtime());}
 
     MPI_Type_free(&bk_type);
 
     std::vector<IT> local_needed_heri;
-    if(config->log_prof && *my_rank == 0) {log("Begin collect_local_needed_heri");}
+    if(config->log_prof && my_rank == 0) {log("Begin collect_local_needed_heri");}
     double begin_clnh_time = MPI_Wtime();
     collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
-    if(config->log_prof && *my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, MPI_Wtime());}
+    if(config->log_prof && my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, MPI_Wtime());}
 
     IT local_needed_heri_size = local_needed_heri.size();
     IT global_needed_heri_size;
@@ -966,7 +977,7 @@ void mpi_init_local_structs(
 
     // "to_send_heri" are all halo elements that this process is to send
     std::vector<IT> to_send_heri;
-    if(config->log_prof && *my_rank == 0) {log("Begin collect_to_send_heri");}
+    if(config->log_prof && my_rank == 0) {log("Begin collect_to_send_heri");}
     double begin_ctsh_time = MPI_Wtime();
     collect_to_send_heri<IT>(
         &to_send_heri,
@@ -975,16 +986,16 @@ void mpi_init_local_structs(
         my_rank,
         comm_size
     );
-    if(config->log_prof && *my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, MPI_Wtime());}
+    if(config->log_prof && my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, MPI_Wtime());}
 
 
     // The shift array is used in the tag-generation scheme in halo communication.
     // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
     // after the local element index to make for the incoming halo elements
-    std::vector<IT> shift_arr((*comm_size) * (*comm_size), 0);
-    std::vector<IT> incidence_arr((*comm_size) * (*comm_size), 0);
+    std::vector<IT> shift_arr((comm_size) * (comm_size), 0);
+    std::vector<IT> incidence_arr((comm_size) * (comm_size), 0);
 
-    if(config->log_prof && *my_rank == 0) {log("Begin calc_heri_shifts");}
+    if(config->log_prof && my_rank == 0) {log("Begin calc_heri_shifts");}
     double begin_chs_time = MPI_Wtime();
     calc_heri_shifts<IT>(
         global_needed_heri, 
@@ -993,13 +1004,13 @@ void mpi_init_local_structs(
         &incidence_arr, 
         comm_size
     ); // NOTE: always symmetric?
-    if(config->log_prof && *my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, MPI_Wtime());}
+    if(config->log_prof && my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, MPI_Wtime());}
 
     local_context->local_needed_heri = local_needed_heri;
     local_context->to_send_heri = to_send_heri;
     local_context->shift_vec = shift_arr;
     local_context->incidence_vec = incidence_arr;
-    local_context->amnt_local_elems = work_sharing_arr[*my_rank + 1] - work_sharing_arr[*my_rank];
+    local_context->amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
     local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
 
     delete[] global_needed_heri;

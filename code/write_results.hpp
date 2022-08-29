@@ -10,7 +10,7 @@ void write_bench_to_file(
     Config *config,
     Result<VT, IT> *r,
     const double *total_walltimes,
-    const int *comm_size
+    int comm_size
 ){
     std::fstream working_file;
     int width = 32;
@@ -19,7 +19,7 @@ void write_bench_to_file(
 
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
+    working_file << *matrix_file_name << " with " << comm_size << " MPI processes" << std::endl; 
     working_file << "C: " << config->chunk_size << ", data_type: " <<
     typeid(VT).name() << ", repetitions: " << r->n_calls << ", comm_halos: " << config->comm_halos << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
@@ -30,7 +30,7 @@ void write_bench_to_file(
     //                 std::left << std::setw(width) << "--------------------------" << std::endl;
 
     // Print Flops per MPI process
-    // for(int proc = 0; proc < *comm_size; ++proc){
+    // for(int proc = 0; proc < comm_size; ++proc){
     //     working_file << std::left << std::setprecision(16) << std::setw(0) << "Proc " <<
     //                     std::left << std::setw(0) << proc << ": " <<
     //                     std::left << std::setw(width) << r->perfs_from_procs[proc] <<
@@ -43,7 +43,7 @@ void write_bench_to_file(
 
     // double sum_flops = std::accumulate(r->perfs_from_procs.begin(), r->perfs_from_procs.end(), 0.0);
     
-    // working_file << sum_flops / (double)*comm_size << " MF/s" << std::endl;
+    // working_file << sum_flops / (double)comm_size << " MF/s" << std::endl;
 
     working_file << std::left << std::setw(width) << "Total Gflops:" <<
                     std::left << std::setw(width) << "Total Walltime:" << std::endl;
@@ -75,7 +75,7 @@ void write_dp_result_to_file(
     Config *config,
     Result<double, int> *r,
     std::vector<double> *x,
-    const int *comm_size
+    int comm_size
 
 ){
     int width;
@@ -95,7 +95,7 @@ void write_dp_result_to_file(
 
     // Print parameters
     working_file.open(config->output_filename_dp, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
+    working_file << *matrix_file_name << " with " << comm_size << " MPI processes" << std::endl; 
     working_file << "C: " << config->chunk_size << ", data_type: " <<
     'd' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
@@ -213,7 +213,7 @@ void write_sp_result_to_file(
     Config *config,
     Result<float, int> *r,
     std::vector<float> *x,
-    const int *comm_size
+    int comm_size
 ){
 
     int width;
@@ -233,7 +233,7 @@ void write_sp_result_to_file(
 
     // Print parameters
     working_file.open(config->output_filename_sp, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with " << *comm_size << " MPI processes" << std::endl; 
+    working_file << *matrix_file_name << " with " << comm_size << " MPI processes" << std::endl; 
     working_file << "C: " << config->chunk_size << ", data_type: " <<
     'f' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;

@@ -46,6 +46,7 @@ struct ContextData
 
     IT amnt_local_elems;
     IT scs_padding;
+    IT total_nnz;
 
     // what else?
 };
