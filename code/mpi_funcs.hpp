@@ -1,13 +1,98 @@
 #ifndef MPI_FUNCS
 #define MPI_FUNCS
 
-#include "structs.hpp"
+#include <unordered_map>
+#include <unordered_set>
+#include <numeric>
+#include <map>
 
-#include <vector>
-#include <tuple>
-#include <algorithm>
+#include "classes_structs.hpp"
+
 #include <set>
-#include <mpi.h>
+
+template <typename VT, typename IT>
+void gen_halo_hms(
+    ScsData<VT, IT> *local_scs,
+    std::unordered_map<int, int> *lhs_halo_hm,
+    std::unordered_map<int, int> *rhs_halo_hm,
+    std::vector<IT> *original_col_idxs,
+    const IT *work_sharing_arr,
+    int my_rank,
+    int comm_size
+){
+    
+    IT remote_elem_count = 0;
+    IT amnt_lhs_remote_elems = 0;
+    IT amnt_rhs_remote_elems = 0;
+    IT exists_nz_elem;
+
+    std::unordered_set<IT> original_col_idxs_uset(original_col_idxs->begin(), original_col_idxs->end());
+    IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+
+    int lhs_halo_col_ctr = 0;
+    exists_nz_elem = 0;
+
+    // Proc 0 will never have LHS remote elements
+    if(my_rank != 0)
+    {
+        // start at the "left wall" of the matrix, and iterate columns until we reach local elements
+        for (int col = 0; col < work_sharing_arr[my_rank]; ++col)
+        {
+            // exists_nz_elem = 0;
+            if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
+             // if there exists ANY element in this column...
+
+                // First need to know if there are any non zero elements with nonzero value 
+                for(auto idx : find_items<IT>(*original_col_idxs, col))
+                {
+                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
+                    {
+                        exists_nz_elem = 1;
+                        break;
+                    }
+                }
+                // Then, if a nonzero element does exist in this column, assign to hm (this column idx : new column idx)
+                if(exists_nz_elem)
+                { // and if this element is not padding
+                    (*lhs_halo_hm)[col] = amnt_local_elems + lhs_halo_col_ctr;
+                    ++lhs_halo_col_ctr;
+                    exists_nz_elem = 0;
+                }
+            }
+        }   
+    }
+
+
+    int rhs_halo_col_ctr = 0;
+    exists_nz_elem = 0;
+    // Last proc will never have RHS remote elements
+    if(my_rank != (comm_size - 1)){
+        // start at the "right wall" of the local matrix, and iterate columns until we reach right wall of the local_scs 
+        for (int col = work_sharing_arr[my_rank + 1]; col < work_sharing_arr[comm_size]; ++col)
+        {
+            // exists_nz_elem = 0;
+            if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
+             // if there exists ANY element in this column...
+
+                for(auto idx : find_items<IT>(*original_col_idxs, col))
+                {
+                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
+                    {
+                        exists_nz_elem = 1;
+                        break;
+                    }
+                }
+
+                if(exists_nz_elem)
+                {
+                    (*rhs_halo_hm)[col] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                    ++rhs_halo_col_ctr;
+                    exists_nz_elem = 0;
+                }
+            }
+        }   
+    }
+}
 
 /**
     Collect the row indicies of the halo elements needed for THIS process, which is used to generate a valid local_x to perform the SPMVM.
@@ -16,49 +101,56 @@
 
     @brief Collect the row indicies of the halo elements needed for this process
     @param *local_needed_heri : pointer to vector that contains encoded 3-tuples of the form (proc_to, proc_from, global_row_idx)
-    @param *local_mtx : pointer to local mtx struct
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *local_scs : pointer to local scs struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template <typename VT, typename IT>
 void collect_local_needed_heri(
     std::vector<IT> *local_needed_heri,
-    const MtxData<VT, IT> *local_mtx,
-    const IT *work_sharing_arr)
+    ScsData<VT, IT> *local_scs,
+    const IT *work_sharing_arr,
+    int my_rank,
+    int comm_size)
 {
-    // TODO: better to pass as args to function?
-    IT my_rank, comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-
     IT from_proc, to_proc;
     IT total_x_row_idx, remote_elem_candidate_col, elem_col, remote_elem_col;
     IT needed_heri_count = 0;
+    IT amnt_lhs_halo_elems = 0;
 
     // To remember which columns have already been accounted for
-    std::vector<int> remote_elem_col_bk;
+    std::unordered_set<IT> remote_elem_col_bk;
     std::tuple<IT, IT, IT> heri_tuple;
     std::tuple<IT, IT, IT> inner_tuple;
     std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
     std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
+    std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
 
-    for (IT i = 0; i < local_mtx->nnz; ++i)
+    std::unordered_map<int, int> lhs_halo_hm;
+    std::unordered_map<int, int> rhs_halo_hm;
+    gen_halo_hms<VT, IT>(local_scs, &lhs_halo_hm, &rhs_halo_hm, &original_col_idxs, work_sharing_arr, my_rank, comm_size);
+
+
+    for (IT i = 0; i < local_scs->n_elements; ++i)
     {
         // If true, this is a remote element, and needs to be added to vector
-        elem_col = local_mtx->J[i];
-        // Avoids double-adding the same column
-        // if (!std::contains(remote_elem_col_bk, elem_col)){
-        if (!(std::find(remote_elem_col_bk.begin(), remote_elem_col_bk.end(), elem_col) != remote_elem_col_bk.end()))
-        {
-            if (local_mtx->J[i] < work_sharing_arr[my_rank] || local_mtx->J[i] > work_sharing_arr[my_rank + 1] - 1)
-            { // i.e. if remote element
-                remote_elem_col = local_mtx->J[i];
+        elem_col = local_scs->col_idxs[i];
+
+        // if this column corresponds to a padded element, continue to next nnz
+        if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
+
+        if (elem_col < work_sharing_arr[my_rank])
+        { // if LHS remote element
+            if(!(remote_elem_col_bk.find(elem_col) != remote_elem_col_bk.end())){
+                // if this column has not yet been seen
+                remote_elem_col = elem_col;
+                // First, determine which rank this needed element will come from
                 // The rank of where this needed element resides is deduced from the work sharing array.
                 for (IT j = 0; j < comm_size; ++j)
                 {
                     if (remote_elem_col >= work_sharing_arr[j] && remote_elem_col < work_sharing_arr[j + 1])
                     {
                         // Remember column corresponding to remote element
-                        remote_elem_col_bk.push_back(remote_elem_col);
+                        remote_elem_col_bk.insert(remote_elem_col);
 
                         // Just to make process more clear
                         from_proc = j;
@@ -76,11 +168,48 @@ void collect_local_needed_heri(
                     }
                 }
             }
+            local_scs->col_idxs[i] = lhs_halo_hm[original_col_idxs[i]];
+
+        }
+        else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
+        { // i.e. if RHS remote element
+            if(!(remote_elem_col_bk.find(elem_col) != remote_elem_col_bk.end())){
+                // if this column has not yet been seen
+                remote_elem_col = elem_col;
+                // The rank of where this needed element resides is deduced from the work sharing array.
+                for (IT j = 0; j < comm_size; ++j)
+                {
+                    if (remote_elem_col >= work_sharing_arr[j] && remote_elem_col < work_sharing_arr[j + 1])
+                    {
+                        // Remember column corresponding to remote element
+                        remote_elem_col_bk.insert(remote_elem_col);
+
+                        // Just to make process more clear
+                        from_proc = j;
+                        to_proc = my_rank;
+
+                        // The heri tuple, which is then used inside another tuple for ordering later
+                        heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
+
+                        unordered_heri_tuple = std::make_tuple(remote_elem_col, heri_tuple);
+
+                        unordered_heri_tuples_vec.push_back(unordered_heri_tuple);
+
+                        ++needed_heri_count;
+                        break;
+                    }
+                }
+
+            }
+            local_scs->col_idxs[i] = rhs_halo_hm[original_col_idxs[i]];
+        }
+        else
+        { // i.e. local element
+            local_scs->col_idxs[i] -= work_sharing_arr[my_rank];
         }
     }
 
     std::sort(unordered_heri_tuples_vec.begin(), unordered_heri_tuples_vec.end());
-    MPI_Barrier(MPI_COMM_WORLD);
 
     for(auto& tuple : unordered_heri_tuples_vec){
         inner_tuple = std::get<1>(tuple);
@@ -88,7 +217,6 @@ void collect_local_needed_heri(
         local_needed_heri->push_back(std::get<1>(inner_tuple));
         local_needed_heri->push_back(std::get<2>(inner_tuple));
     }
-
 }
 
 /**
@@ -101,12 +229,10 @@ template <typename IT>
 void collect_to_send_heri(
     std::vector<IT> *to_send_heri,
     const std::vector<IT> *local_needed_heri,
-    IT *global_needed_heri)
+    IT *global_needed_heri,
+    int my_rank,
+    int comm_size)
 {
-    IT my_rank, comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-
     std::tuple<IT, IT, IT> heri_tuple;
     std::tuple<IT, IT, IT> inner_tuple;
     std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
@@ -174,21 +300,13 @@ void collect_to_send_heri(
     }
 
     std::sort(unordered_heri_tuples_vec.begin(), unordered_heri_tuples_vec.end());
-    MPI_Barrier(MPI_COMM_WORLD);
 
     for(auto& tuple : unordered_heri_tuples_vec){
         inner_tuple = std::get<1>(tuple);
         to_send_heri->push_back(std::get<0>(inner_tuple));
         to_send_heri->push_back(std::get<1>(inner_tuple));
         to_send_heri->push_back(std::get<2>(inner_tuple));
-
-        // if(my_rank == 0){
-        //     std::cout << "To proc: " << std::get<0>(inner_tuple) <<
-        //      ", we send the heri idx: " << std::get<2>(inner_tuple) << std::endl;
-        // }
     }
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 }
 
 /**
@@ -203,13 +321,10 @@ template <typename IT>
 void calc_heri_shifts(
     const IT *global_needed_heri,
     const IT *global_needed_heri_size,
-    IT *shift_arr,
-    IT *incidence_arr)
+    std::vector<IT> *shift_arr,
+    std::vector<IT> *incidence_arr,
+    int comm_size)
 {
-    IT comm_size, my_rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-
     IT current_row, current_col, from_proc, to_proc;
 
     for (IT i = 0; i < *global_needed_heri_size; i += 3)
@@ -217,7 +332,7 @@ void calc_heri_shifts(
         to_proc = global_needed_heri[i];
         from_proc = global_needed_heri[i + 1];
 
-        incidence_arr[comm_size * from_proc + to_proc] += 1;
+        (*incidence_arr)[comm_size * from_proc + to_proc] += 1;
     }
 
     for (IT row = 1; row < comm_size; ++row)
@@ -227,7 +342,7 @@ void calc_heri_shifts(
         {
             for (IT col = 0; col < comm_size; ++col)
             {
-                shift_arr[comm_size * (row + i) + col] += incidence_arr[comm_size * (row - 1) + col];
+                (*shift_arr)[comm_size * (row + i) + col] += (*incidence_arr)[comm_size * (row - 1) + col];
             }
         }
     }
@@ -242,31 +357,23 @@ void calc_heri_shifts(
         Since this function is in the benchmark loop, need to do as little work possible, ideally.
 
     @brief Communicate the halo elements to and from the local x-vectors
-    @param *local_needed_heri : the heri needed by this process
-    @param *to_send_heri : heri to send from this process
+    @param *local_context : 
     @param *local_x : the x vector corresponding to this process before the halo elements are communicated to it.
-        one can think of this as the partition of the "global x vector" corresponding to the rows of the local_mtx struct
-    @param *shift_arr : Essentially a cumulative from top -> bottom of incedence_arr. The row idx is the "from_proc",
-        the column is the "to_proc", and the element is the shift after the local element index to make for the incoming halo elements
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template <typename VT, typename IT>
 void communicate_halo_elements(
-    const std::vector<IT> *local_needed_heri,
-    const std::vector<IT> *to_send_heri,
+    ContextData<IT> *local_context,
     std::vector<VT> *local_x,
-    const IT *shift_arr,
-    const IT *work_sharing_arr)
+    const IT *work_sharing_arr,
+    int my_rank,
+    int comm_size)
 {
-    // TODO: better to pass as args to function?
-    IT my_rank, comm_size;
     IT rows_in_to_proc, rows_in_from_proc, to_proc, from_proc, global_row_idx, num_local_elems;
     IT recv_shift = 0, send_shift = 0; // TODO: calculate more efficiently
     IT recieved_elems = 0, sent_elems = 0;
     IT test_rank = 1;
 
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     // MPI_Request request; // TODO: What does this do?
     MPI_Status status;
 
@@ -274,6 +381,7 @@ void communicate_halo_elements(
     // recieved or sent to respective procs
     IT recv_counts[comm_size];
     IT send_counts[comm_size];
+
     for (IT i = 0; i < comm_size; ++i)
     {
         recv_counts[i] = 0;
@@ -285,43 +393,38 @@ void communicate_halo_elements(
     {
         // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
         rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-        for (IT to_proc_idx = 0; to_proc_idx < to_send_heri->size(); to_proc_idx += 3)
+        for (IT to_proc_idx = 0; to_proc_idx < (local_context->to_send_heri).size(); to_proc_idx += 3)
         {
             global_row_idx = to_proc_idx + 2;
-            to_proc = (*to_send_heri)[to_proc_idx];
+            to_proc = (local_context->to_send_heri)[to_proc_idx];
+            // std::cout << "to_prcc: " << to_proc << ", from proc "<< my_rank << std::endl;
             from_proc = my_rank;
 
-            send_shift = shift_arr[comm_size * from_proc + to_proc];
-
-            // std::cout << "Sending: " << (*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]] << " to " <<to_proc << std::endl;
+            send_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Send(
-                &(*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
+                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
                 1,
                 MPI_FLOAT,
                 to_proc,
                 send_shift + send_counts[to_proc],
                 MPI_COMM_WORLD);
 
-            // if (my_rank == test_rank)
-            // {
-            //     float data =  (*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]]; // assume this is the correct data to send for now
-            //     std::cout << "Proc: " << my_rank << " sends to " << to_proc << " the data " << data << " with a tag of " << send_shift + send_counts[to_proc] << std::endl;
-            // }
             ++send_counts[to_proc];
         }
         // TODO: definetly OpenMP this loop? Improve somehow
-        for (IT from_proc_idx = 1; from_proc_idx < local_needed_heri->size(); from_proc_idx += 3)
+        for (IT from_proc_idx = 1; from_proc_idx < (local_context->local_needed_heri).size(); from_proc_idx += 3)
         {
             // How is this calculated, and is it totally necessary?
             rows_in_from_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
-            to_proc = (*local_needed_heri)[from_proc_idx - 1];
-            from_proc = (*local_needed_heri)[from_proc_idx];
+            to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
+            from_proc = (local_context->local_needed_heri)[from_proc_idx];
+
 
             // NOTE: Source of uniqueness for tag
             // NOTE: essentially "transpose" shift array here
-            recv_shift = shift_arr[comm_size * from_proc + to_proc];
+            recv_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
@@ -332,10 +435,6 @@ void communicate_halo_elements(
                 MPI_COMM_WORLD,
                 &status);
 
-            // if(my_rank == test_rank){
-            //     std::cout << "Proc " << my_rank << " asks for tag " << recv_shift + recv_counts[from_proc] << " from " << from_proc << std::endl;
-            // }
-
             ++recv_counts[from_proc];
         }
     }
@@ -343,16 +442,16 @@ void communicate_halo_elements(
     {
         rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
-        for (IT to_proc_idx = 0; to_proc_idx < to_send_heri->size(); to_proc_idx += 3)
+        for (IT to_proc_idx = 0; to_proc_idx < (local_context->to_send_heri).size(); to_proc_idx += 3)
         {
             global_row_idx = to_proc_idx + 2;
-            to_proc = (*to_send_heri)[to_proc_idx];
+            to_proc = (local_context->to_send_heri)[to_proc_idx];
             from_proc = my_rank;
 
-            send_shift = shift_arr[comm_size * from_proc + to_proc];
+            send_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Send(
-                &(*local_x)[(*to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
+                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
                 1,
                 MPI_DOUBLE,
                 to_proc,
@@ -362,23 +461,14 @@ void communicate_halo_elements(
             ++send_counts[to_proc];
         }
 
-        for (IT from_proc_idx = 1; from_proc_idx < local_needed_heri->size(); from_proc_idx += 3)
+        for (IT from_proc_idx = 1; from_proc_idx < (local_context->local_needed_heri).size(); from_proc_idx += 3)
         {
             rows_in_from_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
-            to_proc = (*local_needed_heri)[from_proc_idx - 1];
-            from_proc = (*local_needed_heri)[from_proc_idx];
+            to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
+            from_proc = (local_context->local_needed_heri)[from_proc_idx];
 
-            recv_shift = shift_arr[comm_size * from_proc + to_proc];
-
-            // MPI_Irecv(
-            //     &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
-            //     1,
-            //     MPI_DOUBLE,
-            //     from_proc,
-            //     recv_shift + recv_counts[from_proc],
-            //     MPI_COMM_WORLD,
-            //     &request);
+            recv_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
 
             MPI_Recv(
                 &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
@@ -399,21 +489,16 @@ void communicate_halo_elements(
         "local" elements of scs.values have their col_idx adjusted differently than "remote" elements of scs.values.
 
     @brief Adjust the col_idx from the scs data structure
-    @param *local_mtx : Very similar to the original mtx struct, but constructed here with row, col, and value data sent to this particular process.
-    @param *scs : struct that contains the local_mtx struct data, where row idx, col idx, etc. adjusted to sell-c-sigma format
-    @param *amnt_local_elements : the length of local_x before halo elements are communicated to it
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *local_scs : pointer to local scs struct
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template <typename VT, typename IT>
 void adjust_halo_col_idxs(
-    MtxData<VT, IT> *local_mtx,
-    ScsData<VT, IT> *scs,
-    const IT *amnt_local_elements,
-    const IT *work_sharing_arr)
+    ScsData<VT, IT> *local_scs,
+    const IT *work_sharing_arr,
+    int my_rank,
+    int comm_size)
 {
-    IT my_rank, comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
     IT remote_elem_count = 0;
     IT amnt_lhs_remote_elems = 0;
     IT amnt_rhs_remote_elems = 0;
@@ -422,26 +507,32 @@ void adjust_halo_col_idxs(
     IT idx_ctr;
     IT elem_idx;
 
-    std::vector<IT> original_col_idxs(scs->col_idxs.data(), scs->col_idxs.data() + scs->n_elements);
+    // TODO: Better to recalculate here? Or get from arguement?
+    IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+
+    std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
+    std::vector<IT> col_all_inst_idx;
+
 
     if(show_steps){
         if(my_rank == test_rank){
             std::cout << "column indices BEFORE adjustment: " << std::endl;
-            for(int idx = 0; idx < scs->n_elements; ++idx){
-                std::cout << scs->col_idxs[idx] << std::endl;
+            for(int idx = 0; idx < local_scs->n_elements; ++idx){
+                std::cout << local_scs->col_idxs[idx] << std::endl;
             }
             printf("\n");
         }
     }
 
-    // Then, reindex LOCAL elements
-    for (IT i = 0; i < scs->n_elements; ++i)
+    // #pragma omp parallel for
+    for (IT i = 0; i < local_scs->n_elements; ++i)
     {
-        if (scs->values[i] != 0) // ignore padding
+        // NOTE: Is this enough? Or do we also need local_scs->col_idxs[i] != 0?
+        if (local_scs->values[i] != 0) // ignore padding
         {
-            if ((scs->col_idxs[i] >= work_sharing_arr[my_rank]) && scs->col_idxs[i] < work_sharing_arr[my_rank + 1])
-            {
-                scs->col_idxs[i] -= work_sharing_arr[my_rank];
+            if ((local_scs->col_idxs[i] >= work_sharing_arr[my_rank]) && local_scs->col_idxs[i] < work_sharing_arr[my_rank + 1])
+            { // i.e. if local
+                local_scs->col_idxs[i] -= work_sharing_arr[my_rank];
             }
         }
     }
@@ -455,31 +546,30 @@ void adjust_halo_col_idxs(
         {
             if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
             { // if there exists ANY element in this column...
-                idx_ctr = 0;
-                for(auto elem : original_col_idxs)
+
+                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
+
+                for(auto idx : col_all_inst_idx)
                 {
-                    if(elem == col && scs->values[idx_ctr] != 0)
+                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                     {
-                        exists_nz_elem = 1;
+                        exists_nz_elem = 1; // is this harness loop necessary?
                         break;
                     }
-                    // elem_idx = get_index(original_col_idxs, elem);
-                    ++idx_ctr; // incremenet the corresponding index
                 }
 
                 if(exists_nz_elem)
                 { // and if this element is not padding
-                    idx_ctr = 0;
-                    for(auto elem : original_col_idxs)
-                    { // 
-                        if(elem == col && scs->values[idx_ctr] != 0)
+                    // #pragma omp parallel for
+                    for(auto idx : col_all_inst_idx)
+                    {
+                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0) //second condition needed?
                         {
-                            scs->col_idxs[idx_ctr] = *amnt_local_elements + lhs_halo_col_ctr;
+                            local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
                         }
-                        ++idx_ctr;
                     }
-                    // If at least one nonzero element exists in this column, increment counter
-                    ++lhs_halo_col_ctr;
+                // If at least one nonzero element exists in this column, increment counter
+                ++lhs_halo_col_ctr;
                 }
             }
         }   
@@ -494,28 +584,26 @@ void adjust_halo_col_idxs(
         {
             if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
             { // if there exists ANY element in this column...
-                idx_ctr = 0;
-                for(auto elem : original_col_idxs)
+                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
+
+                for(auto idx : col_all_inst_idx)
                 {
-                    if(elem == col && scs->values[idx_ctr] != 0)
+                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                     {
                         exists_nz_elem = 1;
                         break;
                     }
-                    // elem_idx = get_index(original_col_idxs, elem);
-                    ++idx_ctr; // incremenet the corresponding index
                 }
 
                 if(exists_nz_elem)
                 { // and if this element is not padding
-                    idx_ctr = 0;
-                    for(auto elem : original_col_idxs)
-                    { // 
-                        if(elem == col && scs->values[idx_ctr] != 0)
+                    // #pragma omp parallel for
+                    for(auto idx : col_all_inst_idx)
+                    {
+                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
                         {
-                            scs->col_idxs[idx_ctr] = *amnt_local_elements + lhs_halo_col_ctr + rhs_halo_col_ctr;
+                            local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
                         }
-                        ++idx_ctr;
                     }
                     // If at least one element exists in this column, increment counter
                     ++rhs_halo_col_ctr;
@@ -527,8 +615,8 @@ void adjust_halo_col_idxs(
     if(show_steps){
         if(my_rank == test_rank){
             std::cout << "column indices AFTER adjustment: " << std::endl;
-            for(int idx = 0; idx < scs->n_elements; ++idx){
-                std::cout << scs->col_idxs[idx] << std::endl;
+            for(int idx = 0; idx < local_scs->n_elements; ++idx){
+                std::cout << local_scs->col_idxs[idx] << std::endl;
             }
             printf("\n");
         }
@@ -538,14 +626,13 @@ void adjust_halo_col_idxs(
 /**
     @brief Partition the rows of the mtx structure, so that work is disributed (somewhat) evenly. The two options "seg-rows"
         and "seg-nnz" are there in an effort to have multiple load balancing techniques the segment work between processes.
-    @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
+    @param *total_mtx : data structure that was populated by the matrix market format reader mtx_reader.h
+    @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param comm_size : size of mpi communicator
 */
 template <typename VT, typename IT>
 void seg_work_sharing_arr(
-    const MtxData<VT, IT> *mtx,
+    const MtxData<VT, IT> *total_mtx,
     IT *work_sharing_arr,
     const std::string *seg_method,
     const IT comm_size)
@@ -559,7 +646,7 @@ void seg_work_sharing_arr(
         IT rowsPerProc;
 
         // Evenly split the number of rows
-        rowsPerProc = mtx->n_rows / comm_size;
+        rowsPerProc = total_mtx->n_rows / comm_size;
 
         // Segment rows to work on via. array
         for (segment = 1; segment < comm_size + 1; ++segment)
@@ -570,7 +657,7 @@ void seg_work_sharing_arr(
             {
                 // Set the last element to point to directly after the final row
                 // (takes care of remainder rows)
-                work_sharing_arr[comm_size] = mtx->I[mtx->nnz - 1] + 1;
+                work_sharing_arr[comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
             }
         }
     }
@@ -579,37 +666,36 @@ void seg_work_sharing_arr(
         IT nnzPerProc; //, remainderNnz;
 
         // Split the number of rows based on non zeros
-        nnzPerProc = mtx->nnz / comm_size;
-        // remainderNnz = mtx.nnz % nnzPerProc;
+        nnzPerProc = total_mtx->nnz / comm_size;
 
         IT global_ctr, local_ctr;
         segment = 1;
         local_ctr = 0;
 
         // Segment rows to work on via. array
-        for (global_ctr = 0; global_ctr < mtx->nnz; ++global_ctr)
+        for (global_ctr = 0; global_ctr < total_mtx->nnz; ++global_ctr)
         {
             if (local_ctr == nnzPerProc)
             {
                 // Assign rest of the current row to this segment
-                work_sharing_arr[segment] = mtx->I[global_ctr] + 1;
+                work_sharing_arr[segment] = total_mtx->I[global_ctr] + 1;
                 ++segment;
                 local_ctr = 0;
                 continue;
             }
             ++local_ctr;
         }
-        // Set the last element to poIT to directly after the final row
+        // Set the last element to point to directly after the final row
         // (takes care of remainder rows)
-        work_sharing_arr[comm_size] = mtx->I[mtx->nnz - 1] + 1;
+        work_sharing_arr[comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
     }
 
     // Protect against edge case, where last process gets no work
-    // if(work_sharing_arr[comm_size] == work_sharing_arr[comm_size]){
-    //     for(IT loop_rank = 1; loop_rank < comm_size; ++loop_rank){
-    //         work_sharing_arr[loop_rank] -= 1;
-    //     }
-    // }
+    if(work_sharing_arr[comm_size] == work_sharing_arr[comm_size + 1]){
+        for(IT loop_rank = 1; loop_rank < comm_size; ++loop_rank){
+            work_sharing_arr[loop_rank] -= 1;
+        }
+    }
 }
 
 /**
@@ -617,7 +703,7 @@ void seg_work_sharing_arr(
         The idea is to reconstruct into local mtx structures on each process after communication.
 
     @brief Collect indices into local vectors
-    @param *mtx : data structure that was populated by the matrix market format reader mtx-reader.h
+    @param *total_mtx : data structure that was populated by the matrix market format reader mtx_reader.h
     @param *local_I : pointer to the vector to contain the row idx data, taken from original mtx struct
     @param *local_J : pointer to the vector to contain the col idx data, taken from original mtx struct
     @param *local_vals : pointer to the vector to contain the value data, taken from original mtx struct
@@ -626,7 +712,7 @@ void seg_work_sharing_arr(
 */
 template <typename VT, typename IT>
 void seg_mtx_struct(
-    const MtxData<VT, IT> *mtx,
+    const MtxData<VT, IT> *total_mtx,
     std::vector<IT> *local_I,
     std::vector<IT> *local_J,
     std::vector<VT> *local_vals,
@@ -636,37 +722,30 @@ void seg_mtx_struct(
     IT start_idx, run_idx, finish_idx;
     IT next_row;
 
-    // Assign rows, columns, and values to process local vectors
-    for (IT row = work_sharing_arr[loop_rank]; row < work_sharing_arr[loop_rank + 1]; ++row)
+    // Return the first instance of that row present in mtx.
+    start_idx = get_index<IT>(total_mtx->I, work_sharing_arr[loop_rank]);
+
+    // once we have the index of the first instance of the row,
+    // we calculate the index of the first instance of the next row
+    if (work_sharing_arr[loop_rank + 1] != total_mtx->n_rows)
     {
-        next_row = row + 1;
-
-        // Return the first instance of that row present in mtx.
-        start_idx = get_index<IT>(mtx->I, row);
-
-        // once we have the index of the first instance of the row,
-        // we calculate the index of the first instance of the next row
-        if (next_row != mtx->n_rows)
-        {
-            finish_idx = get_index<IT>(mtx->I, next_row);
-        }
-        else
-        {
-            // for the "last row" case, just set finish_idx to the number of non zeros in mtx
-            finish_idx = mtx->nnz;
-        }
-        run_idx = start_idx;
-
-        // This do-while loop will go "across the rows", basically filling the process local vectors
-        // TODO: is this better than a while loop here?
-        do
-        {
-            local_I->push_back(mtx->I[run_idx]);
-            local_J->push_back(mtx->J[run_idx]);
-            local_vals->push_back(mtx->values[run_idx]);
-            ++run_idx;
-        } while (run_idx != finish_idx);
+        finish_idx = get_index<IT>(total_mtx->I, work_sharing_arr[loop_rank + 1]);
     }
+    else
+    {
+        // for the "last row" case, just set finish_idx to the number of non zeros in mtx
+        finish_idx = total_mtx->nnz;
+    }
+    run_idx = start_idx;
+
+    // This do-while loop will go "across the rows", basically filling the process local vectors
+    do
+    {
+        local_I->push_back(total_mtx->I[run_idx]);
+        local_J->push_back(total_mtx->J[run_idx]);
+        local_vals->push_back(total_mtx->values[run_idx]);
+        ++run_idx;
+    } while (run_idx != finish_idx);
 }
 
 /**
@@ -679,7 +758,6 @@ void define_bookkeeping_type(
     MtxDataBookkeeping<ST> *send_bk,
     MPI_Datatype *bk_type)
 {
-
     // Declare and define MPI Datatype
     IT block_length_arr[2];
     MPI_Aint displ_arr_bk[2], first_address, second_address;
@@ -698,26 +776,28 @@ void define_bookkeeping_type(
     MPI_Type_commit(bk_type);
 }
 
-/**
-    @brief Data from the original mtx data structure is partitioned and sent to corresponding processes.
-    @param *local_mtx : Very similar to the original mtx struct, but constructed here with row, col, and value data sent to this particular process.
+/** TODO: make longer description
+    @brief Initialize total_mtx, segment and send this to local_mtx, then to local_scs format
+    @param *local_scs : pointer to local scs struct
+    @param *local_context : struct containing information about local_scs communication needs
+    @param *total_mtx : complete mtx struct, read .mtx file with mtx_reader.h
     @param *config : struct to initialze default values and user input
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *work_sharing_arr : the array describing the partitioning of the rows of the global mtx struct
-    @param my_rank : current process number
-    @param comm_size : size of mpi communicator
+    @param *work_sharing_arr : the array describing the partitioning of the rows
 */
-template <typename VT, typename IT>
-void seg_and_send_data(
-    MtxData<VT, IT> *local_mtx,
+template<typename VT, typename IT>
+void mpi_init_local_structs(
+    ScsData<VT, IT> *local_scs,
+    ContextData<IT> *local_context,
+    MtxData<VT, IT> *total_mtx,
     Config *config, // shouldn't this be const?
     const std::string *seg_method,
-    const std::string *file_name_str,
     IT *work_sharing_arr,
     const IT my_rank,
     const IT comm_size)
 {
+    MtxData<VT, IT> local_mtx;
+
     MPI_Status status_bk, status_cols, status_rows, status_vals;
 
     MtxDataBookkeeping<ST> send_bk, recv_bk;
@@ -729,23 +809,27 @@ void seg_and_send_data(
 
     if (my_rank == 0)
     {
-        // NOTE: Matrix will be read in as SORTED by default
-        // Only root proc will read entire matrix
-        MtxData<VT, IT> mtx = read_mtx_data<VT, IT>(file_name_str->c_str(), config->sort_matrix);
-
         // Segment global row pointers, and place into an array
-        seg_work_sharing_arr<VT, IT>(&mtx, work_sharing_arr, seg_method, comm_size);
+        seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size);
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
+        // STRONG CONTENDER FOR PRAGMA PARALELL
         for (IT loop_rank = 0; loop_rank < comm_size; ++loop_rank)
         { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
+
             std::vector<IT> local_I;
             std::vector<IT> local_J;
-            std::vector<VT> local_vals;
+            std::vector<VT> local_vals; // an attempt to not have so much resizing in seg_mtx_struct
 
             // Assign rows, columns, and values to process local vectors
-            seg_mtx_struct<VT, IT>(&mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
+            if(config->log_prof && my_rank == 0) {log("Begin seg_mtx_struct");}
+            double begin_smtxs_time = MPI_Wtime();
+            seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
+            if(config->log_prof && my_rank == 0) {log("Finish seg_mtx_struct", begin_smtxs_time, MPI_Wtime());}
+
+            // Give the total nnz count to root process
+            local_context->total_nnz = total_mtx->nnz;
 
             // Count the number of rows in each processes
             IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();
@@ -753,21 +837,21 @@ void seg_and_send_data(
             // Here, we segment data for the root process
             if (loop_rank == 0)
             {
-                local_mtx->n_rows = local_row_cnt;
-                local_mtx->n_cols = mtx.n_cols;
-                local_mtx->nnz = local_vals.size();
-                local_mtx->is_sorted = config->sort_matrix;
-                local_mtx->is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
-                local_mtx->I = local_I;      // should work as both local and global row ptr
-                local_mtx->J = local_J;
-                local_mtx->values = local_vals;
+                local_mtx.n_rows = local_row_cnt;
+                local_mtx.n_cols = total_mtx->n_cols;
+                local_mtx.nnz = local_vals.size();
+                local_mtx.is_sorted = config->sort_matrix;
+                local_mtx.is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
+                local_mtx.I = local_I;      // should work as both local and global row ptr
+                local_mtx.J = local_J;
+                local_mtx.values = local_vals;
             }
             // Here, we segment and send data to another proc
             else
             {
                 send_bk = {
                     local_row_cnt,
-                    mtx.n_cols, // TODO: Actually constant, do dont need to send to each proc
+                    total_mtx->n_cols, // TODO: Actually constant, do dont need to send to each proc
                     local_vals.size(),
                     config->sort_matrix,
                     0};
@@ -814,35 +898,42 @@ void seg_and_send_data(
             MPI_Recv(recv_buf_vals, msg_length, MPI_FLOAT, 0, 44, MPI_COMM_WORLD, &status_vals);
         }
         // TODO: Just how bad is this?... Are we copying array -> vector?
-        // TODO: is this doing what you think it is?
         std::vector<IT> global_rows_vec(recv_buf_global_row_coords, recv_buf_global_row_coords + msg_length);
         std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
         std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
 
-        local_mtx->n_rows = recv_bk.n_rows;
-        local_mtx->n_cols = recv_bk.n_cols;
-        local_mtx->nnz = recv_bk.nnz;
-        local_mtx->is_sorted = recv_bk.is_sorted;
-        local_mtx->is_symmetric = recv_bk.is_symmetric;
-        local_mtx->I = global_rows_vec;
-        local_mtx->J = cols_vec;
-        local_mtx->values = vals_vec;
-
+        local_mtx.n_rows = recv_bk.n_rows;
+        local_mtx.n_cols = recv_bk.n_cols;
+        local_mtx.nnz = recv_bk.nnz;
+        local_mtx.is_sorted = recv_bk.is_sorted;
+        local_mtx.is_symmetric = recv_bk.is_symmetric;
+        local_mtx.I = global_rows_vec;
+        local_mtx.J = cols_vec;
+        local_mtx.values = vals_vec;
+        
         delete[] recv_buf_global_row_coords;
         delete[] recv_buf_col_coords;
         delete[] recv_buf_vals;
     }
 
-    std::vector<IT> local_row_coords(local_mtx->nnz, 0);
+    std::vector<IT> local_row_coords(local_mtx.nnz, 0);
 
-    for (IT i = 0; i < local_mtx->nnz; ++i)
+    for (IT i = 0; i < local_mtx.nnz; ++i)
     {
         // subtract first pointer from the rest, to make them "process local"
-        local_row_coords[i] = local_mtx->I[i] - local_mtx->I[0];
+        local_row_coords[i] = local_mtx.I[i] - local_mtx.I[0];
     }
 
     // assign local row ptrs to struct
-    local_mtx->I = local_row_coords;
+    local_mtx.I = local_row_coords;
+
+    // just let every process know the total number of nnz.
+    // TODO: necessary?
+    MPI_Bcast(&(local_context->total_nnz),
+            1,
+            MPI_INT,
+            0,
+            MPI_COMM_WORLD);
 
     // Broadcast work sharing array to other processes
     MPI_Bcast(work_sharing_arr,
@@ -851,6 +942,77 @@ void seg_and_send_data(
               0,
               MPI_COMM_WORLD);
 
+    // convert local_mtx to local_scs
+    if(config->log_prof && my_rank == 0) {log("Begin convert_to_scs");}
+    double begin_ctscs_time = MPI_Wtime();
+    convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+    if(config->log_prof && my_rank == 0) {log("Finish convert_to_scs", begin_ctscs_time, MPI_Wtime());}
+
     MPI_Type_free(&bk_type);
+
+    std::vector<IT> local_needed_heri;
+    if(config->log_prof && my_rank == 0) {log("Begin collect_local_needed_heri");}
+    double begin_clnh_time = MPI_Wtime();
+    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
+    if(config->log_prof && my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, MPI_Wtime());}
+
+    IT local_needed_heri_size = local_needed_heri.size();
+    IT global_needed_heri_size;
+
+    // TODO: Is this actually necessary?
+    MPI_Allreduce(&local_needed_heri_size,
+                  &global_needed_heri_size,
+                  1,
+                  MPI_INT,
+                  MPI_SUM,
+                  MPI_COMM_WORLD
+    );
+
+    IT *global_needed_heri = new IT[global_needed_heri_size];
+
+    for (IT i = 0; i < global_needed_heri_size; ++i)
+    {
+        global_needed_heri[i] = IT{};
+    }
+
+    // "to_send_heri" are all halo elements that this process is to send
+    std::vector<IT> to_send_heri;
+    if(config->log_prof && my_rank == 0) {log("Begin collect_to_send_heri");}
+    double begin_ctsh_time = MPI_Wtime();
+    collect_to_send_heri<IT>(
+        &to_send_heri,
+        &local_needed_heri,
+        global_needed_heri,
+        my_rank,
+        comm_size
+    );
+    if(config->log_prof && my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, MPI_Wtime());}
+
+
+    // The shift array is used in the tag-generation scheme in halo communication.
+    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
+    // after the local element index to make for the incoming halo elements
+    std::vector<IT> shift_arr((comm_size) * (comm_size), 0);
+    std::vector<IT> incidence_arr((comm_size) * (comm_size), 0);
+
+    if(config->log_prof && my_rank == 0) {log("Begin calc_heri_shifts");}
+    double begin_chs_time = MPI_Wtime();
+    calc_heri_shifts<IT>(
+        global_needed_heri, 
+        &global_needed_heri_size, 
+        &shift_arr, 
+        &incidence_arr, 
+        comm_size
+    ); // NOTE: always symmetric?
+    if(config->log_prof && my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, MPI_Wtime());}
+
+    local_context->local_needed_heri = local_needed_heri;
+    local_context->to_send_heri = to_send_heri;
+    local_context->shift_vec = shift_arr;
+    local_context->incidence_vec = incidence_arr;
+    local_context->amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+    local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
+
+    delete[] global_needed_heri;
 }
 #endif

@@ -1,6 +1,5 @@
-#pragma once
-
-#include "spmv.h"
+#ifndef VECTORS
+#define VECTORS
 
 #include <complex>
 #include <fstream>
@@ -10,6 +9,8 @@
 #include <sstream>
 #include <type_traits>
 #include <vector>
+#include <cstring>
+#include <string>
 
 // TODO: rename float_type to value_type
 
@@ -160,8 +161,8 @@ public:
 
         double duration = get_time() - t_start;
 
-        log("VectorGpu: copy host -> device:  %9e MB   %9e MB/s   %e s\n",
-            n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
+        // log("VectorGpu: copy host -> device:  %9e MB   %9e MB/s   %e s\n",
+        //     n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
 #endif
     }
 
@@ -200,10 +201,12 @@ public:
         double duration = get_time() - t_start;
 
         size_t n_bytes_to_alloc = sizeof(VT) * this->n_rows;
-        log("VectorGpu: copy device -> host:  %9e MB   %9e MB/s   %e s\n",
-            n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
+        // log("VectorGpu: copy device -> host:  %9e MB   %9e MB/s   %e s\n",
+        //     n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
 #endif
         return dv;
     }
 };
+
+#endif
 

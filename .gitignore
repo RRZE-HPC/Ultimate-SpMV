@@ -6,6 +6,11 @@ spmv-omp-adv
 .vscode/
 valgrind_output.txt
 spmv_mkl_compare.txt
+log.txt
+
+spmv_mkl_compare_sp.txt
+spmv_mkl_compare_dp.txt
+spmv_bench.txt
 
 *.o
 *.gch

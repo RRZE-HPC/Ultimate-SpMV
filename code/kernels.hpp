@@ -1,5 +1,7 @@
-#include "spmv.h"
+#ifndef KERNELS
+#define KERNELS
 
+#define RESTRICT				__restrict__
 
 // SpMV kernels for computing  y = A * x, where A is a sparse matrix
 // represented by different formats.
@@ -107,8 +109,6 @@ spmv_omp_scs(const ST C,
         // TODO: use IT wherever possible
         for (IT j = 0; j < chunk_lengths[c]; ++j) {
             for (IT i = 0; i < (IT)C; ++i) {
-                // std::cout << values[cs + j * (IT)C + i] << " * " << x[col_idxs[cs + j * (IT)C + i]]
-                // << " = " << values[cs + j * (IT)C + i] * x[col_idxs[cs + j * (IT)C + i]] << std::endl;
                 tmp[i] += values[cs + j * (IT)C + i] * x[col_idxs[cs + j * (IT)C + i]];
             }
         }
@@ -193,3 +193,5 @@ spmv_omp_scs_adv(
         exit(1);
     }
 }
+
+#endif

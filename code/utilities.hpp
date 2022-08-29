@@ -1,11 +1,7 @@
 #ifndef UTILITIES
 #define UTILITIES
 
-#include "spmv.h"
-#include "vectors.h"
-#include "structs.hpp"
 #include <mpi.h>
-
 #include <cstdarg>
 #include <random>
 #include <iomanip>
@@ -41,27 +37,6 @@ struct max_rel_error<std::complex<double>>
     using base_value_type = double;
     constexpr static double value = 1e-13;
 };
-
-// Log information.
-bool g_log = false;
-
-void log(const char *format, ...)
-{
-    if (g_log)
-    {
-        double log_started = get_time();
-
-        va_list args;
-        char buffer[1024];
-        snprintf(buffer, sizeof(buffer), "# [%10.4f] %s", get_time() - log_started, format);
-
-        va_start(args, format);
-        vprintf(buffer, args);
-        va_end(args);
-
-        fflush(stdout);
-    }
-}
 
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
@@ -173,45 +148,45 @@ bool will_mult_overflow(T a, T b)
     return std::numeric_limits<T>::max() / a < b;
 }
 
-std::tuple<std::string, uint64_t>
-type_info_from_type_index(const std::type_index &ti)
-{
-    static std::unordered_map<std::type_index, std::tuple<std::string, uint64_t>> type_map = {
-        {std::type_index(typeid(double)), std::make_tuple("dp", sizeof(double))},
-        {std::type_index(typeid(float)), std::make_tuple("sp", sizeof(float))},
+// std::tuple<std::string, uint64_t>
+// type_info_from_type_index(const std::type_index &ti)
+// {
+//     static std::unordered_map<std::type_index, std::tuple<std::string, uint64_t>> type_map = {
+//         {std::type_index(typeid(double)), std::make_tuple("dp", sizeof(double))},
+//         {std::type_index(typeid(float)), std::make_tuple("sp", sizeof(float))},
 
-        {std::type_index(typeid(int)), std::make_tuple("int", sizeof(int))},
-        {std::type_index(typeid(long)), std::make_tuple("long", sizeof(long))},
-        {std::type_index(typeid(int32_t)), std::make_tuple("int32_t", sizeof(int32_t))},
-        {std::type_index(typeid(int64_t)), std::make_tuple("int64_t", sizeof(int64_t))},
+//         {std::type_index(typeid(int)), std::make_tuple("int", sizeof(int))},
+//         {std::type_index(typeid(long)), std::make_tuple("long", sizeof(long))},
+//         {std::type_index(typeid(int32_t)), std::make_tuple("int32_t", sizeof(int32_t))},
+//         {std::type_index(typeid(int64_t)), std::make_tuple("int64_t", sizeof(int64_t))},
 
-        {std::type_index(typeid(unsigned int)), std::make_tuple("uint", sizeof(unsigned int))},
-        {std::type_index(typeid(unsigned long)), std::make_tuple("ulong", sizeof(unsigned long))},
-        {std::type_index(typeid(uint32_t)), std::make_tuple("uint32_t", sizeof(uint32_t))},
-        {std::type_index(typeid(uint64_t)), std::make_tuple("uint64_t", sizeof(uint64_t))}};
+//         {std::type_index(typeid(unsigned int)), std::make_tuple("uint", sizeof(unsigned int))},
+//         {std::type_index(typeid(unsigned long)), std::make_tuple("ulong", sizeof(unsigned long))},
+//         {std::type_index(typeid(uint32_t)), std::make_tuple("uint32_t", sizeof(uint32_t))},
+//         {std::type_index(typeid(uint64_t)), std::make_tuple("uint64_t", sizeof(uint64_t))}};
 
-    auto it = type_map.find(ti);
+//     auto it = type_map.find(ti);
 
-    if (it == type_map.end())
-    {
-        return std::make_tuple(std::string{"unknown"}, uint64_t{0});
-    }
+//     if (it == type_map.end())
+//     {
+//         return std::make_tuple(std::string{"unknown"}, uint64_t{0});
+//     }
 
-    return it->second;
-}
+//     return it->second;
+// }
 
-std::string
-type_name_from_type_index(const std::type_index &ti)
-{
-    return std::get<0>(type_info_from_type_index(ti));
-}
+// std::string
+// type_name_from_type_index(const std::type_index &ti)
+// {
+//     return std::get<0>(type_info_from_type_index(ti));
+// }
 
-template <typename T>
-std::string
-type_name_from_type()
-{
-    return type_name_from_type_index(std::type_index(typeid(T)));
-}
+// template <typename T>
+// std::string
+// type_name_from_type()
+// {
+//     return type_name_from_type_index(std::type_index(typeid(T)));
+// }
 
 class Histogram
 {
@@ -865,7 +840,6 @@ template <typename VT>
 void random_init(VT *begin, VT *end)
 {
     int my_rank;
-    // MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
     srand(time(NULL) + my_rank);
@@ -929,11 +903,13 @@ void init_with_ptr_or_value(V<VT, IT> &x,
 }
 
 template <typename VT>
-void init_std_vec_with_ptr_or_value(std::vector<VT> &x,
-                               ST n_x,
-                               const std::vector<VT> *x_in,
-                               VT default_value,
-                               bool init_with_random_numbers = false)
+void init_std_vec_with_ptr_or_value(
+    std::vector<VT> &x,
+    ST n_x,
+    VT default_value,
+    bool init_with_random_numbers = false,
+    const std::vector<VT> *x_in = nullptr
+)
 {
     if (!init_with_random_numbers)
     {
@@ -963,5 +939,401 @@ void init_std_vec_with_ptr_or_value(std::vector<VT> &x,
         random_init(&(*x.begin()), &(*x.end()));
     }
 }
+
+
+/**
+    @brief Scan user cli input to variables, and verify that the entered parameters are valid
+    @param *file_name_str : name of the matrix-matket format data, taken from the cli
+    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @param *value_type : either single precision (/float/-sp) or double precision (/double/-dp)
+    @param *random_init_x : decides if our generated x-vector is randomly generated, 
+        or made from the default value defined in the DefaultValues struct
+    @param *config : struct to initialze default values and user input
+*/
+void verify_and_assign_inputs(
+    int argc,
+    char *argv[],
+    std::string *file_name_str,
+    std::string *seg_method,
+    std::string *value_type,
+    Config *config)
+{
+    if (argc < 2)
+    {
+        fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+        exit(1);
+    }
+
+    *file_name_str = argv[1];
+
+    int args_start_index = 2;
+    for (int i = args_start_index; i < argc; ++i)
+    {
+        std::string arg = argv[i];
+        if (arg == "-c")
+        {
+            config->chunk_size = atoi(argv[++i]);
+
+            if (config->chunk_size < 1)
+            {
+                fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-s")
+        {
+
+            config->sigma = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->sigma < 1)
+            {
+                fprintf(stderr, "ERROR: sigma must be >= 1.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-rev")
+        {
+            config->n_repetitions = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->n_repetitions < 1)
+            {
+                fprintf(stderr, "ERROR: revisions must be >= 1.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-verbose")
+        {
+            config->verbose_validation = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->verbose_validation != 0 && config->verbose_validation != 1)
+            {
+                fprintf(stderr, "ERROR: Only validation verbosity levels 0 and 1 are supported.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-validate")
+        {
+            config->validate_result = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->validate_result != 0 && config->validate_result != 1)
+            {
+                fprintf(stderr, "ERROR: You can only choose to validate result (1, i.e. yes) or not (0, i.e. no).\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-mode")
+        {
+            config->mode = *argv[++i]; // i.e. grab the NEXT
+
+            if (config->mode != 'b' && config->mode != 's')
+            {
+                fprintf(stderr, "ERROR: Only bench (b) and solve (s) modes are supported.\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-rand_x")
+        {
+            config->random_init_x = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->random_init_x != 0 && config->random_init_x != 1)
+            {
+                fprintf(stderr, "ERROR: You can only choose to initialize x randomly (1, i.e. yes) or not (0, i.e. no).\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-log_prof")
+        {
+            config->log_prof = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->log_prof != 0 && config->log_prof != 1)
+            {
+                fprintf(stderr, "ERROR: You can only choose to activate log profiler (1, i.e. yes) or not (0, i.e. no).\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-comm_halos")
+        {
+            config->comm_halos = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->comm_halos != 0 && config->comm_halos != 1)
+            {
+                fprintf(stderr, "ERROR: You can only choose to communicate halo elements (1, i.e. yes) or not (0, i.e. no).\n");
+                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                exit(1);
+            }
+        }
+        else if (arg == "-dp")
+        {
+            *value_type = "dp";
+        }
+        else if (arg == "-sp")
+        {
+            *value_type = "sp";
+        }
+        else if (arg == "-seg_rows")
+        {
+            *seg_method = "seg-rows";
+        }
+        else if (arg == "-seg_nnz")
+        {
+            *seg_method = "seg-nnz";
+        }
+        else
+        {
+            fprintf(stderr, "ERROR: unknown argument.\n");
+            fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                            "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                    argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+            exit(1);
+        }
+    }
+
+    if (config->sigma > config->chunk_size)
+    {
+        fprintf(stderr, "ERROR: sigma must be smaller than chunk size.\n");
+        fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+        exit(1);
+    }
+}
+
+/**
+    @brief Convert mtx struct to sell-c-sigma data structures.
+    @param *local_mtx : process local mtx data structure, that was populated by  
+    @param C : chunk height
+    @param sigma : sorting scope
+    @param *scs : The ScsData struct to populate with data
+*/
+template <typename VT, typename IT>
+void convert_to_scs(
+    const MtxData<VT, IT> *local_mtx,
+    ST C,
+    ST sigma,
+    ScsData<VT, IT> *scs,
+    int *work_sharing_arr = nullptr,
+    int my_rank = 0)
+{
+    scs->nnz    = local_mtx->nnz;
+    scs->n_rows = local_mtx->n_rows;
+    scs->n_cols = local_mtx->n_cols;
+
+    scs->C = C;
+    scs->sigma = sigma;
+
+    if (scs->sigma % scs->C != 0 && scs->sigma != 1) {
+        fprintf(stderr, "NOTE: sigma is not a multiple of C\n");
+    }
+
+    if (will_add_overflow(scs->n_rows, scs->C)) {
+        fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
+        // return false;
+    }
+    scs->n_chunks      = (local_mtx->n_rows + scs->C - 1) / scs->C;
+
+    if (will_mult_overflow(scs->n_chunks, scs->C)) {
+        fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
+        // return false;
+    }
+    scs->n_rows_padded = scs->n_chunks * scs->C;
+
+    // first enty: original row index
+    // second entry: population count of row
+    using index_and_els_per_row = std::pair<ST, ST>;
+
+    std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded);
+
+    for (ST i = 0; i < scs->n_rows_padded; ++i) {
+        n_els_per_row[i].first = i;
+    }
+
+    for (ST i = 0; i < local_mtx->nnz; ++i) {
+        ++n_els_per_row[local_mtx->I[i]].second;
+    }
+
+    // sort rows in the scope of sigma
+    if (will_add_overflow(scs->n_rows_padded, scs->sigma)) {
+        fprintf(stderr, "ERROR: no. of padded rows + sigma exceeds size type.\n");
+        // return false;
+    }
+
+    for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
+        auto begin = &n_els_per_row[i];
+        auto end   = (i + scs->sigma) < scs->n_rows_padded
+                        ? &n_els_per_row[i + scs->sigma]
+                        : &n_els_per_row[scs->n_rows_padded];
+
+        std::sort(begin, end,
+                  // sort longer rows first
+                  [](const auto & a, const auto & b) {
+                    return a.second > b.second;
+                  });
+    }
+
+    // determine chunk_ptrs and chunk_lengths
+
+    // TODO: check chunk_ptrs can overflow
+    // std::cout << d.n_chunks << std::endl;
+    scs->chunk_lengths = V<IT, IT>(scs->n_chunks); // init a vector of length d.n_chunks
+    scs->chunk_ptrs    = V<IT, IT>(scs->n_chunks + 1);
+
+    IT cur_chunk_ptr = 0;
+    
+    for (ST i = 0; i < scs->n_chunks; ++i) {
+        auto begin = &n_els_per_row[i * scs->C];
+        auto end   = &n_els_per_row[i * scs->C + scs->C];
+
+        scs->chunk_lengths[i] =
+                std::max_element(begin, end,
+                    [](const auto & a, const auto & b) {
+                        return a.second < b.second;
+                    })->second;
+
+        if (will_add_overflow(cur_chunk_ptr, scs->chunk_lengths[i] * (IT)scs->C)) {
+            fprintf(stderr, "ERROR: chunck_ptrs exceed index type.\n");
+            // return false;
+        }
+
+        scs->chunk_ptrs[i] = cur_chunk_ptr;
+        cur_chunk_ptr += scs->chunk_lengths[i] * scs->C;
+    }
+
+    
+
+    ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
+                        + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
+    scs->chunk_ptrs[scs->n_chunks] = n_scs_elements;
+
+    // construct permutation vector
+
+    scs->old_to_new_idx = V<IT, IT>(scs->n_rows);
+
+    for (ST i = 0; i < scs->n_rows_padded; ++i) {
+        IT old_row_idx = n_els_per_row[i].first;
+
+        if (old_row_idx < scs->n_rows) {
+            scs->old_to_new_idx[old_row_idx] = i;
+        }
+    }
+    
+
+    scs->values   = V<VT, IT>(n_scs_elements);
+    scs->col_idxs = V<IT, IT>(n_scs_elements);
+
+    IT padded_col_idx = 0;
+
+    if(work_sharing_arr != nullptr){
+        padded_col_idx = work_sharing_arr[my_rank];
+    }
+
+    for (ST i = 0; i < n_scs_elements; ++i) {
+        scs->values[i]   = VT{};
+        // scs->col_idxs[i] = IT{};
+        scs->col_idxs[i] = padded_col_idx;
+    }
+
+    std::vector<IT> col_idx_in_row(scs->n_rows_padded);
+
+    // fill values and col_idxs
+    for (ST i = 0; i < scs->nnz; ++i) {
+        IT row_old = local_mtx->I[i];
+
+        IT row = scs->old_to_new_idx[row_old];
+
+        ST chunk_index = row / scs->C;
+
+        IT chunk_start = scs->chunk_ptrs[chunk_index];
+        IT chunk_row   = row % scs->C;
+
+        IT idx = chunk_start + col_idx_in_row[row] * scs->C + chunk_row;
+
+        scs->col_idxs[idx] = local_mtx->J[i];
+        scs->values[idx]   = local_mtx->values[i];
+
+        col_idx_in_row[row]++;
+    }
+
+    scs->n_elements = n_scs_elements;
+
+    // return true;
+}
+
+// A basic class, to make a vector from the mtx context
+template <typename VT, typename IT>
+class SimpleDenseMatrix {
+    public:
+        std::vector<VT> vec;
+
+        SimpleDenseMatrix(const ContextData<IT> *local_context){
+            IT padding_from_heri = local_context->local_needed_heri.size() / 3;
+            IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+
+            vec.resize(needed_padding + local_context->amnt_local_elems, 0);
+        }
+
+        void init(Config *config){
+            DefaultValues<VT, IT> default_values;
+            init_std_vec_with_ptr_or_value(
+                vec, 
+                vec.size(),
+                default_values.x, 
+                config->random_init_x);
+        }
+};
+
+template<typename IT>
+std::vector<IT> find_items1(std::vector<IT> const &v, int target) {
+    std::vector<int> indices;
+    auto it = v.begin();
+    while ((it = std::find_if(it, v.end(), [&] (IT const &e) { return e == target; }))
+        != v.end())
+    {
+        indices.push_back(std::distance(v.begin(), it));
+        it++;
+    }
+    return indices;
+}
+
+template<typename IT>
+std::vector<IT> find_items(std::vector<IT> const &v, int target) {
+    std::vector<IT> indices;
+ 
+    for (int i = 0; i < v.size(); i++) {
+        if (v[i] == target) {
+            indices.push_back(i);
+        }
+    }
+ 
+    return indices;
+}
+ 
 
 #endif
