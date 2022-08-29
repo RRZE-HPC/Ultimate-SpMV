@@ -1138,7 +1138,9 @@ void convert_to_scs(
     const MtxData<VT, IT> *local_mtx,
     ST C,
     ST sigma,
-    ScsData<VT, IT> *scs)
+    ScsData<VT, IT> *scs,
+    int *work_sharing_arr = nullptr,
+    int my_rank = 0)
 {
     scs->nnz    = local_mtx->nnz;
     scs->n_rows = local_mtx->n_rows;
@@ -1246,9 +1248,16 @@ void convert_to_scs(
     scs->values   = V<VT, IT>(n_scs_elements);
     scs->col_idxs = V<IT, IT>(n_scs_elements);
 
+    IT padded_col_idx = 0;
+
+    if(work_sharing_arr != nullptr){
+        padded_col_idx = work_sharing_arr[my_rank];
+    }
+
     for (ST i = 0; i < n_scs_elements; ++i) {
         scs->values[i]   = VT{};
-        scs->col_idxs[i] = IT{};
+        // scs->col_idxs[i] = IT{};
+        scs->col_idxs[i] = padded_col_idx;
     }
 
     std::vector<IT> col_idx_in_row(scs->n_rows_padded);

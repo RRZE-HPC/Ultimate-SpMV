@@ -60,10 +60,10 @@ void bench_spmv(
 
                 std::swap(dummy_x, dummy_y);
 
-                if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-                    printf("%lf", dummy_x[local_x->size() / 2]);
-                    exit(0);
-                }
+                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                //     printf("%lf", dummy_x[local_x->size() / 2]);
+                //     exit(0);
+                // }
             }
         end_warm_up_loop_time = MPI_Wtime();
 
@@ -99,7 +99,7 @@ void bench_spmv(
         r->n_calls = n_iter;
         r->duration_total_s = end_bench_loop_time - begin_bench_loop_time;
         r->duration_kernel_s = r->duration_total_s/ r->n_calls;
-        r->perf_gflops = (double)local_scs->nnz * 2.0
+        r->perf_gflops = (double)local_scs->nnz * 2.0 // TODO: GLOBAL NNZ
                             / r->duration_kernel_s
                             / 1e9;                   // Only count usefull flops
 
@@ -111,6 +111,7 @@ void bench_spmv(
         for (IT i = 0; i < config->n_repetitions; ++i)
         {
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+            MPI_Barrier(MPI_COMM_WORLD);
 
             spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
