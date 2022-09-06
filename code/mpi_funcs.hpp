@@ -11,35 +11,6 @@
 
 #include <set>
 
-// TODO: Could this poentially take a long time to fill these vectors?
-// Since we cant slice an array...
-template <typename VT, typename IT>
-void populate_send_buffers(
-    ContextData<VT, IT> *local_context,
-    std::vector<VT> *local_x,
-    int my_rank,
-    int comm_size
-){
-    int idx_to_comm, num_elems_to_comm;
-
-    for(int loop_rank = 0; loop_rank < comm_size; ++loop_rank){
-        // First, push back an appropriately sized vector onto elems_to_send
-        num_elems_to_comm = local_context->comm_idxs[loop_rank].size();
-        (local_context->elems_to_send).push_back(std::vector<VT>(num_elems_to_comm));
-        // std::cout << "Proc: " << my_rank << " pushed back a size " << local_context->elems_to_send[loop_rank].size() <<
-        // " vector, at \"to proc\" " << loop_rank << std::endl;
-                
-        for(int i = 0; i < num_elems_to_comm; ++i){
-            // Then, populate that vector with the required elements from local_x
-            idx_to_comm = (local_context->comm_idxs[loop_rank])[i];
-            // std::cout << idx_to_comm << " => " << (*local_x)[idx_to_comm] << std::endl;
-            (local_context->elems_to_send[loop_rank])[i] = (*local_x)[idx_to_comm];
-            // std::cout << "Giving element " << (local_context->elems_to_send[loop_rank])[i] <<
-            // " to Proc: " << my_rank << " to communicate to Proc: " << loop_rank << std::endl;
-        }
-    }
-}
-
 template <typename VT, typename IT>
 void gen_unique_comm_tags(
     std::vector<std::vector<IT>> *send_tags,
@@ -59,95 +30,62 @@ template <typename VT, typename IT>
 void collect_comm_idxs(
     std::vector<std::vector<IT>> *communication_send_idxs,
     std::vector<std::vector<IT>> *communication_recv_idxs,
+    std::vector<IT> *send_counts_cumsum,
     int my_rank,
     int comm_size)
 {
-    MPI_Status status;
-
+    int incoming_buf_size, outgoing_buf_size;
     int tag_send, tag_recv;
-    int incoming_size;
 
-    // MPI_Sendrecv(const void* buffer_send,
-    //     int count_send,
-    //     MPI_Datatype datatype_send,
-    //     int recipient,
-    //     int tag_send,
-    //     void* buffer_recv,
-    //     int count_recv,
-    //     MPI_Datatype datatype_recv,
-    //     int sender,
-    //     int tag_recv,
-    //     MPI_Comm communicator,
-    //     MPI_Status* status);
+    MPI_Request recv_requests[comm_size];
+    MPI_Request send_requests[comm_size];
 
-    for(int loop_rank = 0; loop_rank < comm_size; ++loop_rank){
+    // TODO: avoid unnecessary comm
+    for (int from_proc = 0; from_proc < comm_size; ++from_proc)
+    {
+        incoming_buf_size = (*send_counts_cumsum)[from_proc + 1] - (*send_counts_cumsum)[from_proc];
+        // std::cout << "Proc: " << my_rank << " is expecting " << incoming_buf_size << " many elements from Proc: " << from_proc << std::endl;
 
-        // generate unique tag
-        tag_send = cantor_pairing(my_rank, loop_rank);
-        // if(my_rank == 1){
-        //     std::cout << tag_send << std::endl;
-        // }
-        // if(my_rank == 3){
-        //     std::cout << "Proc: " << my_rank << " sending: ";
-        //     for(int i = 0; i < (*communication_recv_idxs)[loop_rank].size(); ++i){
-        //         std::cout << (*communication_recv_idxs)[loop_rank][i] << ", ";
-        //     }
-        //     printf("\n");
-        //     std::cout << "To proc: " << loop_rank << std::endl;
-        //     printf("\n");
-        // } // TODO: if size > 0 then do
-        MPI_Send(
-            &((*communication_recv_idxs)[loop_rank])[0],
-            (*communication_recv_idxs)[loop_rank].size(),
-            MPI_INT,
-            loop_rank,
-            tag_send,
-            MPI_COMM_WORLD
-        );
-    }
+        // if (incoming_buf_size > 0){
+            tag_recv = cantor_pairing(from_proc, my_rank);
 
-    for(int loop_rank = 0; loop_rank < comm_size; ++loop_rank){
+            // resize vector to recieve incoming message
+            (*communication_send_idxs)[from_proc].resize(incoming_buf_size);
 
-    //     //generate unique tag
-        tag_recv = cantor_pairing(loop_rank, my_rank);
-        // if(my_rank == 1){   
-        //     std::cout << tag_recv << std::endl;
-        // }
-    //     // probe to get size of message
-        MPI_Probe(
-            loop_rank,
-            tag_recv,
-            MPI_COMM_WORLD,
-            &status
-        );
-
-        MPI_Get_count(&status, MPI_INT, &incoming_size);
-
-        // std::cout << "incoming message of size " << incoming_size << std::endl;
-
-    //     // resize vector to recieve incoming message
-        (*communication_send_idxs)[loop_rank].resize(incoming_size);
-
-        // TODO: if size > 0 then do ???
-
-        MPI_Recv(
-            &((*communication_send_idxs)[loop_rank])[0],
-            incoming_size, // probably need to probe for message length
-            MPI_INT,
-            loop_rank,
-            tag_recv,
-            MPI_COMM_WORLD,
-            &status);
-
-        // if(my_rank == 1){
-        //     if((*communication_send_idxs)[loop_rank].size() > 0){
-        //         std::cout << "New buffer size: " << (*communication_send_idxs)[loop_rank].size() << std::endl;
-        //         for(int i = 0; i < (*communication_send_idxs)[loop_rank].size(); ++i){
-        //             std::cout << (*communication_send_idxs)[loop_rank][i] << std::endl;
-        //         }
-        //     }
+            MPI_Irecv(
+                &((*communication_send_idxs)[from_proc])[0],
+                incoming_buf_size,
+                MPI_INT,
+                from_proc,
+                tag_recv,
+                MPI_COMM_WORLD,
+                &recv_requests[from_proc]
+            );
         // }
     }
+
+    for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+    {
+        outgoing_buf_size = (*communication_recv_idxs)[to_proc].size();
+        // std::cout << "Proc: " << my_rank << " sending " << outgoing_buf_size << " many elements to Proc: " << to_proc << std::endl;
+
+        
+        // if (outgoing_buf_size > 0){
+            tag_send = cantor_pairing(my_rank, to_proc);
+
+            MPI_Isend(
+                &((*communication_recv_idxs)[to_proc])[0],
+                outgoing_buf_size,
+                MPI_INT,
+                to_proc,
+                tag_send,
+                MPI_COMM_WORLD,
+                &send_requests[to_proc]
+            );
+        // }
+    }
+
+    MPI_Waitall(comm_size, recv_requests, MPI_STATUS_IGNORE);
 }
 
 template <typename VT, typename IT>
@@ -450,38 +388,34 @@ void communicate_halo_elements(
     int my_rank,
     int comm_size)
 {
-    IT num_local_elems;
-    int tag_send, tag_recv;
-    // IT recv_shift = 0, send_shift = 0; // TODO: calculate more efficiently
-    IT recieved_elems = 0, sent_elems = 0;
-    IT test_rank = 1;
-
-    // MPI_Request request; // TODO: What does this do?
-    // MPI_Status statuses[comm_size];
-    MPI_Status status;
     MPI_Request recv_requests[comm_size];
     MPI_Request send_requests[comm_size];
 
-    // populate_send_buffers(local_context, local_x, my_rank, comm_size);
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
+    // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
+    int num_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
+    // TODO: DRY
+    // TODO: avoid unnecessary comm
     if (typeid(VT) == typeid(float))
     {
-        // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
-        num_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-
-        // NONBLOCKING  
-
-        for (IT to_proc = 0; to_proc < comm_size; ++to_proc)
+        for (int from_proc = 0; from_proc < comm_size; ++from_proc)
         {
-            // tag_send = cantor_pairing(my_rank, to_proc);
+            MPI_Irecv(
+                &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
+                local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc],
+                MPI_FLOAT,
+                from_proc,
+                (local_context->recv_tags[from_proc])[my_rank],
+                MPI_COMM_WORLD,
+                &recv_requests[from_proc]
+            );
+        }
 
-            // std::cout << "Proc: " << my_rank << " sending to Proc: " << to_proc << ". tag: " << tag_send << std::endl;   
+        for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+        {
+            VT to_send_elems[local_context->comm_idxs[to_proc].size()];
 
-            float to_send_elems[local_context->comm_idxs[to_proc].size()];
-
-            // Since we cant slice an array...
+            // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < local_context->comm_idxs[to_proc].size(); ++i){
                 to_send_elems[i] = (*local_x)[(&(local_context->comm_idxs[to_proc])[0])[i]];
                 // std::cout << "Proc: " << my_rank << " sending element at idx: " << to_send_elems[i] << " to Proc: " << to_proc << std::endl;
@@ -496,128 +430,46 @@ void communicate_halo_elements(
                 MPI_COMM_WORLD,
                 &send_requests[to_proc]
             );
-
-            // if(my_rank == 1){
-            //     std::cout << "Proc: " << my_rank << " is to send " <<
-            //     local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc] <<
-            //     " elements to Proc: " << to_proc << std::endl;
-            //     // std::cout << "specifically: ";
-            //     // for(int i = 0; i < local_context->communication_idxs[to_proc].size(); ++i){
-            //     //     std::cout << to_send_idxs[i] << ", ";
-            //     // }
-            //     // std::cout << num_local_elems + local_context->recv_counts_cumsum[from_proc] << std::endl;
-            // }
         }
-
+    }
+    else if (typeid(VT) == typeid(double)){
         for (int from_proc = 0; from_proc < comm_size; ++from_proc)
         {
-            // TODO: pre-calculate in some array, look-up faster than calculation
-            // tag_recv = cantor_pairing(from_proc, my_rank);
-
-            // std::cout << "Proc: " << my_rank << " recieving from Proc: " << from_proc << ". tag: " << tag_recv << std::endl;   
-            // if(my_rank == 0){
-            //     std::cout << "Proc: " << my_rank << " is to recieve " <<
-            //     local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc] <<
-            //     " many elements from Proc: " << from_proc << std::endl;
-            //     // std::cout << num_local_elems + local_context->recv_counts_cumsum[from_proc] << std::endl;
-            // }
-        //             MPI_Barrier(MPI_COMM_WORLD);
-        // exit(0);
             MPI_Irecv(
                 &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
                 local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc],
-                MPI_FLOAT,
+                MPI_DOUBLE,
                 from_proc,
                 (local_context->recv_tags[from_proc])[my_rank],
                 MPI_COMM_WORLD,
                 &recv_requests[from_proc]
             );
-
-            // MPI_Sendrecv(
-            //     to_send_idxs,
-            //     local_context->send_counts_cumsum[loop_rank + 1] - local_context->send_counts_cumsum[loop_rank],
-            //     MPI_FLOAT,
-            //     my_rank,
-            //     tag_send,
-            //     &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[loop_rank]],
-            //     local_context->recv_counts_cumsum[loop_rank + 1] - local_context->recv_counts_cumsum[loop_rank],
-            //     MPI_FLOAT,
-            //     loop_rank,
-            //     tag_recv,
-            //     MPI_COMM_WORLD,
-            //     &status);
         }
 
-        
-        MPI_Waitall(comm_size, recv_requests, MPI_STATUS_IGNORE); //statuses arent used...
+        for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+        {
+            VT to_send_elems[local_context->comm_idxs[to_proc].size()];
 
-        // BLOCKING
-        // for (IT to_proc = 0; to_proc < comm_size; ++to_proc)
-        // {
-        //     // tag_send = cantor_pairing(my_rank, to_proc);
-        //     // std::cout << "Proc: " << my_rank << " sending to Proc: " << to_proc << ". tag: " << ((local_context->send_tags)[my_rank])[to_proc] << std::endl;
+            // NOTE: can we overlap this with something?
+            // Move non-contiguous data to a contiguous buffer for communication
+            for(int i = 0; i < local_context->comm_idxs[to_proc].size(); ++i){
+                to_send_elems[i] = (*local_x)[(&(local_context->comm_idxs[to_proc])[0])[i]];
+                // std::cout << "Proc: " << my_rank << " sending element at idx: " << to_send_elems[i] << " to Proc: " << to_proc << std::endl;
+            }
 
-        //     // Since we cant slice an array... and elements may not be continguous
-        //     float to_send_elems[local_context->comm_idxs[to_proc].size()];
-            
-        //     for(int i = 0; i < local_context->comm_idxs[to_proc].size(); ++i){
-        //         to_send_elems[i] = (*local_x)[(&(local_context->comm_idxs[to_proc])[0])[i]];
-        //         // std::cout << "Proc: " << my_rank << " sending element " << to_send_elems[i] << " to Proc: " << to_proc << std::endl;
-        //     }
-
-        //     // MPI_Send(
-        //     //     &(local_context->elems_to_send[to_proc])[0],
-        //     //     local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc],
-        //     //     MPI_FLOAT,
-        //     //     to_proc,
-        //     //     (local_context->send_tags[my_rank])[to_proc],
-        //     //     MPI_COMM_WORLD);
-
-        //     MPI_Send(
-        //         to_send_elems,
-        //         local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc],
-        //         MPI_FLOAT,
-        //         to_proc,
-        //         (local_context->send_tags[my_rank])[to_proc],
-        //         MPI_COMM_WORLD);
-
-        // }
-
-        // for (int from_proc = 0; from_proc < comm_size; ++from_proc)
-        // {
-        //     // TODO: pre-calculate in some array, look-up faster than calculation
-        //     // tag_recv = cantor_pairing(from_proc, my_rank);
-
-        //     // std::cout << "Proc: " << my_rank << " recieving from Proc: " << from_proc << ". tag: " << ((local_context->recv_tags)[from_proc])[my_rank] << std::endl;   
-
-
-        //     MPI_Recv(
-        //         &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
-        //         local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc],
-        //         MPI_FLOAT,
-        //         from_proc,
-        //         (local_context->recv_tags[from_proc])[my_rank],
-        //         MPI_COMM_WORLD,
-        //         &status);
-            
-            // std::cout << "Proc: " << my_rank << " recieved " << local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc] <<
-            // " elements, at local_x index " << num_local_elems + local_context->recv_counts_cumsum[from_proc] << std::endl;
-
-            //     if(my_rank == 0){
-            //         printf("\n");
-            //         for(int i = 0; i < local_x->size(); ++i){
-            //             std::cout << (*local_x)[i] << std::endl;
-            //         }
-            //     }
+            MPI_Isend(
+                to_send_elems,
+                local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc],
+                MPI_DOUBLE,
+                to_proc,
+                (local_context->send_tags[my_rank])[to_proc],
+                MPI_COMM_WORLD,
+                &send_requests[to_proc]
+            );
         }
-        
+    }
 
-
-    // }
-    // else if (typeid(VT) == typeid(double))
-    // {
-    //     // TODO
-    // }
+    MPI_Waitall(comm_size, recv_requests, MPI_STATUS_IGNORE);
 }
 
 /**
@@ -977,7 +829,22 @@ void mpi_init_local_structs(
 
     organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
 
-    collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, my_rank, comm_size);
+    // if(my_rank == 0){
+    //     std::cout << "send counts cumsum for Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size + 1; ++i){
+    //         std::cout << send_counts_cumsum[i] << ", " << std::endl;
+    //     }
+
+    //     std::cout << "recv counts cumsum for Proc: " << my_rank << std::endl;
+    //     for(int i = 0; i < comm_size + 1; ++i){
+    //         std::cout << recv_counts_cumsum[i] << ", " << std::endl;
+    //     }
+    // }
+
+    collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, &send_counts_cumsum, my_rank, comm_size);
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
     std::vector<std::vector<IT>> send_tags;
     std::vector<std::vector<IT>> recv_tags;
