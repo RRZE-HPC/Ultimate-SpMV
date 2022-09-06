@@ -1293,7 +1293,8 @@ class SimpleDenseMatrix {
         std::vector<VT> vec;
 
         SimpleDenseMatrix(const ContextData<VT, IT> *local_context){
-            IT padding_from_heri = local_context->local_needed_heri.size() / 3; // TODO: This needs to change
+            // TODO: not too sure about this
+            IT padding_from_heri = (local_context->recv_counts_cumsum).back();
             IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
 
             vec.resize(needed_padding + local_context->amnt_local_elems, 0);

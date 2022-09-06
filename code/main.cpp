@@ -134,13 +134,22 @@ void bench_spmv(
 
         if(config->log_prof && my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
         double begin_csslsm_time = MPI_Wtime();
-        for (IT i = 0; i < config->n_repetitions; ++i)
+        for (int i = 0; i < config->n_repetitions; ++i)
         {
+
+            // if(my_rank == 2){
+            //     std::cout << "before comm" << std::endl;
+            //     for(int i = 0; i < 50; ++i){
+            //         std::cout << (*local_x)[i] << std::endl;
+            //     }
+            // }
+
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
             MPI_Barrier(MPI_COMM_WORLD);
 
-            // if(my_rank == 0){
-            //     for(int i = 0; i < 5; ++i){
+            // if(my_rank == 2){
+            //     std::cout << "after comm" << std::endl;
+            //     for(int i = 0; i < 50; ++i){
             //         std::cout << (*local_x)[i] << std::endl;
             //     }
             // }
@@ -232,6 +241,12 @@ void compute_result(
         comm_size
     );
 
+    // std::cout << "Proc: " << my_rank << ", here 3" << std::endl;
+
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
     // Declare local vectors to be used
     SimpleDenseMatrix<VT, IT> local_x(&local_context);
     SimpleDenseMatrix<VT, IT> local_y(&local_context);
@@ -256,6 +271,12 @@ void compute_result(
         my_rank,
         comm_size
     );
+
+    // std::cout << "Proc: " << my_rank << ", here 4" << std::endl;
+
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
     if(config->log_prof && my_rank == 0) {log("Finish bench_spmv", begin_bs_time, MPI_Wtime());}
 
     if(config->log_prof && my_rank == 0) {log("Begin results gathering");}
@@ -352,6 +373,11 @@ void compute_result(
         }
     }
     if(config->log_prof && my_rank == 0) {log("Finish results gathering", begin_rg_time, MPI_Wtime());}
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+    // std::cout << "Proc: " << my_rank << ", here 5" << std::endl;
+
 }
 
 int main(int argc, char *argv[])
@@ -444,6 +470,9 @@ int main(int argc, char *argv[])
         compute_result<float, int>(&total_mtx, &seg_method, &config, &r, my_rank, comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
 
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // exit(0);
+
         double time_per_proc = MPI_Wtime() - begin_main_time;
         // Gather all times for printing of results
         MPI_Gather(
@@ -456,6 +485,10 @@ int main(int argc, char *argv[])
             0,
             MPI_COMM_WORLD
         );
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // exit(0);
+        // std::cout << "Proc: " << my_rank << ", here 6" << std::endl;
+
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -476,12 +509,24 @@ int main(int argc, char *argv[])
                 write_bench_to_file<float, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, comm_size);
             }
         }
+
+        // std::cout << "Proc: " << my_rank << ", here 7" << std::endl;
+
     }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
     if(config.log_prof && my_rank == 0) {log("Finish main", begin_main_time, MPI_Wtime());}
     if(config.log_prof && my_rank == 0) {log("__________ log end __________");}
 
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+    // std::cout << "Proc: " << my_rank << ", here 8" << std::endl;
+
+
     MPI_Finalize();
+    
 
     return 0;
 }

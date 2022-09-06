@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <numeric>
 #include <map>
+#include <stdexcept>
 
 #include "utilities.hpp"
 #include "classes_structs.hpp"
@@ -388,6 +389,8 @@ void communicate_halo_elements(
     int my_rank,
     int comm_size)
 {
+    int outgoing_buf_size, incoming_buf_size;
+
     MPI_Request recv_requests[comm_size];
     MPI_Request send_requests[comm_size];
 
@@ -400,20 +403,42 @@ void communicate_halo_elements(
     {
         for (int from_proc = 0; from_proc < comm_size; ++from_proc)
         {
+            incoming_buf_size = local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc];
+            // std::cout << "Proc: " << my_rank << " expecting " << incoming_buf_size << " many elements from Proc: " << from_proc << std::endl;
+            // std::cout << "Proc: " << my_rank << " has " << num_local_elems << " local elements" << std::endl;
+            // std::cout << "Proc: " << my_rank << " recieving " << incoming_buf_size << " many elements from Proc: " << from_proc << " at buffer index: " << num_local_elems + local_context->recv_counts_cumsum[from_proc] << std::endl;
+
+
+
             MPI_Irecv(
                 &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
-                local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc],
+                incoming_buf_size,
                 MPI_FLOAT,
                 from_proc,
                 (local_context->recv_tags[from_proc])[my_rank],
                 MPI_COMM_WORLD,
                 &recv_requests[from_proc]
             );
+
+            // if(my_rank == 0){
+            //     std::cout << "Just recieved from Proc: " << from_proc << std::endl;
+            //     printf("\n");
+            //     std::cout << "Proc: " << my_rank << std::endl;
+            //     for(int i = 0; i < 20; ++i)
+            //         std::cout << (*local_x)[i] << std::endl;
+            // }
         }
 
         for (int to_proc = 0; to_proc < comm_size; ++to_proc)
         {
             VT to_send_elems[local_context->comm_idxs[to_proc].size()];
+            outgoing_buf_size = local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc];
+
+            // for sanity
+            if(local_context->comm_idxs[to_proc].size() != outgoing_buf_size){
+                std::cout << "Mismatched buffer lengths in communication" << std::endl;
+                exit(1);
+            }
 
             // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < local_context->comm_idxs[to_proc].size(); ++i){
@@ -421,9 +446,12 @@ void communicate_halo_elements(
                 // std::cout << "Proc: " << my_rank << " sending element at idx: " << to_send_elems[i] << " to Proc: " << to_proc << std::endl;
             }
 
+            // std::cout << "Proc: " << my_rank << " sending " << outgoing_buf_size << " many elements to Proc: " << to_proc << std::endl;
+
+
             MPI_Isend(
                 to_send_elems,
-                local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc],
+                outgoing_buf_size,
                 MPI_FLOAT,
                 to_proc,
                 (local_context->send_tags[my_rank])[to_proc],
@@ -484,7 +512,8 @@ void seg_work_sharing_arr(
     const MtxData<VT, IT> *total_mtx,
     IT *work_sharing_arr,
     const std::string *seg_method,
-    const IT comm_size)
+    const IT comm_size,
+    int my_rank)
 {
     work_sharing_arr[0] = 0;
 
@@ -538,13 +567,30 @@ void seg_work_sharing_arr(
         // (takes care of remainder rows)
         work_sharing_arr[comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
     }
+    // if(my_rank == 0){
+    //     std::cout << "work_sharing_arr before adjustment: " << std::endl;
+    //     for(int i = 0; i < comm_size + 1; ++i){
+    //         std::cout << work_sharing_arr[i] << " ";
+    //     }
+    //     printf("\n");
 
-    // Protect against edge case, where last process gets no work
-    if(work_sharing_arr[comm_size] == work_sharing_arr[comm_size + 1]){
+    // }
+
+    // Protect against edge case where last process gets no work
+    if(work_sharing_arr[comm_size - 1] == work_sharing_arr[comm_size]){
         for(IT loop_rank = 1; loop_rank < comm_size; ++loop_rank){
             work_sharing_arr[loop_rank] -= 1;
         }
     }
+
+    // if(my_rank == 0){
+    //     std::cout << "work_sharing_arr after adjustment: " << std::endl;
+    //     for(int i = 0; i < comm_size + 1; ++i){
+    //         std::cout << work_sharing_arr[i] << " ";
+    //     }
+    //     printf("\n");
+
+    // }
 }
 
 /**
@@ -659,7 +705,7 @@ void mpi_init_local_structs(
     if (my_rank == 0)
     {
         // Segment global row pointers, and place into an array
-        seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size);
+        seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size, my_rank);
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
@@ -829,11 +875,11 @@ void mpi_init_local_structs(
 
     organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
 
-    // if(my_rank == 0){
-    //     std::cout << "send counts cumsum for Proc: " << my_rank << std::endl;
-    //     for(int i = 0; i < comm_size + 1; ++i){
-    //         std::cout << send_counts_cumsum[i] << ", " << std::endl;
-    //     }
+    // if(my_rank == 2){
+    //     // std::cout << "send counts cumsum for Proc: " << my_rank << std::endl;
+    //     // for(int i = 0; i < comm_size + 1; ++i){
+    //     //     std::cout << send_counts_cumsum[i] << ", " << std::endl;
+    //     // }
 
     //     std::cout << "recv counts cumsum for Proc: " << my_rank << std::endl;
     //     for(int i = 0; i < comm_size + 1; ++i){
@@ -841,7 +887,12 @@ void mpi_init_local_structs(
     //     }
     // }
 
+    // std::cout << "Proc: " << my_rank << ", here 1" << std::endl;
+
     collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, &send_counts_cumsum, my_rank, comm_size);
+
+    // std::cout << "Proc: " << my_rank << ", here 2" << std::endl;
+
 
     // MPI_Barrier(MPI_COMM_WORLD);
     // exit(0);
