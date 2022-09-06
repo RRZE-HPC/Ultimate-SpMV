@@ -27,7 +27,7 @@ template <typename VT, typename IT>
 void bench_spmv(
     Config *config,
     ScsData<VT, IT> *local_scs,
-    ContextData<IT> *local_context,
+    ContextData<VT, IT> *local_context,
     const IT *work_sharing_arr,
     std::vector<VT> *local_y,
     std::vector<VT> *local_x,
@@ -108,12 +108,47 @@ void bench_spmv(
         if(config->log_prof && my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, bench mode", begin_csslbm_time, MPI_Wtime());}
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
+        // if(my_rank == 0){
+        //     (*local_x)[0] = 1;
+        //     (*local_x)[1] = 2;
+        //     (*local_x)[2] = 3;
+        //     (*local_x)[3] = 0;
+        //     (*local_x)[4] = 0;
+        // }
+        // if(my_rank == 1){
+        //     (*local_x)[0] = 4;
+        //     (*local_x)[1] = 5;
+        //     (*local_x)[2] = 6;
+        //     (*local_x)[3] = 0;
+        //     (*local_x)[4] = 0;
+        // }
+        // if(my_rank == 2){
+        //     (*local_x)[0] = 7;
+        //     (*local_x)[1] = 8;
+        //     (*local_x)[2] = 0;
+        // }
+        // if(my_rank == 3){
+        //     (*local_x)[0] = 9;
+        //     (*local_x)[1] = 10;
+        // }
+
         if(config->log_prof && my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
         double begin_csslsm_time = MPI_Wtime();
         for (IT i = 0; i < config->n_repetitions; ++i)
         {
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
             MPI_Barrier(MPI_COMM_WORLD);
+
+            // if(my_rank == 0){
+            //     for(int i = 0; i < 5; ++i){
+            //         std::cout << (*local_x)[i] << std::endl;
+            //     }
+            // }
+
+            // MPI_Barrier(MPI_COMM_WORLD);
+            // exit(0);
+
+            // MPI_Barrier(MPI_COMM_WORLD);
 
             spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
@@ -181,7 +216,7 @@ void compute_result(
 
     // Declare local structs on each process
     ScsData<VT, IT> local_scs;
-    ContextData<IT> local_context;
+    ContextData<VT, IT> local_context;
 
     // Allocate space for work sharing array
     IT work_sharing_arr[comm_size + 1];

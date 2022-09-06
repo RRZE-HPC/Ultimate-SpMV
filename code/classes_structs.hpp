@@ -35,7 +35,7 @@ void log(const char *log_msg, const double begin_time = 0, const double end_time
 // Use -rand to initialize randomly.
 static bool g_same_seed_for_every_vector = true;
 
-template <typename IT>
+template <typename VT, typename IT>
 struct ContextData
 {
     std::vector<IT> to_send_heri;
@@ -43,6 +43,18 @@ struct ContextData
 
     std::vector<IT> shift_vec; //how does this work, with these on the heap?
     std::vector<IT> incidence_vec;
+
+    std::vector<std::vector<IT>> send_tags;
+    std::vector<std::vector<IT>> recv_tags;
+
+    // TODO: remove and not store, do calculations earlier
+    std::vector<std::vector<IT>> comm_idxs;
+
+    // TODO: I dont think context should be holding all elements needed to send...
+    std::vector<std::vector<VT>> elems_to_send;
+
+    std::vector<IT> recv_counts_cumsum;
+    std::vector<IT> send_counts_cumsum;
 
     IT amnt_local_elems;
     IT scs_padding;

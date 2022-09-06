@@ -6,344 +6,425 @@
 #include <numeric>
 #include <map>
 
+#include "utilities.hpp"
 #include "classes_structs.hpp"
 
 #include <set>
 
+// TODO: Could this poentially take a long time to fill these vectors?
+// Since we cant slice an array...
 template <typename VT, typename IT>
-void gen_halo_hms(
-    ScsData<VT, IT> *local_scs,
-    std::unordered_map<int, int> *lhs_halo_hm,
-    std::unordered_map<int, int> *rhs_halo_hm,
-    std::vector<IT> *original_col_idxs,
-    const IT *work_sharing_arr,
+void populate_send_buffers(
+    ContextData<VT, IT> *local_context,
+    std::vector<VT> *local_x,
     int my_rank,
     int comm_size
 ){
-    
-    IT remote_elem_count = 0;
-    IT amnt_lhs_remote_elems = 0;
-    IT amnt_rhs_remote_elems = 0;
-    IT exists_nz_elem;
+    int idx_to_comm, num_elems_to_comm;
 
-    std::unordered_set<IT> original_col_idxs_uset(original_col_idxs->begin(), original_col_idxs->end());
-    IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-
-    int lhs_halo_col_ctr = 0;
-    exists_nz_elem = 0;
-
-    // Proc 0 will never have LHS remote elements
-    if(my_rank != 0)
-    {
-        // start at the "left wall" of the matrix, and iterate columns until we reach local elements
-        for (int col = 0; col < work_sharing_arr[my_rank]; ++col)
-        {
-            // exists_nz_elem = 0;
-            if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
-             // if there exists ANY element in this column...
-
-                // First need to know if there are any non zero elements with nonzero value 
-                for(auto idx : find_items<IT>(*original_col_idxs, col))
-                {
-                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
-                    {
-                        exists_nz_elem = 1;
-                        break;
-                    }
-                }
-                // Then, if a nonzero element does exist in this column, assign to hm (this column idx : new column idx)
-                if(exists_nz_elem)
-                { // and if this element is not padding
-                    (*lhs_halo_hm)[col] = amnt_local_elems + lhs_halo_col_ctr;
-                    ++lhs_halo_col_ctr;
-                    exists_nz_elem = 0;
-                }
-            }
-        }   
-    }
-
-
-    int rhs_halo_col_ctr = 0;
-    exists_nz_elem = 0;
-    // Last proc will never have RHS remote elements
-    if(my_rank != (comm_size - 1)){
-        // start at the "right wall" of the local matrix, and iterate columns until we reach right wall of the local_scs 
-        for (int col = work_sharing_arr[my_rank + 1]; col < work_sharing_arr[comm_size]; ++col)
-        {
-            // exists_nz_elem = 0;
-            if(original_col_idxs_uset.find(col) != original_col_idxs_uset.end()){
-             // if there exists ANY element in this column...
-
-                for(auto idx : find_items<IT>(*original_col_idxs, col))
-                {
-                    if((*original_col_idxs)[idx] == col && local_scs->values[idx] != 0)
-                    {
-                        exists_nz_elem = 1;
-                        break;
-                    }
-                }
-
-                if(exists_nz_elem)
-                {
-                    (*rhs_halo_hm)[col] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
-                    ++rhs_halo_col_ctr;
-                    exists_nz_elem = 0;
-                }
-            }
-        }   
+    for(int loop_rank = 0; loop_rank < comm_size; ++loop_rank){
+        // First, push back an appropriately sized vector onto elems_to_send
+        num_elems_to_comm = local_context->comm_idxs[loop_rank].size();
+        (local_context->elems_to_send).push_back(std::vector<VT>(num_elems_to_comm));
+        // std::cout << "Proc: " << my_rank << " pushed back a size " << local_context->elems_to_send[loop_rank].size() <<
+        // " vector, at \"to proc\" " << loop_rank << std::endl;
+                
+        for(int i = 0; i < num_elems_to_comm; ++i){
+            // Then, populate that vector with the required elements from local_x
+            idx_to_comm = (local_context->comm_idxs[loop_rank])[i];
+            // std::cout << idx_to_comm << " => " << (*local_x)[idx_to_comm] << std::endl;
+            (local_context->elems_to_send[loop_rank])[i] = (*local_x)[idx_to_comm];
+            // std::cout << "Giving element " << (local_context->elems_to_send[loop_rank])[i] <<
+            // " to Proc: " << my_rank << " to communicate to Proc: " << loop_rank << std::endl;
+        }
     }
 }
 
-/**
-    Collect the row indicies of the halo elements needed for THIS process, which is used to generate a valid local_x to perform the SPMVM.
-        These are organized/encoded as 3-tuples in an array, of the form (proc_to, proc_from, global_row_idx). The global_row_idx
-        refers to the "global" x vector, this will be adjusted (localized) later when said element is "retrieved".
+template <typename VT, typename IT>
+void gen_unique_comm_tags(
+    std::vector<std::vector<IT>> *send_tags,
+    std::vector<std::vector<IT>> *recv_tags,
+    int my_rank,
+    int comm_size
+){
+    for(int i = 0; i < comm_size; ++i){
+        for(int j = 0; j < comm_size; ++j){
+            (*send_tags)[j].push_back(cantor_pairing(j, i)); // TODO: seems too large
+            (*recv_tags)[i].push_back(cantor_pairing(i, j)); // this size seems right
+        }
+    }
+}
 
-    @brief Collect the row indicies of the halo elements needed for this process
-    @param *local_needed_heri : pointer to vector that contains encoded 3-tuples of the form (proc_to, proc_from, global_row_idx)
-    @param *local_scs : pointer to local scs struct
-    @param *work_sharing_arr : the array describing the partitioning of the rows
-*/
+template <typename VT, typename IT>
+void collect_comm_idxs(
+    std::vector<std::vector<IT>> *communication_send_idxs,
+    std::vector<std::vector<IT>> *communication_recv_idxs,
+    int my_rank,
+    int comm_size)
+{
+    MPI_Status status;
+
+    int tag_send, tag_recv;
+    int incoming_size;
+
+    // MPI_Sendrecv(const void* buffer_send,
+    //     int count_send,
+    //     MPI_Datatype datatype_send,
+    //     int recipient,
+    //     int tag_send,
+    //     void* buffer_recv,
+    //     int count_recv,
+    //     MPI_Datatype datatype_recv,
+    //     int sender,
+    //     int tag_recv,
+    //     MPI_Comm communicator,
+    //     MPI_Status* status);
+
+    for(int loop_rank = 0; loop_rank < comm_size; ++loop_rank){
+
+        // generate unique tag
+        tag_send = cantor_pairing(my_rank, loop_rank);
+        // if(my_rank == 1){
+        //     std::cout << tag_send << std::endl;
+        // }
+        // if(my_rank == 3){
+        //     std::cout << "Proc: " << my_rank << " sending: ";
+        //     for(int i = 0; i < (*communication_recv_idxs)[loop_rank].size(); ++i){
+        //         std::cout << (*communication_recv_idxs)[loop_rank][i] << ", ";
+        //     }
+        //     printf("\n");
+        //     std::cout << "To proc: " << loop_rank << std::endl;
+        //     printf("\n");
+        // } // TODO: if size > 0 then do
+        MPI_Send(
+            &((*communication_recv_idxs)[loop_rank])[0],
+            (*communication_recv_idxs)[loop_rank].size(),
+            MPI_INT,
+            loop_rank,
+            tag_send,
+            MPI_COMM_WORLD
+        );
+    }
+
+    for(int loop_rank = 0; loop_rank < comm_size; ++loop_rank){
+
+    //     //generate unique tag
+        tag_recv = cantor_pairing(loop_rank, my_rank);
+        // if(my_rank == 1){   
+        //     std::cout << tag_recv << std::endl;
+        // }
+    //     // probe to get size of message
+        MPI_Probe(
+            loop_rank,
+            tag_recv,
+            MPI_COMM_WORLD,
+            &status
+        );
+
+        MPI_Get_count(&status, MPI_INT, &incoming_size);
+
+        // std::cout << "incoming message of size " << incoming_size << std::endl;
+
+    //     // resize vector to recieve incoming message
+        (*communication_send_idxs)[loop_rank].resize(incoming_size);
+
+        // TODO: if size > 0 then do ???
+
+        MPI_Recv(
+            &((*communication_send_idxs)[loop_rank])[0],
+            incoming_size, // probably need to probe for message length
+            MPI_INT,
+            loop_rank,
+            tag_recv,
+            MPI_COMM_WORLD,
+            &status);
+
+        // if(my_rank == 1){
+        //     if((*communication_send_idxs)[loop_rank].size() > 0){
+        //         std::cout << "New buffer size: " << (*communication_send_idxs)[loop_rank].size() << std::endl;
+        //         for(int i = 0; i < (*communication_send_idxs)[loop_rank].size(); ++i){
+        //             std::cout << (*communication_send_idxs)[loop_rank][i] << std::endl;
+        //         }
+        //     }
+        // }
+    }
+}
+
+template <typename VT, typename IT>
+void organize_cumsums(
+    std::vector<IT> *send_counts_cumsum,
+    std::vector<IT> *recv_counts_cumsum,
+    int my_rank,
+    int comm_size)
+{
+    
+    std::vector<IT> all_recv_counts_cumsum(comm_size, 0);
+    int *all_recv_cumsum_buf = new int[comm_size * (comm_size + 1)];
+    // To recieve "comm_size" many buffers of length "comm_size + 1"
+
+    MPI_Allgather(&(*recv_counts_cumsum)[0],
+                comm_size + 1,
+                MPI_INT,
+                all_recv_cumsum_buf,
+                comm_size + 1,
+                MPI_INT,
+                MPI_COMM_WORLD);
+
+    // Check if cumsums recieved allgather properly
+    // TODO: more testing and validating
+    // if(my_rank == 1){
+    //     int loop_rank = 0;
+    //     for(int i = 0; i < comm_size * (comm_size + 1); ++i){
+    //         // if(i % (comm_size + 1) == 0){
+    //         //     printf("\n");
+    //         //     std::cout << "Proc " << loop_rank << ": "<< std::endl;
+    //         //     ++loop_rank;
+    //         // }
+    //         std::cout << all_recv_cumsum_buf[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
+    // construct send_counts_cumsum
+    int loop_rank = -1;
+    int send_counts[comm_size] = {0};
+    int sending_proc = 0;
+    int idx = 1;
+    int sent_elems;
+
+    for(int i = 0; i < comm_size * (comm_size + 1); ++i){
+
+        if(i % (comm_size + 1) == 0){
+            ++loop_rank;
+            --idx; // don't incremement idx when in-between loop ranks
+            sending_proc = 0; // reset sending_proc
+            continue;
+        };
+
+
+        // Avoids the "last element" in the cumsum
+        if(sending_proc == my_rank){
+            send_counts[loop_rank] += all_recv_cumsum_buf[i] - all_recv_cumsum_buf[i - 1];
+        }
+        ++idx;
+        ++sending_proc;
+    }
+
+    // Construct cumsum for "to send" heri
+    for(int i = 1; i < comm_size + 1; ++i){
+        (*send_counts_cumsum)[i] = send_counts[i - 1] + (*send_counts_cumsum)[i - 1];
+    }
+
+    delete[] all_recv_cumsum_buf;
+}
+
 template <typename VT, typename IT>
 void collect_local_needed_heri(
-    std::vector<IT> *local_needed_heri,
+    std::vector<std::vector<IT>> *communication_recv_idxs,
+    std::vector<IT> *recv_counts_cumsum,
     ScsData<VT, IT> *local_scs,
     const IT *work_sharing_arr,
     int my_rank,
     int comm_size)
 {
-    IT from_proc, to_proc;
-    IT total_x_row_idx, remote_elem_candidate_col, elem_col, remote_elem_col;
+    IT from_proc, to_proc, elem_col;
     IT needed_heri_count = 0;
     IT amnt_lhs_halo_elems = 0;
 
     // To remember which columns have already been accounted for
     std::unordered_set<IT> remote_elem_col_bk;
-    std::tuple<IT, IT, IT> heri_tuple;
-    std::tuple<IT, IT, IT> inner_tuple;
-    std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
-    std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
+    std::vector<IT> remote_elem_idxs;
     std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
 
-    std::unordered_map<int, int> lhs_halo_hm;
-    std::unordered_map<int, int> rhs_halo_hm;
-    gen_halo_hms<VT, IT>(local_scs, &lhs_halo_hm, &rhs_halo_hm, &original_col_idxs, work_sharing_arr, my_rank, comm_size);
+    // TODO: these sizes are too large. Should be my_rank and comm_size - my_rank
+    int lhs_needed_heri_counts[comm_size] = {0};
+    int rhs_needed_heri_counts[comm_size] = {0};
+    // int lhs_needed_heri_counts[my_rank] = {0};
+    // int rhs_needed_heri_counts[comm_size - my_rank] = {0};
+
+    int show_steps = 0;
+    int test_rank = 0;
+
+    if(show_steps){
+        if(my_rank == test_rank){
+            std::cout << "Proc: " << my_rank << ", column indices BEFORE adjustment: " << std::endl;
+            for(int idx = 0; idx < local_scs->n_elements; ++idx){
+                std::cout << local_scs->col_idxs[idx] << std::endl;
+            }
+            printf("\n");
+        }
+    }
 
 
+    // COUNTING LOOP / PROC
     for (IT i = 0; i < local_scs->n_elements; ++i)
     {
         // If true, this is a remote element, and needs to be added to vector
         elem_col = local_scs->col_idxs[i];
 
         // if this column corresponds to a padded element, continue to next nnz
-        if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
+        // if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
 
         if (elem_col < work_sharing_arr[my_rank])
-        { // if LHS remote element
-            if(!(remote_elem_col_bk.find(elem_col) != remote_elem_col_bk.end())){
+        {
+            remote_elem_idxs.push_back(i);
+            if(remote_elem_col_bk.find(elem_col) == remote_elem_col_bk.end()){
                 // if this column has not yet been seen
-                remote_elem_col = elem_col;
-                // First, determine which rank this needed element will come from
-                // The rank of where this needed element resides is deduced from the work sharing array.
-                for (IT j = 0; j < comm_size; ++j)
+                for (IT j = 0; j < comm_size; ++j) //TODO: change to only go until my_rank
                 {
-                    if (remote_elem_col >= work_sharing_arr[j] && remote_elem_col < work_sharing_arr[j + 1])
+                    if (elem_col >= work_sharing_arr[j] && elem_col < work_sharing_arr[j + 1])
                     {
                         // Remember column corresponding to remote element
-                        remote_elem_col_bk.insert(remote_elem_col);
+                        // remote_elem_col_bk.push_back(remote_elem_col);
+                        remote_elem_col_bk.insert(elem_col);
 
-                        // Just to make process more clear
-                        from_proc = j;
-                        to_proc = my_rank;
+                        ((*communication_recv_idxs)[j]).push_back(elem_col - work_sharing_arr[j]);
 
-                        // The heri tuple, which is then used inside another tuple for ordering later
-                        heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
+                        ++lhs_needed_heri_counts[j]; // This array describes how many remote elements
 
-                        unordered_heri_tuple = std::make_tuple(remote_elem_col, heri_tuple);
-
-                        unordered_heri_tuples_vec.push_back(unordered_heri_tuple);
-
-                        ++needed_heri_count;
                         break;
                     }
                 }
+                //if nothing found, error
             }
-            local_scs->col_idxs[i] = lhs_halo_hm[original_col_idxs[i]];
+        }
+        else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
+        { // i.e. if RHS remote element
+            remote_elem_idxs.push_back(i);
+            if(remote_elem_col_bk.find(elem_col) == remote_elem_col_bk.end()){
+                for (IT j = 0; j < comm_size; ++j) // TODO: change to start at my_rank
+                {
+                    if (elem_col >= work_sharing_arr[j] && elem_col < work_sharing_arr[j + 1])
+                    {
+                        // Remember column corresponding to remote element
+                        remote_elem_col_bk.insert(elem_col);
+
+                        ((*communication_recv_idxs)[j]).push_back(elem_col - work_sharing_arr[j]);
+
+                        ++rhs_needed_heri_counts[j];
+                        break;
+                    }
+                }
+
+            }
+        }
+        else
+        { // i.e. local element
+            local_scs->col_idxs[i] -= work_sharing_arr[my_rank]; // put to top og for loop
+        }
+    }
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // if(my_rank == 3){
+    //     // for(int i = 0; i < my_rank; ++i){
+    //     //     std::cout << "Proc: " << i << " communicates " << lhs_needed_heri_counts[i] << //+ rhs_needed_heri_counts[i] << 
+    //     //     " lhs elements to Proc " << my_rank << std::endl;
+    //     // }
+    //     // for(int i = 0; i < comm_size - my_rank; ++i){
+    //     //     std::cout << "Proc: " << my_rank + i << " communicates " << rhs_needed_heri_counts[i] << //+ rhs_needed_heri_counts[i] << 
+    //     //     " rhs elements to Proc " << my_rank << std::endl;
+    //     // }
+    //     for(int i = 0; i < comm_size; ++i){
+    //         std::cout << "Proc: " << i << " communicates " << lhs_needed_heri_counts[i] << //+ rhs_needed_heri_counts[i] << 
+    //         " lhs elements to Proc " << my_rank << std::endl;
+    //     }
+    //     for(int i = 0; i < comm_size; ++i){
+    //         std::cout << "Proc: " << i << " communicates " << rhs_needed_heri_counts[i] << //+ rhs_needed_heri_counts[i] << 
+    //         " rhs elements to Proc " << my_rank << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // // exit(0);
+
+    IT local_elem_offset = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+
+    // TODO: not sure if these are the correct size. comm_size would be too big
+    int lhs_cumsum_heri_counts[comm_size + 1] = {0}; // change to my_rank + 1
+    int rhs_cumsum_heri_counts[comm_size + 1] = {0}; // change to comm_size - my_rank + 1
+
+    for(int i = 1; i < comm_size + 1; ++i){
+        lhs_cumsum_heri_counts[i] = lhs_needed_heri_counts[i - 1] + lhs_cumsum_heri_counts[i - 1];
+    }
+
+    for(int i = 1; i < comm_size + 1; ++i){
+        rhs_cumsum_heri_counts[i] = rhs_needed_heri_counts[i - 1] + rhs_cumsum_heri_counts[i - 1];
+    }
+
+    int lhs_heri_ctr[comm_size] = {0}; //TODO: change to only have size my_rank
+    int rhs_heri_ctr[comm_size] = {0}; //TODO: change to have size comm_size - my_rank
+
+    std::map<int, int> remote_cols;
+
+    // ASSIGNMENT LOOP
+    // for (IT i = 0; i < local_scs->n_elements; ++i)
+    // {
+    for (auto remote_elem_idx : remote_elem_idxs)
+    {
+        elem_col = original_col_idxs[remote_elem_idx];
+
+        // if this column corresponds to a padded element, continue to next nnz
+        // if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
+
+        if (elem_col < work_sharing_arr[my_rank])
+        { 
+            for (IT j = 0; j < comm_size; ++j)//TODO: change to only go until my_rank
+            {
+                if (elem_col >= work_sharing_arr[j] && elem_col < work_sharing_arr[j + 1])
+                {
+                    // So, on the current process, I will know from which process this 
+                    // new col_idx for lhs halo element
+                    
+                    if(remote_cols.find(elem_col) == remote_cols.end()){
+                        // std::cout << "new key!: " << elem_col << std::endl; 
+                        remote_cols[elem_col] = local_elem_offset + lhs_cumsum_heri_counts[j] + lhs_heri_ctr[j];
+                        ++lhs_heri_ctr[j];
+                    }
+
+                    local_scs->col_idxs[remote_elem_idx] = remote_cols[elem_col];
+                }
+            }
 
         }
         else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
         { // i.e. if RHS remote element
-            if(!(remote_elem_col_bk.find(elem_col) != remote_elem_col_bk.end())){
-                // if this column has not yet been seen
-                remote_elem_col = elem_col;
-                // The rank of where this needed element resides is deduced from the work sharing array.
-                for (IT j = 0; j < comm_size; ++j)
-                {
-                    if (remote_elem_col >= work_sharing_arr[j] && remote_elem_col < work_sharing_arr[j + 1])
-                    {
-                        // Remember column corresponding to remote element
-                        remote_elem_col_bk.insert(remote_elem_col);
-
-                        // Just to make process more clear
-                        from_proc = j;
-                        to_proc = my_rank;
-
-                        // The heri tuple, which is then used inside another tuple for ordering later
-                        heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
-
-                        unordered_heri_tuple = std::make_tuple(remote_elem_col, heri_tuple);
-
-                        unordered_heri_tuples_vec.push_back(unordered_heri_tuple);
-
-                        ++needed_heri_count;
-                        break;
-                    }
-                }
-
-            }
-            local_scs->col_idxs[i] = rhs_halo_hm[original_col_idxs[i]];
-        }
-        else
-        { // i.e. local element
-            local_scs->col_idxs[i] -= work_sharing_arr[my_rank];
-        }
-    }
-
-    std::sort(unordered_heri_tuples_vec.begin(), unordered_heri_tuples_vec.end());
-
-    for(auto& tuple : unordered_heri_tuples_vec){
-        inner_tuple = std::get<1>(tuple);
-        local_needed_heri->push_back(std::get<0>(inner_tuple));
-        local_needed_heri->push_back(std::get<1>(inner_tuple));
-        local_needed_heri->push_back(std::get<2>(inner_tuple));
-    }
-}
-
-/**
-    @brief By using the global_needed_heri array, we can push back all the heri this process will need to send onto to_send_heri.
-    @param *to_send_heri : heri to send from this process
-    @param *local_needed_heri : the heri needed by this process
-    @param *global_needed_heri : array containing all the needed heri tuple encodings
-*/
-template <typename IT>
-void collect_to_send_heri(
-    std::vector<IT> *to_send_heri,
-    const std::vector<IT> *local_needed_heri,
-    IT *global_needed_heri,
-    int my_rank,
-    int comm_size)
-{
-    std::tuple<IT, IT, IT> heri_tuple;
-    std::tuple<IT, IT, IT> inner_tuple;
-    std::tuple<IT, std::tuple<IT, IT, IT>> unordered_heri_tuple;
-    std::vector<std::tuple<IT, std::tuple<IT, IT, IT>>> unordered_heri_tuples_vec;
-    IT from_proc, to_proc, remote_elem_col;
-
-
-    // NOTE: Do these need to be on the heap?
-    IT all_local_needed_heri_sizes[comm_size];
-    IT global_needed_heri_displ_arr[comm_size];
-
-    for (IT i = 0; i < comm_size; ++i)
-    {
-        all_local_needed_heri_sizes[i] = IT{};
-        global_needed_heri_displ_arr[i] = IT{};
-    }
-
-    IT local_needed_heri_size = local_needed_heri->size();
-
-    // First, gather the sizes of messages for the Allgatherv later
-    MPI_Allgather(&local_needed_heri_size,
-                  1,
-                  MPI_INT,
-                  all_local_needed_heri_sizes, // should be an array of length "comm size"
-                  1,
-                  MPI_INT,
-                  MPI_COMM_WORLD);
-
-    IT intermediate_size = IT{};
-
-    for (IT i = 0; i < comm_size; ++i)
-    {
-        global_needed_heri_displ_arr[i] = intermediate_size;
-        intermediate_size += all_local_needed_heri_sizes[i];
-    }
-
-    // Collect to each process, the entire view of needed elements
-    MPI_Allgatherv(&(*local_needed_heri)[0],
-                   local_needed_heri_size,
-                   MPI_INT,
-                   global_needed_heri,
-                   all_local_needed_heri_sizes,
-                   global_needed_heri_displ_arr,
-                   MPI_INT,
-                   MPI_COMM_WORLD);
-
-    // Finally, sort the global_needed_heri into "to_send_heri". Encoded 3-tuples as array
-    for (IT from_proc_idx = 1; from_proc_idx < intermediate_size; from_proc_idx += 3)
-    {
-        if (global_needed_heri[from_proc_idx] == my_rank)
-        {// i.e. if were sending FROM this rank
-
-            // Just to make process more clear
-            remote_elem_col = global_needed_heri[from_proc_idx + 1];
-            to_proc = global_needed_heri[from_proc_idx - 1];
-            from_proc = my_rank;
-
-            // The heri tuple, which is then used inside another tuple for ordering later
-            heri_tuple = std::make_tuple(to_proc, from_proc, remote_elem_col);
-
-            unordered_heri_tuple = std::make_tuple(remote_elem_col, heri_tuple);
-
-            unordered_heri_tuples_vec.push_back(unordered_heri_tuple);
-        }
-    }
-
-    std::sort(unordered_heri_tuples_vec.begin(), unordered_heri_tuples_vec.end());
-
-    for(auto& tuple : unordered_heri_tuples_vec){
-        inner_tuple = std::get<1>(tuple);
-        to_send_heri->push_back(std::get<0>(inner_tuple));
-        to_send_heri->push_back(std::get<1>(inner_tuple));
-        to_send_heri->push_back(std::get<2>(inner_tuple));
-    }
-}
-
-/**
-    @brief Pre-calculate the shift for each given proc_to and proc_from, to look it up quickly in the benchmark loop later. Used in the tag-generation scheme in halo communication.
-    @param *global_needed_heri : array containing all the needed heri tuple encodings
-    @param *global_needed_heri_size : the size of heri needed across all processes
-    @param *shift_arr : Essentially a cumulative from top -> bottom of incedence_arr. The row idx is the "from_proc",
-        the column is the "to_proc", and the element is the shift after the local element index to make for the incoming halo elements
-    @param *incidence_arr : uses the global_needed_heri to keep track of which processes communicate with which.
-*/
-template <typename IT>
-void calc_heri_shifts(
-    const IT *global_needed_heri,
-    const IT *global_needed_heri_size,
-    std::vector<IT> *shift_arr,
-    std::vector<IT> *incidence_arr,
-    int comm_size)
-{
-    IT current_row, current_col, from_proc, to_proc;
-
-    for (IT i = 0; i < *global_needed_heri_size; i += 3)
-    {
-        to_proc = global_needed_heri[i];
-        from_proc = global_needed_heri[i + 1];
-
-        (*incidence_arr)[comm_size * from_proc + to_proc] += 1;
-    }
-
-    for (IT row = 1; row < comm_size; ++row)
-    {
-        IT rows_remaining = comm_size - row;
-        for (IT i = 0; i < rows_remaining; ++i)
-        {
-            for (IT col = 0; col < comm_size; ++col)
+            // The rank of where this needed element resides is deduced from the work sharing array.
+            for (IT j = 0; j < comm_size; ++j)// TODO: change to start at my_rank
             {
-                (*shift_arr)[comm_size * (row + i) + col] += (*incidence_arr)[comm_size * (row - 1) + col];
+                if (elem_col >= work_sharing_arr[j] && elem_col < work_sharing_arr[j + 1])
+                {
+                    if(remote_cols.find(elem_col) == remote_cols.end()){
+                        remote_cols[elem_col] = local_elem_offset + lhs_cumsum_heri_counts[my_rank] + rhs_cumsum_heri_counts[j] + rhs_heri_ctr[j];
+                        ++rhs_heri_ctr[j];
+                    }
+                    local_scs->col_idxs[remote_elem_idx] = remote_cols[elem_col];
+                }
             }
+        }
+    }
+
+    // Construct recv_counts_cumsum from lhs/rhs_cumsum_heri_counts
+    for(int i = 0; i < my_rank; ++i){
+        (*recv_counts_cumsum)[i] = lhs_cumsum_heri_counts[i];
+        // if(my_rank == 3){
+        //     std::cout << "fitting lhs " << i << std::endl;
+        // }
+    }
+    for(int i = 0; i < comm_size - my_rank + 1; ++i){
+        (*recv_counts_cumsum)[my_rank + i] = lhs_cumsum_heri_counts[my_rank] + rhs_cumsum_heri_counts[my_rank + i];
+        // if(my_rank == 3){
+        //     std::cout << "fitting rhs " << my_rank + i << " (" << lhs_cumsum_heri_counts[my_rank] + rhs_cumsum_heri_counts[my_rank + i] << ")" << std::endl;
+        // }
+        // i.e. dont take the leading zero from the rhs_cumsum
+    }
+
+    if(show_steps){
+        if(my_rank == test_rank){
+            std::cout << "column indices AFTER adjustment: " << std::endl;
+            for(int idx = 0; idx < local_scs->n_elements; ++idx){
+                std::cout << local_scs->col_idxs[idx] << std::endl;
+            }
+            printf("\n");
         }
     }
 }
@@ -363,264 +444,180 @@ void calc_heri_shifts(
 */
 template <typename VT, typename IT>
 void communicate_halo_elements(
-    ContextData<IT> *local_context,
+    ContextData<VT, IT> *local_context,
     std::vector<VT> *local_x,
     const IT *work_sharing_arr,
     int my_rank,
     int comm_size)
 {
-    IT rows_in_to_proc, rows_in_from_proc, to_proc, from_proc, global_row_idx, num_local_elems;
-    IT recv_shift = 0, send_shift = 0; // TODO: calculate more efficiently
+    IT num_local_elems;
+    int tag_send, tag_recv;
+    // IT recv_shift = 0, send_shift = 0; // TODO: calculate more efficiently
     IT recieved_elems = 0, sent_elems = 0;
     IT test_rank = 1;
 
     // MPI_Request request; // TODO: What does this do?
+    // MPI_Status statuses[comm_size];
     MPI_Status status;
+    MPI_Request recv_requests[comm_size];
+    MPI_Request send_requests[comm_size];
 
-    // Declare and populate arrays to keep track of number of elements already
-    // recieved or sent to respective procs
-    IT recv_counts[comm_size];
-    IT send_counts[comm_size];
+    // populate_send_buffers(local_context, local_x, my_rank, comm_size);
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
-    for (IT i = 0; i < comm_size; ++i)
-    {
-        recv_counts[i] = 0;
-        send_counts[i] = 0;
-    }
-
-    // // TODO: DRY
     if (typeid(VT) == typeid(float))
     {
         // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
-        rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-        for (IT to_proc_idx = 0; to_proc_idx < (local_context->to_send_heri).size(); to_proc_idx += 3)
+        num_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+
+        // NONBLOCKING  
+
+        for (IT to_proc = 0; to_proc < comm_size; ++to_proc)
         {
-            global_row_idx = to_proc_idx + 2;
-            to_proc = (local_context->to_send_heri)[to_proc_idx];
-            // std::cout << "to_prcc: " << to_proc << ", from proc "<< my_rank << std::endl;
-            from_proc = my_rank;
+            // tag_send = cantor_pairing(my_rank, to_proc);
 
-            send_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
+            // std::cout << "Proc: " << my_rank << " sending to Proc: " << to_proc << ". tag: " << tag_send << std::endl;   
 
-            MPI_Send(
-                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
-                1,
+            float to_send_elems[local_context->comm_idxs[to_proc].size()];
+
+            // Since we cant slice an array...
+            for(int i = 0; i < local_context->comm_idxs[to_proc].size(); ++i){
+                to_send_elems[i] = (*local_x)[(&(local_context->comm_idxs[to_proc])[0])[i]];
+                // std::cout << "Proc: " << my_rank << " sending element at idx: " << to_send_elems[i] << " to Proc: " << to_proc << std::endl;
+            }
+
+            MPI_Isend(
+                to_send_elems,
+                local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc],
                 MPI_FLOAT,
                 to_proc,
-                send_shift + send_counts[to_proc],
-                MPI_COMM_WORLD);
+                (local_context->send_tags[my_rank])[to_proc],
+                MPI_COMM_WORLD,
+                &send_requests[to_proc]
+            );
 
-            ++send_counts[to_proc];
+            // if(my_rank == 1){
+            //     std::cout << "Proc: " << my_rank << " is to send " <<
+            //     local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc] <<
+            //     " elements to Proc: " << to_proc << std::endl;
+            //     // std::cout << "specifically: ";
+            //     // for(int i = 0; i < local_context->communication_idxs[to_proc].size(); ++i){
+            //     //     std::cout << to_send_idxs[i] << ", ";
+            //     // }
+            //     // std::cout << num_local_elems + local_context->recv_counts_cumsum[from_proc] << std::endl;
+            // }
         }
-        // TODO: definetly OpenMP this loop? Improve somehow
-        for (IT from_proc_idx = 1; from_proc_idx < (local_context->local_needed_heri).size(); from_proc_idx += 3)
+
+        for (int from_proc = 0; from_proc < comm_size; ++from_proc)
         {
-            // How is this calculated, and is it totally necessary?
-            rows_in_from_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+            // TODO: pre-calculate in some array, look-up faster than calculation
+            // tag_recv = cantor_pairing(from_proc, my_rank);
 
-            to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
-            from_proc = (local_context->local_needed_heri)[from_proc_idx];
-
-
-            // NOTE: Source of uniqueness for tag
-            // NOTE: essentially "transpose" shift array here
-            recv_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
-
-            MPI_Recv(
-                &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
-                1,
+            // std::cout << "Proc: " << my_rank << " recieving from Proc: " << from_proc << ". tag: " << tag_recv << std::endl;   
+            // if(my_rank == 0){
+            //     std::cout << "Proc: " << my_rank << " is to recieve " <<
+            //     local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc] <<
+            //     " many elements from Proc: " << from_proc << std::endl;
+            //     // std::cout << num_local_elems + local_context->recv_counts_cumsum[from_proc] << std::endl;
+            // }
+        //             MPI_Barrier(MPI_COMM_WORLD);
+        // exit(0);
+            MPI_Irecv(
+                &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
+                local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc],
                 MPI_FLOAT,
                 from_proc,
-                recv_shift + recv_counts[from_proc],
+                (local_context->recv_tags[from_proc])[my_rank],
                 MPI_COMM_WORLD,
-                &status);
+                &recv_requests[from_proc]
+            );
 
-            ++recv_counts[from_proc];
-        }
-    }
-    else if (typeid(VT) == typeid(double))
-    {
-        rows_in_to_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-
-        for (IT to_proc_idx = 0; to_proc_idx < (local_context->to_send_heri).size(); to_proc_idx += 3)
-        {
-            global_row_idx = to_proc_idx + 2;
-            to_proc = (local_context->to_send_heri)[to_proc_idx];
-            from_proc = my_rank;
-
-            send_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
-
-            MPI_Send(
-                &(*local_x)[(local_context->to_send_heri)[global_row_idx] - work_sharing_arr[my_rank]],
-                1,
-                MPI_DOUBLE,
-                to_proc,
-                send_shift + send_counts[to_proc],
-                MPI_COMM_WORLD);
-
-            ++send_counts[to_proc];
+            // MPI_Sendrecv(
+            //     to_send_idxs,
+            //     local_context->send_counts_cumsum[loop_rank + 1] - local_context->send_counts_cumsum[loop_rank],
+            //     MPI_FLOAT,
+            //     my_rank,
+            //     tag_send,
+            //     &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[loop_rank]],
+            //     local_context->recv_counts_cumsum[loop_rank + 1] - local_context->recv_counts_cumsum[loop_rank],
+            //     MPI_FLOAT,
+            //     loop_rank,
+            //     tag_recv,
+            //     MPI_COMM_WORLD,
+            //     &status);
         }
 
-        for (IT from_proc_idx = 1; from_proc_idx < (local_context->local_needed_heri).size(); from_proc_idx += 3)
-        {
-            rows_in_from_proc = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+        
+        MPI_Waitall(comm_size, recv_requests, MPI_STATUS_IGNORE); //statuses arent used...
 
-            to_proc = (local_context->local_needed_heri)[from_proc_idx - 1];
-            from_proc = (local_context->local_needed_heri)[from_proc_idx];
+        // BLOCKING
+        // for (IT to_proc = 0; to_proc < comm_size; ++to_proc)
+        // {
+        //     // tag_send = cantor_pairing(my_rank, to_proc);
+        //     // std::cout << "Proc: " << my_rank << " sending to Proc: " << to_proc << ". tag: " << ((local_context->send_tags)[my_rank])[to_proc] << std::endl;
 
-            recv_shift = (local_context->shift_vec)[comm_size * from_proc + to_proc];
+        //     // Since we cant slice an array... and elements may not be continguous
+        //     float to_send_elems[local_context->comm_idxs[to_proc].size()];
+            
+        //     for(int i = 0; i < local_context->comm_idxs[to_proc].size(); ++i){
+        //         to_send_elems[i] = (*local_x)[(&(local_context->comm_idxs[to_proc])[0])[i]];
+        //         // std::cout << "Proc: " << my_rank << " sending element " << to_send_elems[i] << " to Proc: " << to_proc << std::endl;
+        //     }
 
-            MPI_Recv(
-                &(*local_x)[rows_in_to_proc + recv_shift + recv_counts[from_proc]],
-                1,
-                MPI_DOUBLE,
-                from_proc,
-                recv_shift + recv_counts[from_proc],
-                MPI_COMM_WORLD,
-                &status);
+        //     // MPI_Send(
+        //     //     &(local_context->elems_to_send[to_proc])[0],
+        //     //     local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc],
+        //     //     MPI_FLOAT,
+        //     //     to_proc,
+        //     //     (local_context->send_tags[my_rank])[to_proc],
+        //     //     MPI_COMM_WORLD);
 
-            ++recv_counts[from_proc];
+        //     MPI_Send(
+        //         to_send_elems,
+        //         local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc],
+        //         MPI_FLOAT,
+        //         to_proc,
+        //         (local_context->send_tags[my_rank])[to_proc],
+        //         MPI_COMM_WORLD);
+
+        // }
+
+        // for (int from_proc = 0; from_proc < comm_size; ++from_proc)
+        // {
+        //     // TODO: pre-calculate in some array, look-up faster than calculation
+        //     // tag_recv = cantor_pairing(from_proc, my_rank);
+
+        //     // std::cout << "Proc: " << my_rank << " recieving from Proc: " << from_proc << ". tag: " << ((local_context->recv_tags)[from_proc])[my_rank] << std::endl;   
+
+
+        //     MPI_Recv(
+        //         &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
+        //         local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc],
+        //         MPI_FLOAT,
+        //         from_proc,
+        //         (local_context->recv_tags[from_proc])[my_rank],
+        //         MPI_COMM_WORLD,
+        //         &status);
+            
+            // std::cout << "Proc: " << my_rank << " recieved " << local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc] <<
+            // " elements, at local_x index " << num_local_elems + local_context->recv_counts_cumsum[from_proc] << std::endl;
+
+            //     if(my_rank == 0){
+            //         printf("\n");
+            //         for(int i = 0; i < local_x->size(); ++i){
+            //             std::cout << (*local_x)[i] << std::endl;
+            //         }
+            //     }
         }
-    }
-}
-
-/**
-    Adjust the col_idx from the scs data structure, so that elements of scs.values will multiply with the proper local_x elements.
-        "local" elements of scs.values have their col_idx adjusted differently than "remote" elements of scs.values.
-
-    @brief Adjust the col_idx from the scs data structure
-    @param *local_scs : pointer to local scs struct
-    @param *work_sharing_arr : the array describing the partitioning of the rows
-*/
-template <typename VT, typename IT>
-void adjust_halo_col_idxs(
-    ScsData<VT, IT> *local_scs,
-    const IT *work_sharing_arr,
-    int my_rank,
-    int comm_size)
-{
-    IT remote_elem_count = 0;
-    IT amnt_lhs_remote_elems = 0;
-    IT amnt_rhs_remote_elems = 0;
-    IT test_rank = 1, show_steps = 0;
-    IT exists_nz_elem = 0;
-    IT idx_ctr;
-    IT elem_idx;
-
-    // TODO: Better to recalculate here? Or get from arguement?
-    IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-
-    std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
-    std::vector<IT> col_all_inst_idx;
+        
 
 
-    if(show_steps){
-        if(my_rank == test_rank){
-            std::cout << "column indices BEFORE adjustment: " << std::endl;
-            for(int idx = 0; idx < local_scs->n_elements; ++idx){
-                std::cout << local_scs->col_idxs[idx] << std::endl;
-            }
-            printf("\n");
-        }
-    }
-
-    // #pragma omp parallel for
-    for (IT i = 0; i < local_scs->n_elements; ++i)
-    {
-        // NOTE: Is this enough? Or do we also need local_scs->col_idxs[i] != 0?
-        if (local_scs->values[i] != 0) // ignore padding
-        {
-            if ((local_scs->col_idxs[i] >= work_sharing_arr[my_rank]) && local_scs->col_idxs[i] < work_sharing_arr[my_rank + 1])
-            { // i.e. if local
-                local_scs->col_idxs[i] -= work_sharing_arr[my_rank];
-            }
-        }
-    }
-
-    int lhs_halo_col_ctr = 0;
-    // Proc 0 will never have LHS remote elements
-    if(my_rank != 0)
-    {
-        // start at the "left wall" of the matrix, and iterate columns until we reach local elements
-        for (int col = 0; col < work_sharing_arr[my_rank]; ++col)
-        {
-            if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
-            { // if there exists ANY element in this column...
-
-                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
-
-                for(auto idx : col_all_inst_idx)
-                {
-                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
-                    {
-                        exists_nz_elem = 1; // is this harness loop necessary?
-                        break;
-                    }
-                }
-
-                if(exists_nz_elem)
-                { // and if this element is not padding
-                    // #pragma omp parallel for
-                    for(auto idx : col_all_inst_idx)
-                    {
-                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0) //second condition needed?
-                        {
-                            local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr;
-                        }
-                    }
-                // If at least one nonzero element exists in this column, increment counter
-                ++lhs_halo_col_ctr;
-                }
-            }
-        }   
-    }
-
-
-    int rhs_halo_col_ctr = 0;
-    // Last proc will never have RHS remote elements
-    if(my_rank != (comm_size - 1)){
-        // start at the "left wall" of the matrix, and iterate columns until we reach local elements
-        for (int col = work_sharing_arr[my_rank + 1]; col < work_sharing_arr[comm_size]; ++col)
-        {
-            if ((std::find(original_col_idxs.begin(), original_col_idxs.end(), col) != original_col_idxs.end()))
-            { // if there exists ANY element in this column...
-                col_all_inst_idx = find_items<IT>(original_col_idxs, col);
-
-                for(auto idx : col_all_inst_idx)
-                {
-                    if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
-                    {
-                        exists_nz_elem = 1;
-                        break;
-                    }
-                }
-
-                if(exists_nz_elem)
-                { // and if this element is not padding
-                    // #pragma omp parallel for
-                    for(auto idx : col_all_inst_idx)
-                    {
-                        if(original_col_idxs[idx] == col && local_scs->values[idx] != 0)
-                        {
-                            local_scs->col_idxs[idx] = amnt_local_elems + lhs_halo_col_ctr + rhs_halo_col_ctr;
-                        }
-                    }
-                    // If at least one element exists in this column, increment counter
-                    ++rhs_halo_col_ctr;
-                }
-            }
-        }   
-    }
-
-    if(show_steps){
-        if(my_rank == test_rank){
-            std::cout << "column indices AFTER adjustment: " << std::endl;
-            for(int idx = 0; idx < local_scs->n_elements; ++idx){
-                std::cout << local_scs->col_idxs[idx] << std::endl;
-            }
-            printf("\n");
-        }
-    }
+    // }
+    // else if (typeid(VT) == typeid(double))
+    // {
+    //     // TODO
+    // }
 }
 
 /**
@@ -788,13 +785,13 @@ void define_bookkeeping_type(
 template<typename VT, typename IT>
 void mpi_init_local_structs(
     ScsData<VT, IT> *local_scs,
-    ContextData<IT> *local_context,
+    ContextData<VT, IT> *local_context,
     MtxData<VT, IT> *total_mtx,
     Config *config, // shouldn't this be const?
     const std::string *seg_method,
     IT *work_sharing_arr,
-    const IT my_rank,
-    const IT comm_size)
+    int my_rank,
+    int comm_size)
 {
     MtxData<VT, IT> local_mtx;
 
@@ -950,69 +947,56 @@ void mpi_init_local_structs(
 
     MPI_Type_free(&bk_type);
 
-    std::vector<IT> local_needed_heri;
-    if(config->log_prof && my_rank == 0) {log("Begin collect_local_needed_heri");}
-    double begin_clnh_time = MPI_Wtime();
-    collect_local_needed_heri<VT, IT>(&local_needed_heri, local_scs, work_sharing_arr, my_rank, comm_size);
-    if(config->log_prof && my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, MPI_Wtime());}
+    // TODO: is an array of vectors better?
+    // Vector of vecs, Keep track of which remote columns come from which processes
+    std::vector<std::vector<IT>> communication_recv_idxs;
+    std::vector<std::vector<IT>> communication_send_idxs;
 
-    IT local_needed_heri_size = local_needed_heri.size();
-    IT global_needed_heri_size;
-
-    // TODO: Is this actually necessary?
-    MPI_Allreduce(&local_needed_heri_size,
-                  &global_needed_heri_size,
-                  1,
-                  MPI_INT,
-                  MPI_SUM,
-                  MPI_COMM_WORLD
-    );
-
-    IT *global_needed_heri = new IT[global_needed_heri_size];
-
-    for (IT i = 0; i < global_needed_heri_size; ++i)
-    {
-        global_needed_heri[i] = IT{};
+    // Fill vectors with empty vectors, representing places to store "to_send_idxs"
+    for(int i = 0; i < comm_size; ++i){
+        communication_recv_idxs.push_back(std::vector<IT>());
+        communication_send_idxs.push_back(std::vector<IT>());
     }
 
-    // "to_send_heri" are all halo elements that this process is to send
-    std::vector<IT> to_send_heri;
-    if(config->log_prof && my_rank == 0) {log("Begin collect_to_send_heri");}
-    double begin_ctsh_time = MPI_Wtime();
-    collect_to_send_heri<IT>(
-        &to_send_heri,
-        &local_needed_heri,
-        global_needed_heri,
-        my_rank,
-        comm_size
-    );
-    if(config->log_prof && my_rank == 0) {log("Finish collect_to_send_heri", begin_ctsh_time, MPI_Wtime());}
+    // if(my_rank == 0){
+    //     std::cout << communication_recv_idxs.size() << std::endl;
+    //     std::cout << communication_recv_idxs[0].size() << std::endl;
+    // }
 
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
-    // The shift array is used in the tag-generation scheme in halo communication.
-    // the row idx is the "from_proc", the column is the "to_proc", and the element is the shift
-    // after the local element index to make for the incoming halo elements
-    std::vector<IT> shift_arr((comm_size) * (comm_size), 0);
-    std::vector<IT> incidence_arr((comm_size) * (comm_size), 0);
+    // std::vector<IT> local_needed_heri;
+    std::vector<IT> recv_counts_cumsum(comm_size + 1, 0);
+    std::vector<IT> send_counts_cumsum(comm_size + 1, 0);
 
-    if(config->log_prof && my_rank == 0) {log("Begin calc_heri_shifts");}
-    double begin_chs_time = MPI_Wtime();
-    calc_heri_shifts<IT>(
-        global_needed_heri, 
-        &global_needed_heri_size, 
-        &shift_arr, 
-        &incidence_arr, 
-        comm_size
-    ); // NOTE: always symmetric?
-    if(config->log_prof && my_rank == 0) {log("Finish calc_heri_shifts", begin_chs_time, MPI_Wtime());}
+    if(config->log_prof && my_rank == 0) {log("Begin collect_local_needed_heri");}
+    double begin_clnh_time = MPI_Wtime();
+    collect_local_needed_heri<VT, IT>(&communication_recv_idxs, &recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
+    if(config->log_prof && my_rank == 0) {log("Finish collect_local_needed_heri", begin_clnh_time, MPI_Wtime());}
 
-    local_context->local_needed_heri = local_needed_heri;
-    local_context->to_send_heri = to_send_heri;
-    local_context->shift_vec = shift_arr;
-    local_context->incidence_vec = incidence_arr;
+    organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
+
+    collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, my_rank, comm_size);
+
+    std::vector<std::vector<IT>> send_tags;
+    std::vector<std::vector<IT>> recv_tags;
+
+    for(int i = 0; i < comm_size; ++i){
+        send_tags.push_back(std::vector<IT>());
+        recv_tags.push_back(std::vector<IT>());
+    }
+
+    gen_unique_comm_tags<VT, IT>(&send_tags, &recv_tags, my_rank, comm_size);
+
+    local_context->comm_idxs = communication_send_idxs;
+    local_context->send_tags = send_tags;
+    local_context->recv_tags = recv_tags;
+    local_context->recv_counts_cumsum = recv_counts_cumsum;
+    local_context->send_counts_cumsum = send_counts_cumsum;
+    // TODO: where to best place this? How to best make use of it?
     local_context->amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+    // TODO: update
     local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
-
-    delete[] global_needed_heri;
 }
 #endif
