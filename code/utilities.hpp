@@ -1337,7 +1337,6 @@ std::vector<IT> find_items(std::vector<IT> const &v, int target) {
 }
 
 
-// TODO: check this is doing what you expect
 int cantor_pairing(int a, int b) {
     int c = .5 * (a + b) * (a + b + 1) + b;
     return c;

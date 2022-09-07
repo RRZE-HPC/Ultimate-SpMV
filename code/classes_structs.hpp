@@ -23,7 +23,7 @@ void log(const char *log_msg, const double begin_time = 0, const double end_time
 
         // If timing measurement provided, print that as well
         if(end_time > 0 && begin_time > 0){
-            log_file_to_append << ": " << end_time - begin_time << std::endl;
+            log_file_to_append << ": " << end_time - begin_time;
         }
 
         // Close the log
@@ -38,11 +38,11 @@ static bool g_same_seed_for_every_vector = true;
 template <typename VT, typename IT>
 struct ContextData
 {
-    std::vector<IT> to_send_heri;
-    std::vector<IT> local_needed_heri;
+    // std::vector<IT> to_send_heri;
+    // std::vector<IT> local_needed_heri;
 
-    std::vector<IT> shift_vec; //how does this work, with these on the heap?
-    std::vector<IT> incidence_vec;
+    // std::vector<IT> shift_vec; //how does this work, with these on the heap?
+    // std::vector<IT> incidence_vec;
 
     std::vector<std::vector<IT>> send_tags;
     std::vector<std::vector<IT>> recv_tags;

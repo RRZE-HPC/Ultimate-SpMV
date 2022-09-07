@@ -14,14 +14,14 @@
 #endif
 
 /**
-    @brief Collect halo element row indices for each local x-vector, and perform SPMVM
+    @brief Perform SPMVM kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
-    @param *local_scs : pointer to local scs struct
+    @param *local_scs : pointer to local scs struct 
+    @param *local_context : struct containing local_scs + communication information
     @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *local_y : local results vector, instance of SimpleDenseMatrix class
     @param *local_x : local RHS vector, instance of SimpleDenseMatrix class
     @param *r : a Result struct, in which results of the benchmark are stored
-    @param *defaults : a DefaultValues struct, in which default values of x and y can be defined
 */
 template <typename VT, typename IT>
 void bench_spmv(
@@ -33,8 +33,7 @@ void bench_spmv(
     std::vector<VT> *local_x,
     Result<VT, IT> *r,
     int my_rank,
-    int comm_size
-    )
+    int comm_size)
 {
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
@@ -44,16 +43,30 @@ void bench_spmv(
         std::vector<VT> dummy_x(local_x->size(), 1.0);
         std::vector<VT> dummy_y(local_y->size(), 0.0);
 
+
         MPI_Barrier(MPI_COMM_WORLD);
         // Warm-up
         double begin_warm_up_loop_time, end_warm_up_loop_time;
         begin_warm_up_loop_time = MPI_Wtime();
-        for(int k = 0; k < WARM_UP_REPS; ++k){
-                if(config->comm_halos){
-                    communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
-                    MPI_Barrier(MPI_COMM_WORLD);
-                }
 
+        if(config->comm_halos){
+            for(int k = 0; k < WARM_UP_REPS; ++k){
+                    communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+
+                    spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+
+                    std::swap(dummy_x, dummy_y);
+
+                    // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                    //     printf("%lf", dummy_x[local_x->size() / 2]);
+                    //     exit(0);
+                    // }
+            }
+        }
+        else if(!config->comm_halos){
+            for(int k = 0; k < WARM_UP_REPS; ++k){
                 spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
@@ -65,36 +78,63 @@ void bench_spmv(
                 //     exit(0);
                 // }
             }
+        }
         end_warm_up_loop_time = MPI_Wtime();
 
-        // Use warm-up to calculate n_iter for real benchmark
-        int n_iter = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
 
-        // std::cout << "Proc: " << my_rank << ", niter: " << n_iter << std::endl;
+        // Use warm-up to calculate n_iter for real benchmark
+        int n_iter; // NOTE: is it correct for the root process' iteration count to be what is used?
+        if(my_rank == 0){
+            n_iter = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
+        }
+
+        MPI_Bcast(
+            &n_iter,
+            1,
+            MPI_INT,
+            0,
+            MPI_COMM_WORLD
+        );
 
         double begin_bench_loop_time, end_bench_loop_time;
 
         begin_bench_loop_time = MPI_Wtime();
         MPI_Barrier(MPI_COMM_WORLD);
+
         
-        for(int k = 0; k < n_iter; ++k){
-            if(config->comm_halos){
+        if(config->comm_halos){
+            for(int k = 0; k < n_iter; ++k){
                 communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
-                MPI_Barrier(MPI_COMM_WORLD);
+
+                spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                    local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                    local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                
+
+                std::swap(dummy_x, dummy_y);
+
+                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                //     printf("%lf", dummy_x[local_x->size() / 2]);
+                //     exit(0);
+                // }
             }
-
-            spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-
-            std::swap(dummy_x, dummy_y);
-
-            // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-            //     printf("%lf", dummy_x[local_x->size() / 2]);
-            //     exit(0);
-            // }
         }
-            
+        else if(!config->comm_halos){
+            for(int k = 0; k < n_iter; ++k){
+                spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                    local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                    local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                
+
+                std::swap(dummy_x, dummy_y);
+
+                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                //     printf("%lf", dummy_x[local_x->size() / 2]);
+                //     exit(0);
+                // }
+            }
+        }
+
         MPI_Barrier(MPI_COMM_WORLD);
         end_bench_loop_time = MPI_Wtime();
 
@@ -108,56 +148,11 @@ void bench_spmv(
         if(config->log_prof && my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, bench mode", begin_csslbm_time, MPI_Wtime());}
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
-        // if(my_rank == 0){
-        //     (*local_x)[0] = 1;
-        //     (*local_x)[1] = 2;
-        //     (*local_x)[2] = 3;
-        //     (*local_x)[3] = 0;
-        //     (*local_x)[4] = 0;
-        // }
-        // if(my_rank == 1){
-        //     (*local_x)[0] = 4;
-        //     (*local_x)[1] = 5;
-        //     (*local_x)[2] = 6;
-        //     (*local_x)[3] = 0;
-        //     (*local_x)[4] = 0;
-        // }
-        // if(my_rank == 2){
-        //     (*local_x)[0] = 7;
-        //     (*local_x)[1] = 8;
-        //     (*local_x)[2] = 0;
-        // }
-        // if(my_rank == 3){
-        //     (*local_x)[0] = 9;
-        //     (*local_x)[1] = 10;
-        // }
-
         if(config->log_prof && my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
         double begin_csslsm_time = MPI_Wtime();
         for (int i = 0; i < config->n_repetitions; ++i)
         {
-
-            // if(my_rank == 2){
-            //     std::cout << "before comm" << std::endl;
-            //     for(int i = 0; i < 50; ++i){
-            //         std::cout << (*local_x)[i] << std::endl;
-            //     }
-            // }
-
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
-            MPI_Barrier(MPI_COMM_WORLD);
-
-            // if(my_rank == 2){
-            //     std::cout << "after comm" << std::endl;
-            //     for(int i = 0; i < 50; ++i){
-            //         std::cout << (*local_x)[i] << std::endl;
-            //     }
-            // }
-
-            // MPI_Barrier(MPI_COMM_WORLD);
-            // exit(0);
-
-            // MPI_Barrier(MPI_COMM_WORLD);
 
             spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
@@ -203,8 +198,7 @@ void bench_spmv(
 }
 
 /**
-    @brief The main harness for the rest of the functions, in which we segment and execute the work to be done.
-        Validation happens outside this routine
+    @brief The main harness for the SPMVM kernel, in which we first segment distribute the needed structs. Validation happens outside this routine
     @param *total_mtx : complete mtx struct, read .mtx file with mtx_reader.h
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
@@ -230,6 +224,8 @@ void compute_result(
     // Allocate space for work sharing array
     IT work_sharing_arr[comm_size + 1];
 
+    if(config->log_prof && my_rank == 0) {log("Begin mpi_init_local_structs");}
+    double begin_mils_time = MPI_Wtime();
     mpi_init_local_structs<VT, IT>(
         &local_scs,
         &local_context, 
@@ -240,12 +236,8 @@ void compute_result(
         my_rank, 
         comm_size
     );
+    if(config->log_prof && my_rank == 0) {log("Finish mpi_init_local_structs", begin_mils_time, MPI_Wtime());}
 
-    // std::cout << "Proc: " << my_rank << ", here 3" << std::endl;
-
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 
     // Declare local vectors to be used
     SimpleDenseMatrix<VT, IT> local_x(&local_context);
@@ -271,12 +263,6 @@ void compute_result(
         my_rank,
         comm_size
     );
-
-    // std::cout << "Proc: " << my_rank << ", here 4" << std::endl;
-
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
     if(config->log_prof && my_rank == 0) {log("Finish bench_spmv", begin_bs_time, MPI_Wtime());}
 
     if(config->log_prof && my_rank == 0) {log("Begin results gathering");}
@@ -373,11 +359,6 @@ void compute_result(
         }
     }
     if(config->log_prof && my_rank == 0) {log("Finish results gathering", begin_rg_time, MPI_Wtime());}
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-    // std::cout << "Proc: " << my_rank << ", here 5" << std::endl;
-
 }
 
 int main(int argc, char *argv[])
@@ -470,10 +451,8 @@ int main(int argc, char *argv[])
         compute_result<float, int>(&total_mtx, &seg_method, &config, &r, my_rank, comm_size);
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
 
-        // MPI_Barrier(MPI_COMM_WORLD);
-        // exit(0);
-
         double time_per_proc = MPI_Wtime() - begin_main_time;
+
         // Gather all times for printing of results
         MPI_Gather(
             &time_per_proc,
@@ -485,10 +464,6 @@ int main(int argc, char *argv[])
             0,
             MPI_COMM_WORLD
         );
-        // MPI_Barrier(MPI_COMM_WORLD);
-        // exit(0);
-        // std::cout << "Proc: " << my_rank << ", here 6" << std::endl;
-
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -509,24 +484,12 @@ int main(int argc, char *argv[])
                 write_bench_to_file<float, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, comm_size);
             }
         }
-
-        // std::cout << "Proc: " << my_rank << ", here 7" << std::endl;
-
     }
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 
     if(config.log_prof && my_rank == 0) {log("Finish main", begin_main_time, MPI_Wtime());}
     if(config.log_prof && my_rank == 0) {log("__________ log end __________");}
 
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
-    // std::cout << "Proc: " << my_rank << ", here 8" << std::endl;
-
-
     MPI_Finalize();
-    
 
     return 0;
 }
