@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <numeric>
 #include <map>
+#include <unistd.h>
 
 #include "utilities.hpp"
 #include "classes_structs.hpp"
@@ -98,6 +99,39 @@ void collect_comm_idxs(
     }
 
     MPI_Waitall(comm_size, recv_requests, MPI_STATUS_IGNORE);
+
+    // for (int to_proc = 0; to_proc < comm_size; ++to_proc){
+    //     int outgoing_b_s = (*send_counts_cumsum)[to_proc + 1] - (*send_counts_cumsum)[to_proc];
+    //     std::cout << "Proc: " << to_proc << " outgoing_b_s = " << outgoing_b_s << std::endl;
+    //     int num_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+
+
+    //     for(int i = 0; i < outgoing_b_s; ++i){
+    //         if(((*communication_send_idxs)[to_proc])[i] > num_local_elems){
+    //             std::cout << "num_local_elems = " << num_local_elems << ", outgoing_buf_size = " << outgoing_b_s << std::endl;
+    //             std::cout << "Greater than local elems!" << std::endl;
+    //             std::cout << "bad idx: " << i << " -> to proc: " << to_proc << " from local idx " << ((*communication_send_idxs)[to_proc])[i] << std::endl;
+    //         }
+    //         if(((*communication_send_idxs)[to_proc])[i] < 0){
+    //             std::cout << "num_local_elems = " << num_local_elems << ", outgoing_buf_size = " << outgoing_b_s << std::endl;
+    //             std::cout << "less than 0!" << std::endl;
+    //             std::cout << "bad idx: " << i << " -> to proc: " << to_proc << " from local idx " << ((*communication_send_idxs)[to_proc])[i] << std::endl;
+    //         }
+    //     //     // std::cout << communication_send_idxs[2][i] << std::endl;
+    //     //     // if( (communication_send_idxs[2][i] == 0) && (communication_send_idxs[2][i-1] == 0) ){
+    //     //     // std::cout << "out of comm: bad idx = " << i - 1 << std::endl;
+    //     //     // exit(1);
+    //     //     // }
+    //         if(my_rank == 0){
+    //             // definetly catching overflow here
+    //             // std::cout << (*communication_send_idxs)[2].size() << std::endl;
+                
+    //             std::cout << "Proc: " << my_rank << ", to_proc : " << to_proc << "i = 145914 => " << ((*communication_send_idxs)[2])[145914] << std::endl;
+    //             std::cout << "Proc: " << my_rank << ", to_proc : " << to_proc << "i = 145916 => " << ((*communication_send_idxs)[2])[145916] << std::endl;
+    //             std::cout << "Proc: " << my_rank << ", to_proc : " << to_proc << "i = 145918 => " << ((*communication_send_idxs)[2])[145918] << std::endl;  
+    //         }
+    //     }
+    // }
 }
 
 /**
@@ -174,14 +208,30 @@ void collect_local_needed_heri(
     int my_rank,
     int comm_size)
 {
+    // std::cout << "got here 2" << std::endl;
     IT from_proc, to_proc, elem_col;
     IT needed_heri_count = 0;
     IT amnt_lhs_halo_elems = 0;
 
     // To remember which columns have already been accounted for
     std::unordered_set<IT> remote_elem_col_bk;
+    // std::cout << "got here 2.1" << std::endl;
     std::vector<IT> remote_elem_idxs;
+    // std::cout << "got here 2.2" << std::endl;
+    // std::cout << "local_scs->n_elements = " << local_scs->n_elements << std::endl;
+    // std::cout << "local_scs->col_idxs.data() = " << local_scs->col_idxs.data() << std::endl;
+    // std::cout << "local_scs->col_idxs.data() + local_scs->n_elements = " << local_scs->col_idxs.data() + local_scs->n_elements << std::endl;
     std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
+    // std::cout << "got here 2.3" << std::endl;
+
+
+    // for(int i = 0; i < original_col_idxs.size(); ++i){
+    //     std::cout << original_col_idxs[i] << std::endl;
+    // }
+
+    // std::cout << "got here 3" << std::endl;
+
+    // exit(0);
 
     // TODO: these sizes are too large. Should be my_rank and comm_size - my_rank
     int lhs_needed_heri_counts[comm_size] = {0};
@@ -362,6 +412,8 @@ void communicate_halo_elements(
     int my_rank,
     int comm_size)
 {
+    // std::cout << my_rank << std::endl;
+    // std::cout << comm_size << std::endl;
     int outgoing_buf_size, incoming_buf_size;
 
     MPI_Request recv_requests[comm_size];
@@ -377,8 +429,6 @@ void communicate_halo_elements(
         for (int from_proc = 0; from_proc < comm_size; ++from_proc)
         {
             incoming_buf_size = local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc];
-            // std::cout << "Proc: " << my_rank << " expecting " << incoming_buf_size << " many elements from Proc: " << from_proc << std::endl;
-            // std::cout << "Proc: " << my_rank << " has " << num_local_elems << " local elements" << std::endl;
 
             MPI_Irecv(
                 &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
@@ -390,22 +440,20 @@ void communicate_halo_elements(
                 &recv_requests[from_proc]
             );
         }
-
         for (int to_proc = 0; to_proc < comm_size; ++to_proc)
         {
             outgoing_buf_size = local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc];
-            VT to_send_elems[outgoing_buf_size];
-           
+            float *to_send_elems = new float[outgoing_buf_size];           
 
             // for sanity
-            // if(local_context->comm_idxs[to_proc].size() != outgoing_buf_size){
-            //     std::cout << "Mismatched buffer lengths in communication" << std::endl;
-            //     exit(1);
-            // }
+            if(local_context->comm_idxs[to_proc].size() != outgoing_buf_size){
+                std::cout << "Mismatched buffer lengths in communication" << std::endl;
+                exit(1);
+            }
 
             // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < outgoing_buf_size; ++i){
-                to_send_elems[i] = (*local_x)[(&(local_context->comm_idxs[to_proc])[0])[i]];
+                to_send_elems[i] = (*local_x)[(local_context->comm_idxs[to_proc])[i]];
             }
 
             MPI_Isend(
@@ -417,7 +465,11 @@ void communicate_halo_elements(
                 MPI_COMM_WORLD,
                 &send_requests[to_proc]
             );
+
+            delete[] to_send_elems;
         }
+
+
     }
     else if (typeid(VT) == typeid(double)){
         for (int from_proc = 0; from_proc < comm_size; ++from_proc)
@@ -438,19 +490,40 @@ void communicate_halo_elements(
         for (int to_proc = 0; to_proc < comm_size; ++to_proc)
         {
             outgoing_buf_size = local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc];
-            VT to_send_elems[outgoing_buf_size];
+            double *to_send_elems = new double[outgoing_buf_size];
+            // double to_send_elems[outgoing_buf_size];
 
             // for sanity
-            // if(local_context->comm_idxs[to_proc].size() != outgoing_buf_size){
-            //     std::cout << "Mismatched buffer lengths in communication" << std::endl;
-            //     exit(1);
-            // }
+            if(local_context->comm_idxs[to_proc].size() != outgoing_buf_size){
+                std::cout << "Mismatched buffer lengths in communication" << std::endl;
+                exit(1);
+            }
 
             // NOTE: can we overlap this with something?
             // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < outgoing_buf_size; ++i){
-                to_send_elems[i] = (*local_x)[(&(local_context->comm_idxs[to_proc])[0])[i]];
+                to_send_elems[i] = (*local_x)[(local_context->comm_idxs[to_proc])[i]];
             }
+
+
+            //     if((local_context->comm_idxs[to_proc])[i] > num_local_elems){
+            //         std::cout << "num_local_elems = " << num_local_elems << ", outgoing_buf_size = " << outgoing_buf_size << std::endl;
+            //         std::cout << "Greater than local elems!" << std::endl;
+            //         std::cout << "bad idx: " << i << " -> to proc: " << to_proc << " from local idx " << (local_context->comm_idxs[to_proc])[i] << std::endl;
+            //     }
+            //     if((local_context->comm_idxs[to_proc])[i] < 0){
+            //         std::cout << "num_local_elems = " << num_local_elems << ", outgoing_buf_size = " << outgoing_buf_size << std::endl;
+            //         std::cout << "less than 0!" << std::endl;
+            //         std::cout << "bad idx: " << i << " -> to proc: " << to_proc << " from local idx " << (local_context->comm_idxs[to_proc])[i] << std::endl;
+            //     }
+            //     // to_send_elems[i] = (*local_x)[(local_context->comm_idxs[to_proc])[i]];
+
+            //     std::cout << to_send_elems[i] << " -> to proc: " << to_proc << " from local idx " << (local_context->comm_idxs[to_proc])[i] << std::endl;
+            //     // if( ((local_context->comm_idxs[to_proc][)[i] == 0) && ((&(local_context->comm_idxs[to_proc])[0])[i-1] == 0) ){
+            //     //     std::cout << "bad idx = " << i - 1 << std::endl;
+            //     //     exit(0);
+            //     // }
+            // }
 
             MPI_Isend(
                 to_send_elems,
@@ -461,10 +534,13 @@ void communicate_halo_elements(
                 MPI_COMM_WORLD,
                 &send_requests[to_proc]
             );
+
+            delete[] to_send_elems;
         }
     }
-
     MPI_Waitall(comm_size, recv_requests, MPI_STATUS_IGNORE);
+
+
 }
 
 /**
@@ -540,7 +616,6 @@ void seg_work_sharing_arr(
     //         std::cout << work_sharing_arr[i] << " ";
     //     }
     //     printf("\n");
-
     // }
 
     // TODO: What other cases are there to protect against?
@@ -552,12 +627,11 @@ void seg_work_sharing_arr(
     }
 
     // if(my_rank == 0){
-    //     std::cout << "work_sharing_arr after adjustment: " << std::endl;
-    //     for(int i = 0; i < comm_size + 1; ++i){
-    //         std::cout << work_sharing_arr[i] << " ";
-    //     }
-    //     printf("\n");
-
+        // std::cout << "work_sharing_arr after adjustment: " << std::endl;
+        // for(int i = 0; i < comm_size + 1; ++i){
+        //     std::cout << work_sharing_arr[i] << " ";
+        // }
+        // printf("\n");
     // }
 }
 
@@ -827,6 +901,8 @@ void mpi_init_local_structs(
     std::vector<IT> recv_counts_cumsum(comm_size + 1, 0);
     std::vector<IT> send_counts_cumsum(comm_size + 1, 0);
 
+    // std::cout << "got here 1" << std::endl;
+
     if(config->log_prof && my_rank == 0) {log("Begin collect_local_needed_heri");}
     double begin_clnh_time = MPI_Wtime();
     collect_local_needed_heri<VT, IT>(&communication_recv_idxs, &recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
@@ -837,21 +913,13 @@ void mpi_init_local_structs(
     organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
     if(config->log_prof && my_rank == 0) {log("Finish organize_cumsums", begin_ocs_time, MPI_Wtime());}
 
-    // if(my_rank == 2){
-    //     // std::cout << "send counts cumsum for Proc: " << my_rank << std::endl;
-    //     // for(int i = 0; i < comm_size + 1; ++i){
-    //     //     std::cout << send_counts_cumsum[i] << ", " << std::endl;
-    //     // }
-
-    //     std::cout << "recv counts cumsum for Proc: " << my_rank << std::endl;
-    //     for(int i = 0; i < comm_size + 1; ++i){
-    //         std::cout << recv_counts_cumsum[i] << ", " << std::endl;
-    //     }
-    // }
 
     if(config->log_prof && my_rank == 0) {log("Begin collect_comm_idxs");}
     double begin_cci_time = MPI_Wtime();
     collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, &send_counts_cumsum, my_rank, comm_size);
+
+    // Necessary for "high comm" instances. Just leave it.
+    MPI_Barrier(MPI_COMM_WORLD);
     if(config->log_prof && my_rank == 0) {log("Finish collect_comm_idxs", begin_cci_time, MPI_Wtime());}
 
     std::vector<std::vector<IT>> send_tags;
@@ -867,8 +935,8 @@ void mpi_init_local_structs(
     gen_unique_comm_tags<VT, IT>(&send_tags, &recv_tags, my_rank, comm_size);
     if(config->log_prof && my_rank == 0) {log("Finish gen_unique_comm_tags", begin_guct_time, MPI_Wtime());}
 
-
     local_context->comm_idxs = communication_send_idxs;
+
     local_context->send_tags = send_tags;
     local_context->recv_tags = recv_tags;
     local_context->recv_counts_cumsum = recv_counts_cumsum;
