@@ -57,7 +57,7 @@ ifeq ($(USE_LIKWID),1)
 endif
 
 # Also rebuild when following files change.
-REBUILD_DEPS = $(MAKEFILE_LIST) vectors.h mtx_reader.h classes_structs.hpp utilities.hpp kernels.hpp mpi_funcs.hpp write_results.hpp
+REBUILD_DEPS = $(MAKEFILE_LIST) vectors.h classes_structs.hpp utilities.hpp kernels.hpp mpi_funcs.hpp write_results.hpp mmio.h
 
 .PHONY: all
 all: omp
@@ -65,10 +65,15 @@ all: omp
 .PHONY: omp
 omp: spmv-omp
 
-spmv-omp: main.o $(REBUILD_DEPS)
+spmv-omp: main.o mmio.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -qmkl -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS) 
 
 main.o: main.cpp $(REBUILD_DEPS)
+	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
+
+# -Wl,--stack,0
+
+mmio.o: mmio.cpp mmio.h
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
 
 # main.o: main.cpp $(REBUILD_DEPS)

@@ -24,27 +24,6 @@ void write_bench_to_file(
     typeid(VT).name() << ", repetitions: " << r->n_calls << ", comm_halos: " << config->comm_halos << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
-    // working_file << std::left << std::setw(width) << "Perf per MPI proc [MF/s]:" <<
-    //                 std::left << std::setw(width) << "Walltime per MPI proc [s]:" << std::endl;
-    // working_file << std::left << std::setw(width) << "-------------------------" <<
-    //                 std::left << std::setw(width) << "--------------------------" << std::endl;
-
-    // Print Flops per MPI process
-    // for(int proc = 0; proc < comm_size; ++proc){
-    //     working_file << std::left << std::setprecision(16) << std::setw(0) << "Proc " <<
-    //                     std::left << std::setw(0) << proc << ": " <<
-    //                     std::left << std::setw(width) << r->perfs_from_procs[proc] <<
-    //                     std::left << std::setw(width) << total_walltimes[proc] <<  std::endl;
-    // }
-    // working_file << std::endl;
-
-    // working_file << std::left << std::setw(width) << "Average Gflops per proc:" << std::endl;
-    // working_file << std::left << std::setw(width) << "-----------------------" << std::endl;
-
-    // double sum_flops = std::accumulate(r->perfs_from_procs.begin(), r->perfs_from_procs.end(), 0.0);
-    
-    // working_file << sum_flops / (double)comm_size << " MF/s" << std::endl;
-
     working_file << std::left << std::setw(width) << "Total Gflops:" <<
                     std::left << std::setw(width) << "Total Walltime:" << std::endl;
     working_file << std::left << std::setw(width) << "-------------" << 
@@ -53,8 +32,6 @@ void write_bench_to_file(
     working_file << std::left << std::setprecision(16) <<
                     std::left << std::setw(width) << r->perfs_from_procs[0] <<
                     std::left << std::setw(width) << total_walltimes[0] <<  std::endl;
-
-    // working_file << r->total_perf_gflops << " GF/s" << std::endl;
 
     working_file << std::endl;
 }

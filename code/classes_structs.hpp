@@ -23,7 +23,7 @@ void log(const char *log_msg, const double begin_time = 0, const double end_time
 
         // If timing measurement provided, print that as well
         if(end_time > 0 && begin_time > 0){
-            log_file_to_append << ": " << end_time - begin_time << std::endl;
+            log_file_to_append << ": " << end_time - begin_time;
         }
 
         // Close the log
@@ -35,14 +35,41 @@ void log(const char *log_msg, const double begin_time = 0, const double end_time
 // Use -rand to initialize randomly.
 static bool g_same_seed_for_every_vector = true;
 
-template <typename IT>
+template <typename VT, typename IT>
+struct MtxData
+{
+    ST n_rows{};
+    ST n_cols{};
+    ST nnz{};
+
+    bool is_sorted{};
+    bool is_symmetric{};
+
+    std::vector<IT> I;
+    std::vector<IT> J;
+    std::vector<VT> values;
+};
+
+template <typename VT, typename IT>
 struct ContextData
 {
-    std::vector<IT> to_send_heri;
-    std::vector<IT> local_needed_heri;
+    // std::vector<IT> to_send_heri;
+    // std::vector<IT> local_needed_heri;
 
-    std::vector<IT> shift_vec; //how does this work, with these on the heap?
-    std::vector<IT> incidence_vec;
+    // std::vector<IT> shift_vec; //how does this work, with these on the heap?
+    // std::vector<IT> incidence_vec;
+
+    std::vector<std::vector<IT>> send_tags;
+    std::vector<std::vector<IT>> recv_tags;
+
+    // TODO: remove and not store, do calculations earlier
+    std::vector<std::vector<IT>> comm_idxs;
+
+    // TODO: I dont think context should be holding all elements needed to send...
+    std::vector<std::vector<VT>> elems_to_send;
+
+    std::vector<IT> recv_counts_cumsum;
+    std::vector<IT> send_counts_cumsum;
 
     IT amnt_local_elems;
     IT scs_padding;

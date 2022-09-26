@@ -1,11 +1,24 @@
 #include "classes_structs.hpp"
-#include "mtx_reader.h"
+
+#include "mmio.h"
+
 #include "vectors.h"
 #include "utilities.hpp"
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "write_results.hpp"
 
+#include <algorithm>
+#include <cinttypes>
+#include <cstring>
+#include <fstream>
+#include <limits>
+#include <numeric>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <sstream>
+#include <vector>
 
 #define WARM_UP_REPS 15
 
@@ -13,28 +26,216 @@
 #include <omp.h>
 #endif
 
+inline void sort_perm(int *arr, int *perm, int len, bool rev=false)
+{
+    if(rev == false) {
+        std::stable_sort(perm+0, perm+len, [&](const int& a, const int& b) {return (arr[a] < arr[b]); });
+    } else {
+        std::stable_sort(perm+0, perm+len, [&](const int& a, const int& b) {return (arr[a] > arr[b]); });
+    }
+}
+
+template <typename VT, typename IT>
+void read_mtx(
+    const std::string matrix_file_name,
+    Config config,
+    MtxData<VT, IT> *total_mtx,
+    int my_rank)
+{
+    // (*total_mtx) = read_mtx_data<VT, IT>(matrix_file_name.c_str(), config.sort_matrix);
+
+    // std::cout << "Ive read the matrix" << std::endl;
+    // std::cout << "nnz: " << total_mtx.nnz << std::endl;
+    // std::cout << "n_rows: " << total_mtx.n_rows << std::endl;
+    // std::cout << "n_cols: " << total_mtx.n_cols << std::endl;
+    // (const char *fname, int *M_, int *N_, int *nz_,
+    //     double **val_, int **I_, int **J_)
+
+    // std::cout <<  matrix_file_name.c_str() << " : " << typeid(VT).name() << ", C = " << config.chunk_size << std::endl;
+    // exit(0);
+
+    char* filename = const_cast<char*>(matrix_file_name.c_str());
+    IT nrows, ncols, nnz;
+    VT *val_ptr;
+    IT *I_ptr;
+    IT *J_ptr;
+
+    MM_typecode matcode;
+    FILE *f;
+
+    if ((f = fopen(filename, "r")) == NULL) {printf("Unable to open file");}
+
+    if (mm_read_banner(f, &matcode) != 0)
+    {
+        printf("mm_read_unsymetric: Could not process Matrix Market banner ");
+        printf(" in file [%s]\n", filename);
+        // return -1;
+    }
+
+    fclose(f);
+
+    // bool compatible_flag = (mm_is_sparse(matcode) && (mm_is_real(matcode)||mm_is_pattern(matcode))) && (mm_is_symmetric(matcode) || mm_is_general(matcode));
+    bool compatible_flag = (mm_is_sparse(matcode) && (mm_is_real(matcode)||mm_is_pattern(matcode)||mm_is_integer(matcode))) && (mm_is_symmetric(matcode) || mm_is_general(matcode));
+    bool symm_flag = mm_is_symmetric(matcode);
+    bool pattern_flag = mm_is_pattern(matcode);
+
+    if(!compatible_flag)
+    {
+        printf("The matrix market file provided is not supported.\n Reason :\n");
+        if(!mm_is_sparse(matcode))
+        {
+            printf(" * matrix has to be sparse\n");
+        }
+
+        if(!mm_is_real(matcode) && !(mm_is_pattern(matcode)))
+        {
+            printf(" * matrix has to be real or pattern\n");
+        }
+
+        if(!mm_is_symmetric(matcode) && !mm_is_general(matcode))
+        {
+            printf(" * matrix has to be either general or symmetric\n");
+        }
+
+        exit(0);
+    }
+
+    //int ncols;
+    IT *row_unsorted;
+    IT *col_unsorted;
+    VT *val_unsorted;
+
+    if(mm_read_unsymmetric_sparse<VT, IT>(filename, &nrows, &ncols, &nnz, &val_unsorted, &row_unsorted, &col_unsorted) < 0)
+    {
+        printf("Error in file reading\n");
+        exit(1);
+    }
+    if(nrows != ncols)
+    {
+        printf("Matrix not square. Currently only square matrices are supported\n");
+        exit(1);
+    }
+
+    //If matrix market file is symmetric; create a general one out of it
+    if(symm_flag)
+    {
+        // printf("Creating a general matrix out of a symmetric one\n");
+
+        int ctr = 0;
+
+        //this is needed since diagonals might be missing in some cases
+        for(int idx=0; idx<nnz; ++idx)
+        {
+            ++ctr;
+            if(row_unsorted[idx]!=col_unsorted[idx])
+            {
+                ++ctr;
+            }
+        }
+
+        int new_nnz = ctr;
+
+        IT *row_general = new IT[new_nnz];
+        IT *col_general = new IT[new_nnz];
+        VT *val_general = new VT[new_nnz];
+
+        int idx_gen=0;
+
+        for(int idx=0; idx<nnz; ++idx)
+        {
+            row_general[idx_gen] = row_unsorted[idx];
+            col_general[idx_gen] = col_unsorted[idx];
+            val_general[idx_gen] = val_unsorted[idx];
+            ++idx_gen;
+
+            if(row_unsorted[idx] != col_unsorted[idx])
+            {
+                row_general[idx_gen] = col_unsorted[idx];
+                col_general[idx_gen] = row_unsorted[idx];
+                val_general[idx_gen] = val_unsorted[idx];
+                ++idx_gen;
+            }
+        }
+
+        free(row_unsorted);
+        free(col_unsorted);
+        free(val_unsorted);
+
+        nnz = new_nnz;
+
+        //assign right pointers for further proccesing
+        row_unsorted = row_general;
+        col_unsorted = col_general;
+        val_unsorted = val_general;
+
+        // delete[] row_general;
+        // delete[] col_general;
+        // delete[] val_general;
+    }
+
+    //permute the col and val according to row
+    IT* perm = new IT[nnz];
+
+    // pramga omp parallel for?
+    for(int idx=0; idx<nnz; ++idx)
+    {
+        perm[idx] = idx;
+    }
+
+    sort_perm(row_unsorted, perm, nnz);
+
+    IT *col = new IT[nnz];
+    IT *row = new IT[nnz];
+    VT *val = new VT[nnz];
+
+    // pramga omp parallel for?
+    for(int idx=0; idx<nnz; ++idx)
+    {
+        col[idx] = col_unsorted[perm[idx]];
+        val[idx] = val_unsorted[perm[idx]];
+        row[idx] = row_unsorted[perm[idx]];
+    }
+
+    delete[] perm;
+    delete[] col_unsorted;
+    delete[] val_unsorted;
+    delete[] row_unsorted;
+
+    total_mtx->values = std::vector<VT>(val, val + nnz);
+    total_mtx->I = std::vector<IT>(row, row + nnz);
+    total_mtx->J = std::vector<IT>(col, col + nnz);
+    total_mtx->n_rows = nrows;
+    total_mtx->n_cols = ncols;
+    total_mtx->nnz = nnz;
+    total_mtx->is_sorted = 1; // TODO: not sure
+    total_mtx->is_symmetric = 0; // TODO: not sure
+
+    delete[] val;
+    delete[] row;
+    delete[] col;
+}
+
 /**
-    @brief Collect halo element row indices for each local x-vector, and perform SPMVM
+    @brief Perform SPMVM kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
-    @param *local_scs : pointer to local scs struct
+    @param *local_scs : pointer to local scs struct 
+    @param *local_context : struct containing local_scs + communication information
     @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *local_y : local results vector, instance of SimpleDenseMatrix class
     @param *local_x : local RHS vector, instance of SimpleDenseMatrix class
     @param *r : a Result struct, in which results of the benchmark are stored
-    @param *defaults : a DefaultValues struct, in which default values of x and y can be defined
 */
 template <typename VT, typename IT>
 void bench_spmv(
     Config *config,
     ScsData<VT, IT> *local_scs,
-    ContextData<IT> *local_context,
+    ContextData<VT, IT> *local_context,
     const IT *work_sharing_arr,
     std::vector<VT> *local_y,
     std::vector<VT> *local_x,
     Result<VT, IT> *r,
     int my_rank,
-    int comm_size
-    )
+    int comm_size)
 {
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
@@ -44,16 +245,31 @@ void bench_spmv(
         std::vector<VT> dummy_x(local_x->size(), 1.0);
         std::vector<VT> dummy_y(local_y->size(), 0.0);
 
+
         MPI_Barrier(MPI_COMM_WORLD);
         // Warm-up
         double begin_warm_up_loop_time, end_warm_up_loop_time;
         begin_warm_up_loop_time = MPI_Wtime();
-        for(int k = 0; k < WARM_UP_REPS; ++k){
-                if(config->comm_halos){
-                    communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
-                    MPI_Barrier(MPI_COMM_WORLD);
-                }
 
+        if(config->comm_halos){
+            for(int k = 0; k < WARM_UP_REPS; ++k){
+                    communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+
+                    spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+
+                    std::swap(dummy_x, dummy_y);
+
+                    // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                    //     printf("%lf", dummy_x[local_x->size() / 2]);
+                    //     exit(0);
+                    // }
+                    // MPI_Barrier(MPI_COMM_WORLD);
+            }
+        }
+        else if(!config->comm_halos){
+            for(int k = 0; k < WARM_UP_REPS; ++k){
                 spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
@@ -65,36 +281,64 @@ void bench_spmv(
                 //     exit(0);
                 // }
             }
+        }
         end_warm_up_loop_time = MPI_Wtime();
 
-        // Use warm-up to calculate n_iter for real benchmark
-        int n_iter = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
 
-        // std::cout << "Proc: " << my_rank << ", niter: " << n_iter << std::endl;
+        // Use warm-up to calculate n_iter for real benchmark
+        int n_iter; // NOTE: is it correct for the root process' iteration count to be what is used?
+        if(my_rank == 0){
+            n_iter = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
+        }
+
+        MPI_Bcast(
+            &n_iter,
+            1,
+            MPI_INT,
+            0,
+            MPI_COMM_WORLD
+        );
 
         double begin_bench_loop_time, end_bench_loop_time;
 
         begin_bench_loop_time = MPI_Wtime();
         MPI_Barrier(MPI_COMM_WORLD);
+
         
-        for(int k = 0; k < n_iter; ++k){
-            if(config->comm_halos){
+        if(config->comm_halos){
+            for(int k = 0; k < n_iter; ++k){
                 communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
-                MPI_Barrier(MPI_COMM_WORLD);
+
+                spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                    local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                    local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                
+
+                std::swap(dummy_x, dummy_y);
+
+                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                //     printf("%lf", dummy_x[local_x->size() / 2]);
+                //     exit(0);
+                // }
+                // MPI_Barrier(MPI_COMM_WORLD);
             }
-
-            spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-
-            std::swap(dummy_x, dummy_y);
-
-            // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-            //     printf("%lf", dummy_x[local_x->size() / 2]);
-            //     exit(0);
-            // }
         }
-            
+        else if(!config->comm_halos){
+            for(int k = 0; k < n_iter; ++k){
+                spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                    local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                    local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                
+
+                std::swap(dummy_x, dummy_y);
+
+                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
+                //     printf("%lf", dummy_x[local_x->size() / 2]);
+                //     exit(0);
+                // }
+            }
+        }
+
         MPI_Barrier(MPI_COMM_WORLD);
         end_bench_loop_time = MPI_Wtime();
 
@@ -110,10 +354,9 @@ void bench_spmv(
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
         if(config->log_prof && my_rank == 0) {log("Begin COMM-SPMVM-SWAP loop, solve mode");}
         double begin_csslsm_time = MPI_Wtime();
-        for (IT i = 0; i < config->n_repetitions; ++i)
+        for (int i = 0; i < config->n_repetitions; ++i)
         {
             communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
-            MPI_Barrier(MPI_COMM_WORLD);
 
             spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
@@ -122,6 +365,11 @@ void bench_spmv(
             std::swap(*local_x, *local_y);
         }
         std::swap(*local_x, *local_y);
+
+        // for(int i = 0; i < 5; ++i){
+        //     std::cout << (*local_y)[i] << std::endl;
+        // }
+        // exit(0);
 
         if(config->log_prof && my_rank == 0) {log("Finish COMM-SPMVM-SWAP loop, solve mode", begin_csslsm_time, MPI_Wtime());}
     }
@@ -159,8 +407,7 @@ void bench_spmv(
 }
 
 /**
-    @brief The main harness for the rest of the functions, in which we segment and execute the work to be done.
-        Validation happens outside this routine
+    @brief The main harness for the SPMVM kernel, in which we first segment distribute the needed structs. Validation happens outside this routine
     @param *total_mtx : complete mtx struct, read .mtx file with mtx_reader.h
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
@@ -181,11 +428,13 @@ void compute_result(
 
     // Declare local structs on each process
     ScsData<VT, IT> local_scs;
-    ContextData<IT> local_context;
+    ContextData<VT, IT> local_context;
 
     // Allocate space for work sharing array
     IT work_sharing_arr[comm_size + 1];
 
+    if(config->log_prof && my_rank == 0) {log("Begin mpi_init_local_structs");}
+    double begin_mils_time = MPI_Wtime();
     mpi_init_local_structs<VT, IT>(
         &local_scs,
         &local_context, 
@@ -196,6 +445,8 @@ void compute_result(
         my_rank, 
         comm_size
     );
+    if(config->log_prof && my_rank == 0) {log("Finish mpi_init_local_structs", begin_mils_time, MPI_Wtime());}
+
 
     // Declare local vectors to be used
     SimpleDenseMatrix<VT, IT> local_x(&local_context);
@@ -338,6 +589,9 @@ int main(int argc, char *argv[])
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
+    // for debugging
+    // std::cout << "Proc: " << my_rank << std::endl;
+
     double total_walltimes[comm_size];
 
     verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config);
@@ -353,7 +607,7 @@ int main(int argc, char *argv[])
         if(my_rank == 0){
             if(config.log_prof && my_rank == 0) {log("Begin read_mtx_data");}
             double begin_rmtxd_time = MPI_Wtime();
-            total_mtx = read_mtx_data<double, int>(matrix_file_name.c_str(), config.sort_matrix);
+            read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
             if(config.log_prof && my_rank == 0) {log("Finish read_mtx_data", begin_rmtxd_time, MPI_Wtime());}
         }
         if(config.log_prof && my_rank == 0) {log("Begin compute_result");}
@@ -401,7 +655,7 @@ int main(int argc, char *argv[])
         if(my_rank == 0){
             if(config.log_prof && my_rank == 0) {log("Begin read_mtx_data");}
             double begin_rmtxd_time = MPI_Wtime();
-            total_mtx = read_mtx_data<float, int>(matrix_file_name.c_str(), config.sort_matrix);
+            read_mtx<float, int>(matrix_file_name, config, &total_mtx, my_rank);
             if(config.log_prof && my_rank == 0) {log("Finish read_mtx_data", begin_rmtxd_time, MPI_Wtime());}
         }
         if(config.log_prof && my_rank == 0) {log("Begin compute_result");}
@@ -410,6 +664,7 @@ int main(int argc, char *argv[])
         if(config.log_prof && my_rank == 0) {log("Finish compute_result",  begin_cr_time, MPI_Wtime());}
 
         double time_per_proc = MPI_Wtime() - begin_main_time;
+
         // Gather all times for printing of results
         MPI_Gather(
             &time_per_proc,
