@@ -546,7 +546,7 @@ void communicate_halo_elements(
 /**
     @brief Partition the rows of the mtx structure, so that work is disributed (somewhat) evenly. The two options "seg-rows"
         and "seg-nnz" are there in an effort to have multiple load balancing techniques the segment work between processes.
-    @param *total_mtx : data structure that was populated by the matrix market format reader mtx_reader.h
+    @param *total_mtx : data structure that was populated by the matrix market format reader
     @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
 */
@@ -717,7 +717,7 @@ void define_bookkeeping_type(
     @brief Initialize total_mtx, segment and send this to local_mtx, convert to local_scs format, init comm information
     @param *local_scs : pointer to local scs struct
     @param *local_context : struct containing local_scs + communication information
-    @param *total_mtx : complete mtx struct, read .mtx file with mtx_reader.h
+    @param *total_mtx : complete mtx struct
     @param *config : struct to initialze default values and user input
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *work_sharing_arr : the array describing the partitioning of the rows

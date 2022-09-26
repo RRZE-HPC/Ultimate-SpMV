@@ -6,6 +6,7 @@
 #include <random>
 #include <iomanip>
 #include <limits>
+#include <algorithm>
 
 template <typename T>
 struct max_rel_error

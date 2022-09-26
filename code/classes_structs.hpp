@@ -36,6 +36,21 @@ void log(const char *log_msg, const double begin_time = 0, const double end_time
 static bool g_same_seed_for_every_vector = true;
 
 template <typename VT, typename IT>
+struct MtxData
+{
+    ST n_rows{};
+    ST n_cols{};
+    ST nnz{};
+
+    bool is_sorted{};
+    bool is_symmetric{};
+
+    std::vector<IT> I;
+    std::vector<IT> J;
+    std::vector<VT> values;
+};
+
+template <typename VT, typename IT>
 struct ContextData
 {
     // std::vector<IT> to_send_heri;
