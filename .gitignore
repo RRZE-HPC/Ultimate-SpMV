@@ -1,5 +1,6 @@
 test.cpp
 verify.sh
+setup.sh
 verify_results.txt
 spmv-omp
 spmv-omp-adv
