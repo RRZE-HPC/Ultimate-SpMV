@@ -329,117 +329,116 @@ void collect_local_needed_heri(
 */
 template <typename VT, typename IT>
 void communicate_halo_elements(
+    ScsData<VT, IT> *local_scs,
     ContextData<VT, IT> *local_context,
     std::vector<VT> *local_x,
+    VT *to_send_elems[],
     const IT *work_sharing_arr,
-    int my_rank,
-    int comm_size)
+    MPI_Request *recv_requests,
+    const int nzs_size,
+    MPI_Request *send_requests,
+    const int nzr_size,
+    const int num_local_elems,
+    const int my_rank,
+    const int comm_size)
 {
     int outgoing_buf_size, incoming_buf_size;
-
-    MPI_Request recv_requests[comm_size];
-    MPI_Request send_requests[comm_size];
-
-    // In order to place incoming elements in padded region of local_x, i.e. AFTER local elements
-    int num_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+    int receiving_proc, sending_proc;
 
     // TODO: DRY
-    // TODO: avoid unnecessary comm
     if (typeid(VT) == typeid(float))
     {
-        for (int from_proc = 0; from_proc < comm_size; ++from_proc)
+        for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
         {
-            incoming_buf_size = local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc];
+            sending_proc = local_context->non_zero_senders[from_proc_idx];
+            incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
 
             MPI_Irecv(
-                &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
+                &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                 incoming_buf_size,
                 MPI_FLOAT,
-                from_proc,
-                (local_context->recv_tags[from_proc])[my_rank],
+                sending_proc,
+                (local_context->recv_tags[sending_proc])[my_rank],
                 MPI_COMM_WORLD,
-                &recv_requests[from_proc]
+                &recv_requests[from_proc_idx]
             );
         }
-        for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+        for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
         {
-            outgoing_buf_size = local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc];
-            float *to_send_elems = new float[outgoing_buf_size];           
+            receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+            outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
 
             // for sanity
-            if(local_context->comm_idxs[to_proc].size() != outgoing_buf_size){
-                std::cout << "Mismatched buffer lengths in communication" << std::endl;
-                exit(1);
-            }
+            // if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
+            //     std::cout << "Mismatched buffer lengths in communication" << std::endl;
+            //     exit(1);
+            // }
 
             // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < outgoing_buf_size; ++i){
-                to_send_elems[i] = (*local_x)[(local_context->comm_idxs[to_proc])[i]];
+                (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
             }
 
             MPI_Isend(
-                to_send_elems,
+                &(to_send_elems[to_proc_idx])[0],
                 outgoing_buf_size,
                 MPI_FLOAT,
-                to_proc,
-                (local_context->send_tags[my_rank])[to_proc],
+                receiving_proc,
+                (local_context->send_tags[my_rank])[receiving_proc],
                 MPI_COMM_WORLD,
-                &send_requests[to_proc]
+                &send_requests[to_proc_idx]
             );
-
-            delete[] to_send_elems;
         }
-
-
     }
     else if (typeid(VT) == typeid(double)){
-        for (int from_proc = 0; from_proc < comm_size; ++from_proc)
+        for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
         {
-            incoming_buf_size = local_context->recv_counts_cumsum[from_proc + 1] - local_context->recv_counts_cumsum[from_proc];
+            sending_proc = local_context->non_zero_senders[from_proc_idx];
+            incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
 
             MPI_Irecv(
-                &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[from_proc]],
+                &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                 incoming_buf_size,
                 MPI_DOUBLE,
-                from_proc,
-                (local_context->recv_tags[from_proc])[my_rank],
+                sending_proc,
+                (local_context->recv_tags[sending_proc])[my_rank],
                 MPI_COMM_WORLD,
-                &recv_requests[from_proc]
+                &recv_requests[from_proc_idx]
             );
         }
 
-        for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+        // for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+        // for(auto to_proc : local_context->non_zero_receivers)
+        for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
         {
-            outgoing_buf_size = local_context->send_counts_cumsum[to_proc + 1] - local_context->send_counts_cumsum[to_proc];
-            double *to_send_elems = new double[outgoing_buf_size];
-            // double to_send_elems[outgoing_buf_size];
+            receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+            outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
 
             // for sanity
-            if(local_context->comm_idxs[to_proc].size() != outgoing_buf_size){
-                std::cout << "Mismatched buffer lengths in communication" << std::endl;
-                exit(1);
-            }
+            // if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
+            //     std::cout << "Mismatched buffer lengths in communication" << std::endl;
+            //     exit(1);
+            // }
 
-            // NOTE: can we overlap this with something?
             // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < outgoing_buf_size; ++i){
-                to_send_elems[i] = (*local_x)[(local_context->comm_idxs[to_proc])[i]];
+                (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
             }
 
             MPI_Isend(
-                to_send_elems,
+                &(to_send_elems[to_proc_idx])[0],
                 outgoing_buf_size,
                 MPI_DOUBLE,
-                to_proc,
-                (local_context->send_tags[my_rank])[to_proc],
+                receiving_proc,
+                (local_context->send_tags[my_rank])[receiving_proc],
                 MPI_COMM_WORLD,
-                &send_requests[to_proc]
+                &send_requests[to_proc_idx]
             );
-
-            delete[] to_send_elems;
         }
     }
-    MPI_Waitall(comm_size, recv_requests, MPI_STATUS_IGNORE);
+
+    MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
+    MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
 }
 
 /**
@@ -517,6 +516,13 @@ void seg_work_sharing_arr(
             work_sharing_arr[loop_rank] -= 1;
         }
     }
+
+    // Print work sharing array. Nice for debugging
+    // printf("Work sharing array: ");
+    // for(int i = 0; i < comm_size + 1; ++i){
+    //     printf("%i, ", work_sharing_arr[i]);
+    // }
+    // printf("\n");
 }
 
 /**
@@ -788,6 +794,23 @@ void mpi_init_local_structs(
     // Necessary for "high comm" instances. Just leave it.
     MPI_Barrier(MPI_COMM_WORLD);
 
+    // Determine which of the other processes THIS processes send anything to
+    std::vector<IT> non_zero_receivers;
+    std::vector<IT> non_zero_senders;
+
+    for(int i = 0; i < communication_send_idxs.size(); ++i){
+        if(communication_send_idxs[i].size() > 0){
+           non_zero_receivers.push_back(i); 
+        }
+    }
+    for(int i = 0; i < communication_recv_idxs.size(); ++i){
+        if(communication_recv_idxs[i].size() > 0){
+           non_zero_senders.push_back(i); 
+        }
+    }
+    MPI_Barrier(MPI_COMM_WORLD);
+
+
     std::vector<std::vector<IT>> send_tags;
     std::vector<std::vector<IT>> recv_tags;
 
@@ -798,13 +821,16 @@ void mpi_init_local_structs(
 
     gen_unique_comm_tags<VT, IT>(&send_tags, &recv_tags, my_rank, comm_size);
 
-    local_context->comm_idxs = communication_send_idxs;
+    local_context->comm_send_idxs = communication_send_idxs;
+    local_context->comm_recv_idxs = communication_recv_idxs;
+    local_context->non_zero_receivers = non_zero_receivers;
+    local_context->non_zero_senders = non_zero_senders;
     local_context->send_tags = send_tags;
     local_context->recv_tags = recv_tags;
     local_context->recv_counts_cumsum = recv_counts_cumsum;
     local_context->send_counts_cumsum = send_counts_cumsum;
     // TODO: where to best place this? How to best make use of it?
-    local_context->amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+    local_context->num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
     // TODO: update
     local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
 }

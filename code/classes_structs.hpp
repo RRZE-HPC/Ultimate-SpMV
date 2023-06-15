@@ -59,11 +59,15 @@ struct ContextData
     // std::vector<IT> shift_vec; //how does this work, with these on the heap?
     // std::vector<IT> incidence_vec;
 
+    std::vector<IT> non_zero_senders;
+    std::vector<IT> non_zero_receivers;
+
     std::vector<std::vector<IT>> send_tags;
     std::vector<std::vector<IT>> recv_tags;
 
     // TODO: remove and not store, do calculations earlier
-    std::vector<std::vector<IT>> comm_idxs;
+    std::vector<std::vector<IT>> comm_send_idxs;
+    std::vector<std::vector<IT>> comm_recv_idxs;
 
     // TODO: I dont think context should be holding all elements needed to send...
     std::vector<std::vector<VT>> elems_to_send;
@@ -71,7 +75,7 @@ struct ContextData
     std::vector<IT> recv_counts_cumsum;
     std::vector<IT> send_counts_cumsum;
 
-    IT amnt_local_elems;
+    IT num_local_rows;
     IT scs_padding;
     IT total_nnz;
 

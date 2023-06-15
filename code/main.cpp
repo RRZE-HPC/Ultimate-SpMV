@@ -44,6 +44,21 @@ void bench_spmv(
     int my_rank,
     int comm_size)
 {
+    // Allocate a send buffer for each process we're sending a message to
+    int nz_comms = local_context->non_zero_receivers.size();
+    int nz_recver;
+    MPI_Request recv_requests[comm_size];
+    MPI_Request send_requests[comm_size];
+
+    VT *to_send_elems[nz_comms];
+    for(int i = 0; i < nz_comms; ++i){
+        nz_recver = local_context->non_zero_receivers[i];
+        to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size()];
+    }
+
+    int nzr_size = local_context->non_zero_receivers.size();
+    int nzs_size = local_context->non_zero_senders.size();
+
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
         std::vector<VT> dummy_x(local_x->size(), 1.0);
@@ -56,7 +71,19 @@ void bench_spmv(
 
         if(config->comm_halos){
             for(int k = 0; k < WARM_UP_REPS; ++k){
-                    communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+                communicate_halo_elements<VT, IT>(
+                    local_scs,
+                    local_context, 
+                    local_x, 
+                    to_send_elems,
+                    work_sharing_arr, 
+                    recv_requests,
+                    nzs_size,
+                    send_requests,
+                    nzr_size,
+                    local_context->num_local_rows,
+                    my_rank,
+                    comm_size);
 
                     spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                         local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
@@ -110,7 +137,19 @@ void bench_spmv(
         
         if(config->comm_halos){
             for(int k = 0; k < n_iter; ++k){
-                communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+                communicate_halo_elements<VT, IT>(
+                    local_scs,
+                    local_context, 
+                    local_x, 
+                    to_send_elems,
+                    work_sharing_arr, 
+                    recv_requests,
+                    nzs_size,
+                    send_requests,
+                    nzr_size,
+                    local_context->num_local_rows,
+                    my_rank,
+                    comm_size);
 
                 spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
@@ -156,7 +195,19 @@ void bench_spmv(
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
         for (int i = 0; i < config->n_repetitions; ++i)
         {
-            communicate_halo_elements<VT, IT>(local_context, local_x, work_sharing_arr, my_rank, comm_size);
+            communicate_halo_elements<VT, IT>(
+                local_scs,
+                local_context, 
+                local_x, 
+                to_send_elems,
+                work_sharing_arr, 
+                recv_requests,
+                nzs_size,
+                send_requests,
+                nzr_size,
+                local_context->num_local_rows,
+                my_rank,
+                comm_size);
 
             spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
@@ -165,6 +216,11 @@ void bench_spmv(
             std::swap(*local_x, *local_y);
         }
         std::swap(*local_x, *local_y);
+    }
+
+    // Delete the allocated space for each other process
+    for(int i = 0; i < nz_comms; ++i){
+        delete[] to_send_elems[i];
     }
 
     double mem_matrix_b =
@@ -288,7 +344,7 @@ void compute_result(
             std::vector<VT> total_spmvm_result(work_sharing_arr[comm_size], 0);
             std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
 
-            IT amnt_local_elems = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+            IT num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
             IT counts_arr[comm_size];
             IT displ_arr_bk[comm_size];
 
@@ -304,7 +360,7 @@ void compute_result(
 
             if (typeid(VT) == typeid(double)){
                 MPI_Gatherv(&(local_y.vec)[0],
-                            amnt_local_elems,
+                            num_local_rows,
                             MPI_DOUBLE,
                             &total_spmvm_result[0],
                             counts_arr,
@@ -314,7 +370,7 @@ void compute_result(
                             MPI_COMM_WORLD);
 
                 MPI_Gatherv(&local_x_copy[0],
-                            amnt_local_elems,
+                            num_local_rows,
                             MPI_DOUBLE,
                             &total_x[0],
                             counts_arr,
@@ -325,7 +381,7 @@ void compute_result(
             }
             else if (typeid(VT) == typeid(float)){
                 MPI_Gatherv(&(local_y.vec)[0],
-                            amnt_local_elems,
+                            num_local_rows,
                             MPI_FLOAT,
                             &total_spmvm_result[0],
                             counts_arr,
@@ -335,7 +391,7 @@ void compute_result(
                             MPI_COMM_WORLD);
 
                 MPI_Gatherv(&local_x_copy[0],
-                            amnt_local_elems,
+                            num_local_rows,
                             MPI_FLOAT,
                             &total_x[0],
                             counts_arr,

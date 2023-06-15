@@ -79,7 +79,7 @@ void write_dp_result_to_file(
 
     // Print header
     if(config->verbose_validation == 1){
-        width = 16;
+        width = 24;
 
         working_file << std::left << std::setw(width) << "mkl results:"
                     << std::left << std::setw(width) << "spmv results:"

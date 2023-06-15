@@ -1298,7 +1298,7 @@ class SimpleDenseMatrix {
             IT padding_from_heri = (local_context->recv_counts_cumsum).back();
             IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
 
-            vec.resize(needed_padding + local_context->amnt_local_elems, 0);
+            vec.resize(needed_padding + local_context->num_local_rows, 0);
         }
 
         void init(Config *config){
