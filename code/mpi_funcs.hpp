@@ -648,142 +648,116 @@ void mpi_init_local_structs(
 
     IT msg_length;
 
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Segmenting and sending work to other processes.\n");}
+#endif
+
     // Only split up work if there are more than 1 processes
-    // if(comm_size > 1){
-        if (my_rank == 0){
-            // Segment global row pointers, and place into an array
-            seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size, my_rank);
+    // if(comm_size > 1){ ??
+    if (my_rank == 0){
+        // Segment global row pointers, and place into an array
+        seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size, my_rank);
 
-            // Eventhough we're iterting through the ranks, this loop is
-            // (in the present implementation) executing sequentially on the root proc
-            // STRONG CONTENDER FOR PRAGMA PARALELL
-            for (IT loop_rank = 0; loop_rank < comm_size; ++loop_rank)
-            { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
+        // Eventhough we're iterting through the ranks, this loop is
+        // (in the present implementation) executing sequentially on the root proc
+        // STRONG CONTENDER FOR PRAGMA PARALELL
+        for (IT loop_rank = 0; loop_rank < comm_size; ++loop_rank)
+        { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
 
-                std::vector<IT> local_I;
-                std::vector<IT> local_J;
-                std::vector<VT> local_vals; // an attempt to not have so much resizing in seg_mtx_struct
+            std::vector<IT> local_I;
+            std::vector<IT> local_J;
+            std::vector<VT> local_vals; // an attempt to not have so much resizing in seg_mtx_struct
 
-                // Assign rows, columns, and values to process local vectors
-                seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
+            // Assign rows, columns, and values to process local vectors
+            seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
 
-                // Give the total nnz count to root process
-                local_context->total_nnz = total_mtx->nnz;
+            // Give the total nnz count to root process
+            local_context->total_nnz = total_mtx->nnz;
 
-                // Count the number of rows in each processes
-                IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();
+            // Count the number of rows in each processes
+            IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();
 
-                // Here, we segment data for the root process
-                if (loop_rank == 0)
+            // Here, we segment data for the root process
+            if (loop_rank == 0)
+            {
+                local_mtx.n_rows = local_row_cnt;
+                local_mtx.n_cols = total_mtx->n_cols;
+                local_mtx.nnz = local_vals.size();
+                local_mtx.is_sorted = config->sort_matrix;
+                local_mtx.is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
+                local_mtx.I = local_I;      // should work as both local and global row ptr
+                local_mtx.J = local_J;
+                local_mtx.values = local_vals;
+            }
+            // Here, we segment and send data to another proc
+            else
+            {
+                send_bk = {
+                    local_row_cnt,
+                    total_mtx->n_cols, // TODO: Actually constant, do dont need to send to each proc
+                    static_cast<long>( local_vals.size() ),
+                    static_cast<bool>( config->sort_matrix ),
+                    0};
+
+                // First, send BK struct
+                MPI_Send(&send_bk, 1, bk_type, loop_rank, 99, MPI_COMM_WORLD);
+
+                // Next, send three arrays
+                MPI_Send(&local_I[0], local_I.size(), MPI_INT, loop_rank, 42, MPI_COMM_WORLD);
+                MPI_Send(&local_J[0], local_J.size(), MPI_INT, loop_rank, 43, MPI_COMM_WORLD);
+                if (typeid(VT) == typeid(double))
                 {
-                    local_mtx.n_rows = local_row_cnt;
-                    local_mtx.n_cols = total_mtx->n_cols;
-                    local_mtx.nnz = local_vals.size();
-                    local_mtx.is_sorted = config->sort_matrix;
-                    local_mtx.is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
-                    local_mtx.I = local_I;      // should work as both local and global row ptr
-                    local_mtx.J = local_J;
-                    local_mtx.values = local_vals;
+                    MPI_Send(&local_vals[0], local_vals.size(), MPI_DOUBLE, loop_rank, 44, MPI_COMM_WORLD);
                 }
-                // Here, we segment and send data to another proc
-                else
+                else if (typeid(VT) == typeid(float))
                 {
-                    send_bk = {
-                        local_row_cnt,
-                        total_mtx->n_cols, // TODO: Actually constant, do dont need to send to each proc
-                        static_cast<long>( local_vals.size() ),
-                        static_cast<bool>( config->sort_matrix ),
-                        0};
-
-                    // First, send BK struct
-                    MPI_Send(&send_bk, 1, bk_type, loop_rank, 99, MPI_COMM_WORLD);
-
-                    // Next, send three arrays
-                    MPI_Send(&local_I[0], local_I.size(), MPI_INT, loop_rank, 42, MPI_COMM_WORLD);
-                    MPI_Send(&local_J[0], local_J.size(), MPI_INT, loop_rank, 43, MPI_COMM_WORLD);
-                    if (typeid(VT) == typeid(double))
-                    {
-                        MPI_Send(&local_vals[0], local_vals.size(), MPI_DOUBLE, loop_rank, 44, MPI_COMM_WORLD);
-                    }
-                    else if (typeid(VT) == typeid(float))
-                    {
-                        MPI_Send(&local_vals[0], local_vals.size(), MPI_FLOAT, loop_rank, 44, MPI_COMM_WORLD);
-                    }
+                    MPI_Send(&local_vals[0], local_vals.size(), MPI_FLOAT, loop_rank, 44, MPI_COMM_WORLD);
                 }
             }
         }
-        else if (my_rank != 0)
+    }
+    else if (my_rank != 0)
+    {
+        // TODO: should these be blocking?
+        // First, recieve BK struct
+        MPI_Recv(&recv_bk, 1, bk_type, 0, 99, MPI_COMM_WORLD, &status_bk);
+
+        // Next, allocate space for incoming arrays
+        // TODO: should these be on the heap?
+        msg_length = recv_bk.nnz;
+        IT *recv_buf_global_row_coords = new IT[msg_length];
+        IT *recv_buf_col_coords = new IT[msg_length];
+        VT *recv_buf_vals = new VT[msg_length];
+
+        // Next, recieve 3 arrays that we've allocated space for on local proc
+        MPI_Recv(recv_buf_global_row_coords, msg_length, MPI_INT, 0, 42, MPI_COMM_WORLD, &status_rows);
+        MPI_Recv(recv_buf_col_coords, msg_length, MPI_INT, 0, 43, MPI_COMM_WORLD, &status_cols);
+        if (typeid(VT) == typeid(double))
         {
-            // TODO: should these be blocking?
-            // First, recieve BK struct
-            MPI_Recv(&recv_bk, 1, bk_type, 0, 99, MPI_COMM_WORLD, &status_bk);
-
-            // Next, allocate space for incoming arrays
-            // TODO: should these be on the heap?
-            msg_length = recv_bk.nnz;
-            IT *recv_buf_global_row_coords = new IT[msg_length];
-            IT *recv_buf_col_coords = new IT[msg_length];
-            VT *recv_buf_vals = new VT[msg_length];
-
-            // Next, recieve 3 arrays that we've allocated space for on local proc
-            MPI_Recv(recv_buf_global_row_coords, msg_length, MPI_INT, 0, 42, MPI_COMM_WORLD, &status_rows);
-            MPI_Recv(recv_buf_col_coords, msg_length, MPI_INT, 0, 43, MPI_COMM_WORLD, &status_cols);
-            if (typeid(VT) == typeid(double))
-            {
-                MPI_Recv(recv_buf_vals, msg_length, MPI_DOUBLE, 0, 44, MPI_COMM_WORLD, &status_vals);
-            }
-            else if (typeid(VT) == typeid(float))
-            {
-                MPI_Recv(recv_buf_vals, msg_length, MPI_FLOAT, 0, 44, MPI_COMM_WORLD, &status_vals);
-            }
-            // TODO: Just how bad is this?... Are we copying array -> vector?
-            std::vector<IT> global_rows_vec(recv_buf_global_row_coords, recv_buf_global_row_coords + msg_length);
-            std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
-            std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
-
-            local_mtx.n_rows = recv_bk.n_rows;
-            local_mtx.n_cols = recv_bk.n_cols;
-            local_mtx.nnz = recv_bk.nnz;
-            local_mtx.is_sorted = recv_bk.is_sorted;
-            local_mtx.is_symmetric = recv_bk.is_symmetric;
-            local_mtx.I = global_rows_vec;
-            local_mtx.J = cols_vec;
-            local_mtx.values = vals_vec;
-            
-            delete[] recv_buf_global_row_coords;
-            delete[] recv_buf_col_coords;
-            delete[] recv_buf_vals;
+            MPI_Recv(recv_buf_vals, msg_length, MPI_DOUBLE, 0, 44, MPI_COMM_WORLD, &status_vals);
         }
-    // }
-    // else {
-    //     // Make deep copy, so that we can delete global matrix after this routine
-    //     // std::vector<IT> global_rows_vec(total_mtx->I.size());
-    //     // std::vector<IT> cols_vec(total_mtx->J.size());
-    //     // std::vector<VT> vals_vec(total_mtx->values.size());
+        else if (typeid(VT) == typeid(float))
+        {
+            MPI_Recv(recv_buf_vals, msg_length, MPI_FLOAT, 0, 44, MPI_COMM_WORLD, &status_vals);
+        }
+        // TODO: Just how bad is this?... Are we copying array -> vector?
+        std::vector<IT> global_rows_vec(recv_buf_global_row_coords, recv_buf_global_row_coords + msg_length);
+        std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
+        std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
 
-    //     // #pragma omp parallel
-    //     // {
-    //     //     #pragma omp for
-    //     //     for(int i = 0; i < total_mtx->I.size(); ++i){
-    //     //         global_rows_vec[i] = total_mtx->I[i];
-    //     //         cols_vec[i] = total_mtx->J[i];
-    //     //     }
-                                    
-    //     //     #pragma omp for
-    //     //     for(int i = 0; i < total_mtx->values.size(); ++i){
-    //     //         vals_vec[i] = total_mtx->values[i];
-    //     //     }
-    //     // }
-
-    //     local_mtx.n_rows = total_mtx->n_rows;
-    //     local_mtx.n_cols = total_mtx->n_cols;
-    //     local_mtx.nnz = total_mtx->nnz;
-    //     local_mtx.is_sorted = total_mtx->is_sorted;
-    //     local_mtx.is_symmetric = total_mtx->is_symmetric;
-    //     local_mtx.I = total_mtx->I;
-    //     local_mtx.J = total_mtx->J;
-    //     local_mtx.values = total_mtx->values;
-    // }
+        local_mtx.n_rows = recv_bk.n_rows;
+        local_mtx.n_cols = recv_bk.n_cols;
+        local_mtx.nnz = recv_bk.nnz;
+        local_mtx.is_sorted = recv_bk.is_sorted;
+        local_mtx.is_symmetric = recv_bk.is_symmetric;
+        local_mtx.I = global_rows_vec;
+        local_mtx.J = cols_vec;
+        local_mtx.values = vals_vec;
+        
+        delete[] recv_buf_global_row_coords;
+        delete[] recv_buf_col_coords;
+        delete[] recv_buf_vals;
+    }
 
     std::vector<IT> local_row_coords(local_mtx.nnz, 0);
 
@@ -811,8 +785,16 @@ void mpi_init_local_structs(
               0,
               MPI_COMM_WORLD);
 
-    // convert local_mtx to local_scs
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Converting COO matrix to SELL-C-SIG and permuting.\n");}
+#endif
+    // convert local_mtx to local_scs and permute rows (if applicable)
     convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+
+    // permute columns with additional routine
+    // std::vector<int> non_perm(local_scs->n_rows);
+    // std::iota(std::begin(non_perm), std::end(non_perm), 0); // Fill with 0, 1, ..., scs->n_rows.
+    // local_scs->permute(&(local_scs->old_to_new_idx)[0], &(local_scs->new_to_old_idx)[0]);
 
     MPI_Type_free(&bk_type);
 

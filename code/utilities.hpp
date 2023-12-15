@@ -1144,6 +1144,32 @@ void verify_and_assign_inputs(
     // }
 }
 
+template <typename IT>
+void generate_inv_perm(
+    int *perm,
+    int *inv_perm,
+    int perm_len
+){
+    for(int i = 0; i < perm_len; ++i){
+        inv_perm[perm[i]] = i;
+    }
+}
+
+template <typename VT, typename IT>
+void apply_permutation(
+    VT *permuted_vec,
+    VT *vec_to_permute,
+    IT *perm,
+    int num_elems_to_permute
+){
+    #pragma omp parallel for
+    for(int i = 0; i < num_elems_to_permute; ++i){
+        permuted_vec[i] = vec_to_permute[perm[i]];
+        // std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
+    }
+    // printf("\n");
+}
+
 /**
     @brief Convert mtx struct to sell-c-sigma data structures.
     @param *local_mtx : process local mtx data structure, that was populated by  
@@ -1298,6 +1324,15 @@ void convert_to_scs(
 
         col_idx_in_row[row]++;
     }
+
+    // Sort inverse permutation vector, based on scs->old_to_new_idx
+    std::vector<int> inv_perm(scs->n_rows);
+    std::vector<int> inv_perm_temp(scs->n_rows);
+    std::iota(std::begin(inv_perm_temp), std::end(inv_perm_temp), 0); // Fill with 0, 1, ..., scs->n_rows.
+
+    generate_inv_perm<IT>(scs->old_to_new_idx.data(), &inv_perm[0],  scs->n_rows);
+
+    scs->new_to_old_idx = inv_perm;
 
     scs->n_elements = n_scs_elements;
 

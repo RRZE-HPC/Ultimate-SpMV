@@ -59,6 +59,13 @@ void bench_spmv(
     int nzr_size = local_context->non_zero_receivers.size();
     int nzs_size = local_context->non_zero_senders.size();
 
+    // Permute x, since local matrix permuted symmetrically
+    // std::vector<VT> local_x_permuted(local_x->size(), 0);
+    std::vector<VT> sorted_local_y(local_y->size(), 0);
+
+    // apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+
+
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
         std::vector<VT> dummy_x(local_x->size(), 1.0);
@@ -195,6 +202,15 @@ void bench_spmv(
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
         for (int i = 0; i < config->n_repetitions; ++i)
         {
+// #ifdef DEBUG_MODE
+//     if(my_rank == 0){
+//         std::cout << "x = [";
+//         for(int i = 0; i < local_scs.n_rows; ++i){
+//             std::cout << local_x[i] << std::endl;
+//         }
+        
+//         }
+// #endif
             communicate_halo_elements<VT, IT>(
                 local_scs,
                 local_context, 
@@ -213,8 +229,12 @@ void bench_spmv(
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
-            std::swap(*local_x, *local_y);
+            // In unsymmetric permutation, y need be sorted every iteration for accurate results
+            apply_permutation(&(sorted_local_y)[0], &(*local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+
+            std::swap(*local_x, sorted_local_y);
         }
+        // Give x results to y as output
         std::swap(*local_x, *local_y);
     }
 
@@ -342,10 +362,31 @@ void compute_result(
         delete[] perfs_from_procs_arr;
     }
     else if(config->mode == 's'){
-        // Assign proc local x and y to Result object
+        std::vector<VT> sorted_local_y(local_scs.n_rows);
         r->x_out = local_x_copy;
         r->y_out = local_y.vec;
+        
+        // for(int i = 0; i < local_scs.n_rows; ++i){
+        //     std::cout << sorted_local_y[i] << std::endl;
+        // }
+        // printf("\n");
 
+        // for(int i = 0; i < local_scs.n_rows; ++i){
+        //     std::cout << r->y_out[i] << std::endl;
+        // }
+        // printf("\n");
+        
+        // apply_permutation(&(sorted_local_y)[0], &(r->y_out)[0], &(local_scs.old_to_new_idx)[0], local_scs.n_rows);
+        // std::swap(sorted_local_y, r->y_out);
+
+        // for(int i = 0; i < local_scs.n_rows; ++i){
+        //     std::cout << sorted_local_y[i] << std::endl;
+        // }
+        // printf("\n");
+        // for(int i = 0; i < local_scs.n_rows; ++i){
+        //     std::cout << r->y_out[i] << std::endl;
+        // }
+        // printf("\n");
         if (config->validate_result)
         {
             // TODO: is the size correct here?
@@ -367,7 +408,7 @@ void compute_result(
             }
 
             if (typeid(VT) == typeid(double)){
-                MPI_Gatherv(&(local_y.vec)[0],
+                MPI_Gatherv(&(r->y_out)[0],
                             num_local_rows,
                             MPI_DOUBLE,
                             &total_spmvm_result[0],
@@ -388,7 +429,7 @@ void compute_result(
                             MPI_COMM_WORLD);
             }
             else if (typeid(VT) == typeid(float)){
-                MPI_Gatherv(&(local_y.vec)[0],
+                MPI_Gatherv(&(r->y_out)[0],
                             num_local_rows,
                             MPI_FLOAT,
                             &total_spmvm_result[0],

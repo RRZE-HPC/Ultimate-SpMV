@@ -82,7 +82,140 @@ struct ScsData
     V<IT, IT> col_idxs;
     V<VT, IT> values;
     V<IT, IT> old_to_new_idx;
+    std::vector<int> new_to_old_idx; //inverse of above
+    // TODO: ^ make V object as well?
+
+    void permute(int *_perm_, int*  _invPerm_);
 };
+
+// Need to make sure rows aren't being permuted, that happens in convert_to_scs
+template <typename VT, typename IT>
+void ScsData<VT, IT>::permute(int *_perm_, int*  _invPerm_){
+    int nrows = n_chunks; // <- stupid
+
+    // TODO: not efficient, but a workaround
+    int *rowPtr = new int[nrows+1];
+    int *col = new int[nnz];
+    double *val = new double[nnz];
+
+    for(int i = 0; i < nrows + 1; ++i){
+        rowPtr[i] = (chunk_ptrs.data())[i];
+    }
+    for(int i = 0; i < nnz; ++i){
+        col[i] = (col_idxs.data())[i];
+        val[i] = (values.data())[i];
+    } 
+    
+
+    double* newVal = (double*)malloc(sizeof(double)*nnz);
+        //new double[block_size*block_size*nnz];
+    int* newCol = (int*)malloc(sizeof(int)*nnz);
+        //new int[nnz];
+    int* newRowPtr = (int*)malloc(sizeof(int)*(nrows+1));
+        //new int[nrows+1];
+/*
+    double *newVal = (double*) malloc(sizeof(double)*nnz);
+    int *newCol = (int*) malloc(sizeof(int)*nnz);
+    int *newRowPtr = (int*) malloc(sizeof(int)*(nrows+1));
+*/
+
+    newRowPtr[0] = 0;
+    if(_perm_ != NULL)
+    {
+        //first find newRowPtr; therefore we can do proper NUMA init
+        int _perm_Idx=0;
+        printf("nchunks = %d\n", nrows);
+        for(int row=0; row<nrows; ++row)
+        {
+            //row _perm_utation
+            int _perm_Row = _perm_[row];
+            for(int idx=rowPtr[_perm_Row]; idx<rowPtr[_perm_Row+1]; ++idx)
+            {
+                ++_perm_Idx;
+            }
+            newRowPtr[row+1] = _perm_Idx;
+        }
+    }
+    else
+    {
+        for(int row=0; row<nrows+1; ++row)
+        {
+            newRowPtr[row] = rowPtr[row];
+        }
+    }
+printf("perm 1\n");
+    if(_perm_ != NULL)
+    {
+        //with NUMA init
+#pragma omp parallel for schedule(static)
+        for(int row=0; row<nrows; ++row)
+        {
+            //row _perm_utation
+            int _perm_Row = _perm_[row];
+
+            for(int _perm_Idx=newRowPtr[row],idx=rowPtr[_perm_Row]; _perm_Idx<newRowPtr[row+1]; ++idx,++_perm_Idx)
+            {
+                //_perm_ute column-wise also
+                // guard added 22.12.22
+                if(col[idx] < nrows){ // col[_perm_Idx] < nrows) ?
+                    newCol[_perm_Idx] = _invPerm_[col[idx]]; // permute column of "local" elements
+                }
+                else{
+                    newCol[_perm_Idx] = col[idx]; //do not permute columns of remote elements
+                }
+                
+                // newCol[_perm_Idx] = _invPerm_[col[idx]]; // <- old
+                // printf("permIdx = %d, idx = %d, col[permIdx] = %d, col[idx] = %d\n",_perm_Idx, idx, col[_perm_Idx],col[idx] );
+
+                newVal[_perm_Idx] = val[idx]; // in both cases, value is permuted
+
+                // if(newCol[_perm_Idx] >= n_rows && col[_perm_Idx] < nrows){
+                //     printf("permute ERROR: local element from index %d and col %d was permuted out of it's bounds to %d.\n", idx, col[idx], newCol[_perm_Idx]);
+                //     exit(1);
+                // }
+                if (newCol[_perm_Idx] >= n_cols){
+                    printf("permute ERROR: Element at index %d has blow up column index: %d.\n", _perm_Idx,newCol[_perm_Idx]);
+                    exit(1);     
+                }
+                if (newCol[_perm_Idx] < 0){
+                    printf("permute ERROR: Element at index %d has negative column index: %d.\n", _perm_Idx, newCol[_perm_Idx]);
+                    exit(1);
+                }
+            }
+        }
+    printf("perm 2.1\n");
+    }
+    else
+    {
+        printf("perm 2.2\n");
+#pragma omp parallel for schedule(static)
+        for(int row=0; row<nrows; ++row)
+        {
+            for(int idx=newRowPtr[row]; idx<newRowPtr[row+1]; ++idx)
+            {
+                newCol[idx] = col[idx];
+                newVal[idx] = val[idx];
+            }
+        }
+    }
+printf("perm 3\n");
+    // What if our chunk size is > 1? then there will be fewer than nrows chunks
+    // for(int i = 0; i < nrows + 1; ++i){
+    //     chunk_ptrs[i] = newRowPtr[i];
+    // } 
+    for(int i = 0; i < nnz; ++i){
+        col_idxs[i] = newCol[i];
+        values[i] = newVal[i];
+    }
+printf("perm 4\n");
+    //free old _perm_utations
+    delete[] val;
+    delete[] rowPtr;
+    delete[] col;
+    delete[] newVal;
+    delete[] newRowPtr;
+    delete[] newCol;
+}
 
 struct Config
 {
