@@ -120,7 +120,10 @@ void organize_cumsums(
 
     // construct send_counts_cumsum
     int loop_rank = -1;
-    int send_counts[comm_size] = {0};
+    int send_counts[comm_size];
+    for(int i = 0; i < comm_size; ++i){
+        send_counts[i] = 0;
+    }
     int sending_proc = 0;
     int idx = 1;
     int sent_elems;
@@ -179,8 +182,14 @@ void collect_local_needed_heri(
     std::vector<IT> original_col_idxs(local_scs->col_idxs.data(), local_scs->col_idxs.data() + local_scs->n_elements);
 
     // TODO: these sizes are too large. Should be my_rank and comm_size - my_rank
-    int lhs_needed_heri_counts[comm_size] = {0};
-    int rhs_needed_heri_counts[comm_size] = {0};
+    int lhs_needed_heri_counts[comm_size];
+    for(int i = 0; i < comm_size; ++i){
+        lhs_needed_heri_counts[i] = 0;
+    }
+    int rhs_needed_heri_counts[comm_size];
+    for(int i = 0; i < comm_size; ++i){
+        rhs_needed_heri_counts[i] = 0;
+    }
     // int lhs_needed_heri_counts[my_rank] = {0};
     // int rhs_needed_heri_counts[comm_size - my_rank] = {0};
 
@@ -246,19 +255,24 @@ void collect_local_needed_heri(
     IT local_elem_offset = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
     // TODO: not sure if these are the correct size. comm_size would be too big
-    int lhs_cumsum_heri_counts[comm_size + 1] = {0}; // change to my_rank + 1
-    int rhs_cumsum_heri_counts[comm_size + 1] = {0}; // change to comm_size - my_rank + 1
+    int lhs_cumsum_heri_counts[comm_size + 1];
+    int rhs_cumsum_heri_counts[comm_size + 1];
+    for(int i = 0; i < comm_size+1; ++i){
+        lhs_cumsum_heri_counts[i] = 0;
+        rhs_cumsum_heri_counts[i] = 0;
+    }
 
     for(int i = 1; i < comm_size + 1; ++i){
         lhs_cumsum_heri_counts[i] = lhs_needed_heri_counts[i - 1] + lhs_cumsum_heri_counts[i - 1];
-    }
-
-    for(int i = 1; i < comm_size + 1; ++i){
         rhs_cumsum_heri_counts[i] = rhs_needed_heri_counts[i - 1] + rhs_cumsum_heri_counts[i - 1];
     }
 
-    int lhs_heri_ctr[comm_size] = {0}; //TODO: change to only have size my_rank
-    int rhs_heri_ctr[comm_size] = {0}; //TODO: change to have size comm_size - my_rank
+    int lhs_heri_ctr[comm_size]; //TODO: change to only have size my_rank
+    int rhs_heri_ctr[comm_size];
+    for(int i = 0; i < comm_size; ++i){
+        lhs_heri_ctr[i] = 0;
+        rhs_heri_ctr[i] = 0;
+    }
 
     std::map<int, int> remote_cols;
 
@@ -676,8 +690,8 @@ void mpi_init_local_structs(
                 send_bk = {
                     local_row_cnt,
                     total_mtx->n_cols, // TODO: Actually constant, do dont need to send to each proc
-                    local_vals.size(),
-                    config->sort_matrix,
+                    static_cast<long>( local_vals.size() ),
+                    static_cast<bool>( config->sort_matrix ),
                     0};
 
                 // First, send BK struct

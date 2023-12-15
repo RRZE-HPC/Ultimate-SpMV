@@ -12,7 +12,7 @@
 #include <cstring>
 #include <string>
 
-// TODO: rename float_type to value_type
+using ST=long;
 
 template<typename VT, typename IT>
 class BaseVector

@@ -656,10 +656,10 @@ bool spmv_verify(const std::string *matrix_format,
             const std::vector<VT> &x,
             const std::vector<VT> &y_actual)
 {
-    std::vector<VT> y_ref(mtx.n_rows);
+    std::vector<VT> y_ref(mtx->n_rows);
 
-    ST nnz = mtx.nnz;
-    if (mtx.I.size() != mtx.J.size() || mtx.I.size() != mtx.values.size())
+    ST nnz = mtx->nnz;
+    if (mtx->I.size() != mtx->J.size() || mtx->I.size() != mtx->values.size())
     {
         fprintf(stderr, "ERROR: %s:%d sizes of rows, cols, and values differ.\n", __FILE__, __LINE__);
         exit(1);
@@ -667,7 +667,7 @@ bool spmv_verify(const std::string *matrix_format,
 
     for (ST i = 0; i < nnz; ++i)
     {
-        y_ref[mtx.I[i]] += mtx.values[i] * x[mtx.J[i]];
+        y_ref[mtx->I[i]] += mtx->values[i] * x[mtx->J[i]];
     }
 
     return spmv_verify(y_ref.data(), y_actual.data(),
@@ -962,7 +962,7 @@ void verify_and_assign_inputs(
     if (argc < 2)
     {
         fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows/seg_metis [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
                 argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
         exit(1);
     }
