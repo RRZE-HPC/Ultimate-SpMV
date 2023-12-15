@@ -390,7 +390,9 @@ void communicate_halo_elements(
 
             // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < outgoing_buf_size; ++i){
-                (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
+                // (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
+                (to_send_elems[to_proc_idx])[i] = (*local_x)[local_context->comm_send_idxs[receiving_proc][i]];
+
             }
 
             MPI_Isend(
@@ -436,7 +438,7 @@ void communicate_halo_elements(
 
             // Move non-contiguous data to a contiguous buffer for communication
             for(int i = 0; i < outgoing_buf_size; ++i){
-                (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
+                (to_send_elems[to_proc_idx])[i] = (*local_x)[local_context->comm_send_idxs[receiving_proc][i]];
             }
 
             MPI_Isend(

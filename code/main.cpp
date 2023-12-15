@@ -202,15 +202,6 @@ void bench_spmv(
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
         for (int i = 0; i < config->n_repetitions; ++i)
         {
-// #ifdef DEBUG_MODE
-//     if(my_rank == 0){
-//         std::cout << "x = [";
-//         for(int i = 0; i < local_scs.n_rows; ++i){
-//             std::cout << local_x[i] << std::endl;
-//         }
-        
-//         }
-// #endif
             communicate_halo_elements<VT, IT>(
                 local_scs,
                 local_context, 

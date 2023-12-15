@@ -111,7 +111,7 @@ void write_dp_result_to_file(
                     << std::left << std::setw(width) << "-------------" << std::endl;
     }
     for(int i = 0; i < r->total_spmvm_result.size(); ++i){
-        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
+        relative_diff = abs(((*x)[i] - r->total_spmvm_result[i])/(*x)[i]);
         absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
         
         if(config -> verbose_validation == 1)
@@ -249,7 +249,7 @@ void write_sp_result_to_file(
                     << std::left << std::setw(width) << "-------------" << std::endl;
     }
     for(int i = 0; i < r->total_spmvm_result.size(); ++i){
-        relative_diff = ((*x)[i] - r->total_spmvm_result[i])/(*x)[i];
+        relative_diff = abs(((*x)[i] - r->total_spmvm_result[i])/(*x)[i]);
         absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
         
         if(config -> verbose_validation == 1)
