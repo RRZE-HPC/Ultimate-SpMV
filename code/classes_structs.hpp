@@ -5,31 +5,13 @@
 #include <ctime>
 #include <mpi.h>
 
+#ifdef USE_METIS
+    #include <metis.h>
+#endif
+
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
 using ST = long;
-
-// void log(const char *log_msg, const double begin_time = 0, const double end_time = 0)
-// {
-//         std::fstream log_file_to_append;
-//         const std::string log_file_name = "log.txt";
-//         log_file_to_append.open(log_file_name, std::fstream::in | std::fstream::out | std::fstream::app);
-
-//         // Print header
-//         log_file_to_append << "[" << (long int)std::clock() << "]" << std::endl;
-
-//         // Print log message
-//         log_file_to_append << log_msg;
-
-//         // If timing measurement provided, print that as well
-//         if(end_time > 0 && begin_time > 0){
-//             log_file_to_append << ": " << end_time - begin_time;
-//         }
-
-//         // Close the log
-//         log_file_to_append << "\n\n";
-//         log_file_to_append.close();
-// }
 
 // Initialize all matrices and vectors the same.
 // Use -rand to initialize randomly.

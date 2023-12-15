@@ -1,5 +1,5 @@
 COMPILER = gcc
-DEBUG_MODE = 0
+DEBUG_MODE = 1
 
 # 0/1 library usage
 USE_METIS = 0
@@ -43,8 +43,8 @@ ifeq ($(DEBUG_MODE),1)
 endif
 
 ifeq ($(USE_METIS),1)
-  METIS_INC = #/home/hpc/ihpc/ihpc062h/HPC_HiWi/thesis/METIS/METIS/include/
-  METIS_LIB = #/home/hpc/ihpc/ihpc062h/install/lib/libmetis.a
+  METIS_INC = -I/home/hpc/ihpc/ihpc062h/install/include/
+  METIS_LIB = -L/home/hpc/ihpc/ihpc062h/install/lib/libmetis.a
   ifeq ($(METIS_INC),)
     $(error USE_METIS selected, but no include path given in METIS_INC)
   endif
@@ -52,7 +52,7 @@ ifeq ($(USE_METIS),1)
     $(error USE_METIS selected, but no library path given in METIS_LIB)
   endif
 
-  CXXFLAGS  += -DUSE_METIS -I$(METIS_INC) -L$(METIS_LIB)
+  CXXFLAGS  += -DUSE_METIS $(METIS_INC) $(METIS_LIB)
 endif
 
 ifeq ($(USE_LIKWID),1)
@@ -65,8 +65,7 @@ ifeq ($(USE_LIKWID),1)
   ifeq ($(LIKWID_LIB),)
     $(error USE_LIKWID selected, but no library path given in LIKWID_LIB)
   endif
-  CXXFLAGS  += -DUSE_LIKWID $(LIKWID_INC) $(LIKWID_LIB)
-  LIBS      += -llikwid
+  CXXFLAGS  += -DUSE_LIKWID $(LIKWID_INC) $(LIKWID_LIB) -llikwid
 endif
 
 # Further memory debugging options

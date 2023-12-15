@@ -281,7 +281,9 @@ void compute_result(
 
     // Allocate space for work sharing array
     IT work_sharing_arr[comm_size + 1];
-
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Init local structures.\n");}
+#endif
     mpi_init_local_structs<VT, IT>(
         &local_scs,
         &local_context, 
@@ -303,7 +305,9 @@ void compute_result(
 
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x.vec;
-
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Enter bench_spmv.\n");}
+#endif
     bench_spmv<VT, IT>(
         config,
         &local_scs,
@@ -315,6 +319,10 @@ void compute_result(
         my_rank,
         comm_size
     );
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Gather results to root process.\n");}
+#endif
 
     if(config->mode == 'b'){
         double *perfs_from_procs_arr = new double[comm_size];
@@ -431,11 +439,9 @@ int main(int argc, char *argv[]){
     int sigma = config.sigma;
     int revisions = config.n_repetitions;
 
-
-
     double total_walltimes[comm_size];
 
-    verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config);
+    verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config, my_rank);
 
     if (value_type == "dp")
     {

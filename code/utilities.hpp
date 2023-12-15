@@ -948,8 +948,8 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -comm_halos [%i]\n",
+                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->comm_halos);
                     
 }
 
@@ -969,12 +969,12 @@ void verify_and_assign_inputs(
     std::string *file_name_str,
     std::string *seg_method,
     std::string *value_type,
-    Config *config)
+    Config *config,
+    int my_rank)
 {
     if (argc < 2)
     {
-        cli_options_messge(argc, argv, seg_method, value_type, config);
-        exit(1);
+        if(my_rank == 0){cli_options_messge(argc, argv, seg_method, value_type, config);exit(1);}
     }
 
     *file_name_str = argv[1];
@@ -989,9 +989,11 @@ void verify_and_assign_inputs(
 
             if (config->chunk_size < 1)
             {
-                fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-s")
@@ -1001,9 +1003,11 @@ void verify_and_assign_inputs(
 
             if (config->sigma < 1)
             {
-                fprintf(stderr, "ERROR: sigma must be >= 1.\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: sigma must be >= 1.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-rev")
@@ -1012,9 +1016,11 @@ void verify_and_assign_inputs(
 
             if (config->n_repetitions < 1)
             {
-                fprintf(stderr, "ERROR: revisions must be >= 1.\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: revisions must be >= 1.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-verbose")
@@ -1023,9 +1029,11 @@ void verify_and_assign_inputs(
 
             if (config->verbose_validation != 0 && config->verbose_validation != 1)
             {
-                fprintf(stderr, "ERROR: Only validation verbosity levels 0 and 1 are supported.\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: Only validation verbosity levels 0 and 1 are supported.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-validate")
@@ -1034,9 +1042,11 @@ void verify_and_assign_inputs(
 
             if (config->validate_result != 0 && config->validate_result != 1)
             {
-                fprintf(stderr, "ERROR: You can only choose to validate result (1, i.e. yes) or not (0, i.e. no).\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to validate result (1, i.e. yes) or not (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-mode")
@@ -1045,9 +1055,11 @@ void verify_and_assign_inputs(
 
             if (config->mode != 'b' && config->mode != 's')
             {
-                fprintf(stderr, "ERROR: Only bench (b) and solve (s) modes are supported.\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: Only bench (b) and solve (s) modes are supported.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-rand_x")
@@ -1056,9 +1068,11 @@ void verify_and_assign_inputs(
 
             if (config->random_init_x != 0 && config->random_init_x != 1)
             {
-                fprintf(stderr, "ERROR: You can only choose to initialize x randomly (1, i.e. yes) or not (0, i.e. no).\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to initialize x randomly (1, i.e. yes) or not (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-comm_halos")
@@ -1067,9 +1081,11 @@ void verify_and_assign_inputs(
 
             if (config->comm_halos != 0 && config->comm_halos != 1)
             {
-                fprintf(stderr, "ERROR: You can only choose to communicate halo elements (1, i.e. yes) or not (0, i.e. no).\n");
-                cli_options_messge(argc, argv, seg_method, value_type, config);
-                exit(1);
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to communicate halo elements (1, i.e. yes) or not (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
             }
         }
         else if (arg == "-dp")
@@ -1091,23 +1107,41 @@ void verify_and_assign_inputs(
         else if (arg == "-seg_metis")
         {
             *seg_method = "seg-metis";
+            if(my_rank == 0){fprintf(stderr, "ERROR: seg-metis not fully implemented.\n");exit(1);}
         }
         else
         {
-            fprintf(stderr, "ERROR: unknown argument.\n");
-            cli_options_messge(argc, argv, seg_method, value_type, config);
-            exit(1);
+            if(my_rank == 0){
+                fprintf(stderr, "ERROR: unknown argument.\n");
+                cli_options_messge(argc, argv, seg_method, value_type, config);
+                exit(1);
+            }
         }
     }
 
     // Sanity checks
-    // Is this even true?
-    if (config->sigma > config->chunk_size)
-    {
-        fprintf(stderr, "ERROR: sigma must be smaller than chunk size.\n");
-        cli_options_messge(argc, argv, seg_method, value_type, config);
-        exit(1);
+#ifndef USE_METIS
+    if (*seg_method == "seg-metis"){
+        if(my_rank == 0){fprintf(stderr, "ERROR: seg-metis selected, but USE_METIS not defined in Makefile.\n");exit(1);}
     }
+#endif
+#ifdef USE_METIS
+    if (*seg_method != "seg-metis"){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: USE_METIS detected from Makefile, but seg-metis was not selected on cli.\n");
+            exit(1);
+        }
+    }
+#endif
+
+    // Is this even true?
+    // if (config->sigma > config->chunk_size)
+    // {
+    //     if(my_rank == 0){
+    //         fprintf(stderr, "ERROR: sigma must be smaller than chunk size.\n");
+    //         if(my_rank == 0){cli_options_messge(argc, argv, seg_method, value_type, config);exit(1);}
+    //     }
+    // }
 }
 
 /**

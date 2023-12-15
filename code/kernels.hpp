@@ -175,7 +175,7 @@ spmv_omp_scs_adv(
 {
     switch (C)
     {
-        #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64)
+        #define INSTANTIATE_CS X(1) X(2) X(4) X(8) X(16) X(32) X(64)
 
         #define X(CC) case CC: scs_impl<CC>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); break;
         INSTANTIATE_CS
