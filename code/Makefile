@@ -1,5 +1,11 @@
-COMPILER ?= icx
+COMPILER = gcc
+DEBUG_MODE = 0
 
+# 0/1 library usage
+USE_METIS = 0
+USE_LIKWID = 0
+
+# compiler options
 ifeq ($(COMPILER),gcc)
   CXX       = g++
   MPICXX     = mpicxx
@@ -9,14 +15,6 @@ ifeq ($(COMPILER),gcc)
   CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(MKL) $(OPT_ARCH)
 
   LIBS += -L${MKLROOT}/lib/intel64 
-
-  ifeq ($(ASAN),1)
-    CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
-  endif
-
-  ifeq ($(UBSAN),1)
-    CXXFLAGS += -fsanitize=undefined -g
-  endif
 endif
 
 ifeq ($(COMPILER),icc)
@@ -25,15 +23,8 @@ ifeq ($(COMPILER),icc)
   OPT_LEVEL = -Ofast
   OPT_ARCH  = -march=native
   MKL = -qmkl
+
   CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(MKL) $(OPT_ARCH)
-
-  ifeq ($(ASAN),1)
-    CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
-  endif
-
-  ifeq ($(UBSAN),1)
-    CXXFLAGS += -fsanitize=undefined -g
-  endif
 endif
 
 ifeq ($(COMPILER),icx)
@@ -45,32 +36,49 @@ ifeq ($(COMPILER),icx)
   AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
 
   CXXFLAGS += $(OPT_LEVEL) -std=c++14 -Wall -fopenmp -g $(MKL) $(AVX512_fix) $(OPT_ARCH) 
-
-  ifeq ($(ASAN),1)
-    CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
-  endif
-
-  ifeq ($(UBSAN),1)
-    CXXFLAGS += -fsanitize=undefined -g
-  endif
 endif
 
-ifeq ($(LISTINGS),1)
-  CXXFLAGS_LISTINGS += -Wa,-alnds=$@.lst -g
-  ifeq ($(COMPILER),clang)
-    CXXFLAGS_LISTINGS += -no-integrated-as
-  else
-  ifeq ($(COMPILER),intel-ng)
-    CXXFLAGS_LISTINGS += -no-integrated-as
+ifeq ($(DEBUG_MODE),1)
+  CXXFLAGS += -g -DDEBUG_MODE
+endif
+
+ifeq ($(USE_METIS),1)
+  METIS_INC = #/home/hpc/ihpc/ihpc062h/HPC_HiWi/thesis/METIS/METIS/include/
+  METIS_LIB = #/home/hpc/ihpc/ihpc062h/install/lib/libmetis.a
+  ifeq ($(METIS_INC),)
+    $(error USE_METIS selected, but no include path given in METIS_INC)
   endif
+  ifeq ($(METIS_LIB),)
+    $(error USE_METIS selected, but no library path given in METIS_LIB)
   endif
+
+  CXXFLAGS  += -DUSE_METIS -I$(METIS_INC) -L$(METIS_LIB)
 endif
 
 ifeq ($(USE_LIKWID),1)
+  # Just loading module
+  # LIKWID_INC =
+  # LIKWID_LIB = 
+  ifeq ($(LIKWID_INC),)
+    $(error USE_LIKWID selected, but no include path given in LIKWID_INC)
+  endif
+  ifeq ($(LIKWID_LIB),)
+    $(error USE_LIKWID selected, but no library path given in LIKWID_LIB)
+  endif
   CXXFLAGS  += -DUSE_LIKWID $(LIKWID_INC) $(LIKWID_LIB)
   LIBS      += -llikwid
 endif
 
+# Further memory debugging options
+ifeq ($(ASAN),1)
+  CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g
+endif
+
+ifeq ($(UBSAN),1)
+  CXXFLAGS += -fsanitize=undefined -g
+endif
+
+CXXFLAGS += $(HEADERS)
 # Also rebuild when following files change.
 REBUILD_DEPS = $(MAKEFILE_LIST) vectors.h classes_structs.hpp utilities.hpp kernels.hpp mpi_funcs.hpp write_results.hpp mmio.h
 

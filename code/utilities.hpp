@@ -941,6 +941,18 @@ void init_std_vec_with_ptr_or_value(
     }
 }
 
+void cli_options_messge(
+    int argc, 
+    char *argv[],
+    std::string *seg_method,
+    std::string *value_type,
+    Config *config){
+    fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
+                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                    
+}
+
 
 /**
     @brief Scan user cli input to variables, and verify that the entered parameters are valid
@@ -961,9 +973,7 @@ void verify_and_assign_inputs(
 {
     if (argc < 2)
     {
-        fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows/seg_metis [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+        cli_options_messge(argc, argv, seg_method, value_type, config);
         exit(1);
     }
 
@@ -980,9 +990,7 @@ void verify_and_assign_inputs(
             if (config->chunk_size < 1)
             {
                 fprintf(stderr, "ERROR: chunk size must be >= 1.\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -994,9 +1002,7 @@ void verify_and_assign_inputs(
             if (config->sigma < 1)
             {
                 fprintf(stderr, "ERROR: sigma must be >= 1.\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -1007,9 +1013,7 @@ void verify_and_assign_inputs(
             if (config->n_repetitions < 1)
             {
                 fprintf(stderr, "ERROR: revisions must be >= 1.\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -1020,9 +1024,7 @@ void verify_and_assign_inputs(
             if (config->verbose_validation != 0 && config->verbose_validation != 1)
             {
                 fprintf(stderr, "ERROR: Only validation verbosity levels 0 and 1 are supported.\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -1033,9 +1035,7 @@ void verify_and_assign_inputs(
             if (config->validate_result != 0 && config->validate_result != 1)
             {
                 fprintf(stderr, "ERROR: You can only choose to validate result (1, i.e. yes) or not (0, i.e. no).\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -1046,9 +1046,7 @@ void verify_and_assign_inputs(
             if (config->mode != 'b' && config->mode != 's')
             {
                 fprintf(stderr, "ERROR: Only bench (b) and solve (s) modes are supported.\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -1059,22 +1057,7 @@ void verify_and_assign_inputs(
             if (config->random_init_x != 0 && config->random_init_x != 1)
             {
                 fprintf(stderr, "ERROR: You can only choose to initialize x randomly (1, i.e. yes) or not (0, i.e. no).\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
-                exit(1);
-            }
-        }
-        else if (arg == "-log_prof")
-        {
-            config->log_prof = atoi(argv[++i]); // i.e. grab the NEXT
-
-            if (config->log_prof != 0 && config->log_prof != 1)
-            {
-                fprintf(stderr, "ERROR: You can only choose to activate log profiler (1, i.e. yes) or not (0, i.e. no).\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -1085,9 +1068,7 @@ void verify_and_assign_inputs(
             if (config->comm_halos != 0 && config->comm_halos != 1)
             {
                 fprintf(stderr, "ERROR: You can only choose to communicate halo elements (1, i.e. yes) or not (0, i.e. no).\n");
-                fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+                cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
         }
@@ -1107,22 +1088,24 @@ void verify_and_assign_inputs(
         {
             *seg_method = "seg-nnz";
         }
+        else if (arg == "-seg_metis")
+        {
+            *seg_method = "seg-metis";
+        }
         else
         {
             fprintf(stderr, "ERROR: unknown argument.\n");
-            fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                            "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                    argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+            cli_options_messge(argc, argv, seg_method, value_type, config);
             exit(1);
         }
     }
 
+    // Sanity checks
+    // Is this even true?
     if (config->sigma > config->chunk_size)
     {
         fprintf(stderr, "ERROR: sigma must be smaller than chunk size.\n");
-        fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                        "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -log_prof [%i], -comm_halos [%i]\n",
-                argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->log_prof, config->comm_halos);
+        cli_options_messge(argc, argv, seg_method, value_type, config);
         exit(1);
     }
 }

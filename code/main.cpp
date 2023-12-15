@@ -409,9 +409,16 @@ void compute_result(
     }
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]){
     MPI_Init(&argc, &argv);
+    int my_rank, comm_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Beginning of USpMV execution.\n");}
+#endif
+
     double begin_main_time = MPI_Wtime();
 
     Config config;
@@ -424,9 +431,7 @@ int main(int argc, char *argv[])
     int sigma = config.sigma;
     int revisions = config.n_repetitions;
 
-    int my_rank, comm_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-    MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
 
     double total_walltimes[comm_size];
 
@@ -438,10 +443,18 @@ int main(int argc, char *argv[])
         Result<double, int> r;
 
         if(my_rank == 0){
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Reading mtx file.\n");}
+#endif
             read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
         }
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Enter compute_result.\n");}
+#endif
         compute_result<double, int>(&total_mtx, &seg_method, &config, &r, my_rank, comm_size);
-
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Complete compute_result.\n");}
+#endif
         double time_per_proc = MPI_Wtime() - begin_main_time;
         // Gather all times for printing of results
         MPI_Gather(
@@ -458,14 +471,23 @@ int main(int argc, char *argv[])
         if(my_rank == 0){
             if(config.mode == 's'){
                 if(config.validate_result){
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Validating results.\n");}
+#endif
                     std::vector<double> mkl_dp_result;
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Writing validation results to file.\n");}
+#endif
                     write_dp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_dp_result, comm_size);
                 }
                 else{
                 }
             }
             else if(config.mode == 'b'){
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Writing benchmark results to file.\n");}
+#endif
                 write_bench_to_file<double, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, comm_size);
             }
         }
@@ -476,10 +498,18 @@ int main(int argc, char *argv[])
         Result<float, int> r;
 
         if(my_rank == 0){
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Reading mtx file.\n");}
+#endif
             read_mtx<float, int>(matrix_file_name, config, &total_mtx, my_rank);
         }
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Enter compute_result.\n");}
+#endif
         compute_result<float, int>(&total_mtx, &seg_method, &config, &r, my_rank, comm_size);
-
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Complete compute_result.\n");}
+#endif
         double time_per_proc = MPI_Wtime() - begin_main_time;
 
         // Gather all times for printing of results
@@ -497,14 +527,23 @@ int main(int argc, char *argv[])
         if(my_rank == 0){
             if(config.mode == 's'){
                 if(config.validate_result){
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Validating results.\n");}
+#endif
                     std::vector<float> mkl_sp_result;
                     validate_sp_result(&total_mtx, &config, &r, &mkl_sp_result);
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Writing validation results to file.\n");}
+#endif
                     write_sp_result_to_file(&matrix_file_name, &seg_method, &config, &r, &mkl_sp_result, comm_size);
                 }
                 else{
                 }
             }
             else if(config.mode == 'b'){
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Writing benchmark results to file.\n");}
+#endif
                 write_bench_to_file<float, int>(&matrix_file_name, &seg_method, &config, &r, total_walltimes, comm_size);
             }
         }
@@ -512,5 +551,8 @@ int main(int argc, char *argv[])
 
     MPI_Finalize();
 
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("End of USpMV execution.\n");}
+#endif
     return 0;
 }
