@@ -1,8 +1,9 @@
-COMPILER = gcc
-DEBUG_MODE = 1
+COMPILER = icx
+VECTOR_LENGTH = 4
+DEBUG_MODE = 0
 
 # 0/1 library usage
-USE_METIS = 0
+USE_METIS = 1
 USE_LIKWID = 0
 
 # compiler options
@@ -12,7 +13,7 @@ ifeq ($(COMPILER),gcc)
   OPT_LEVEL = -Ofast
   OPT_ARCH  = -march=native
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
-  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(MKL) $(OPT_ARCH)
+  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(MKL) $(OPT_ARCH) -DVECTOR_LENGTH=$(VECTOR_LENGTH)
 
   LIBS += -L${MKLROOT}/lib/intel64 
 endif
@@ -24,7 +25,7 @@ ifeq ($(COMPILER),icc)
   OPT_ARCH  = -march=native
   MKL = -qmkl
 
-  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(MKL) $(OPT_ARCH)
+  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -g -Wall -fopenmp $(MKL) $(OPT_ARCH) -DVECTOR_LENGTH=$(VECTOR_LENGTH)
 endif
 
 ifeq ($(COMPILER),icx)
@@ -35,7 +36,7 @@ ifeq ($(COMPILER),icx)
   MKL = -qmkl
   AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
 
-  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -Wall -fopenmp -g $(MKL) $(AVX512_fix) $(OPT_ARCH) 
+  CXXFLAGS += $(OPT_LEVEL) -std=c++14 -Wall -fopenmp -g $(MKL) $(AVX512_fix) $(OPT_ARCH) -DVECTOR_LENGTH=$(VECTOR_LENGTH)
 endif
 
 ifeq ($(DEBUG_MODE),1)
@@ -44,7 +45,7 @@ endif
 
 ifeq ($(USE_METIS),1)
   METIS_INC = -I/home/hpc/ihpc/ihpc062h/install/include/
-  METIS_LIB = -L/home/hpc/ihpc/ihpc062h/install/lib/libmetis.a
+  METIS_LIB = /home/hpc/ihpc/ihpc062h/install/lib/libmetis.a
   ifeq ($(METIS_INC),)
     $(error USE_METIS selected, but no include path given in METIS_INC)
   endif
@@ -52,7 +53,8 @@ ifeq ($(USE_METIS),1)
     $(error USE_METIS selected, but no library path given in METIS_LIB)
   endif
 
-  CXXFLAGS  += -DUSE_METIS $(METIS_INC) $(METIS_LIB)
+  CXXFLAGS  += -DUSE_METIS $(METIS_INC)
+  LIBS += $(METIS_LIB)
 endif
 
 ifeq ($(USE_LIKWID),1)
@@ -88,7 +90,7 @@ all: omp
 omp: uspmv
 
 uspmv: main.o mmio.o $(REBUILD_DEPS)
-	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS) 
+	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 main.o: main.cpp $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $<

@@ -85,13 +85,13 @@ struct ScsData
     std::vector<int> new_to_old_idx; //inverse of above
     // TODO: ^ make V object as well?
 
-    void permute(int *_perm_, int*  _invPerm_);
+    void metis_permute(int *_perm_, int*  _invPerm_);
 };
 
-// Need to make sure rows aren't being permuted, that happens in convert_to_scs
+
 template <typename VT, typename IT>
-void ScsData<VT, IT>::permute(int *_perm_, int*  _invPerm_){
-    int nrows = n_chunks; // <- stupid
+void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
+    int nrows = n_rows; // <- stupid
 
     // TODO: not efficient, but a workaround
     int *rowPtr = new int[nrows+1];
@@ -120,11 +120,15 @@ void ScsData<VT, IT>::permute(int *_perm_, int*  _invPerm_){
 */
 
     newRowPtr[0] = 0;
+
     if(_perm_ != NULL)
     {
         //first find newRowPtr; therefore we can do proper NUMA init
         int _perm_Idx=0;
-        printf("nchunks = %d\n", nrows);
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("nrows = %d\n", nrows);}
+#endif
+        
         for(int row=0; row<nrows; ++row)
         {
             //row _perm_utation
@@ -143,7 +147,7 @@ void ScsData<VT, IT>::permute(int *_perm_, int*  _invPerm_){
             newRowPtr[row] = rowPtr[row];
         }
     }
-printf("perm 1\n");
+
     if(_perm_ != NULL)
     {
         //with NUMA init
@@ -174,20 +178,18 @@ printf("perm 1\n");
                 //     exit(1);
                 // }
                 if (newCol[_perm_Idx] >= n_cols){
-                    printf("permute ERROR: Element at index %d has blow up column index: %d.\n", _perm_Idx,newCol[_perm_Idx]);
+                    printf("metis_permute ERROR: Element at index %d has blow up column index: %d.\n", _perm_Idx,newCol[_perm_Idx]);
                     exit(1);     
                 }
                 if (newCol[_perm_Idx] < 0){
-                    printf("permute ERROR: Element at index %d has negative column index: %d.\n", _perm_Idx, newCol[_perm_Idx]);
+                    printf("metis_permute ERROR: Element at index %d has negative column index: %d.\n", _perm_Idx, newCol[_perm_Idx]);
                     exit(1);
                 }
             }
         }
-    printf("perm 2.1\n");
     }
     else
     {
-        printf("perm 2.2\n");
 #pragma omp parallel for schedule(static)
         for(int row=0; row<nrows; ++row)
         {
@@ -198,16 +200,15 @@ printf("perm 1\n");
             }
         }
     }
-printf("perm 3\n");
-    // What if our chunk size is > 1? then there will be fewer than nrows chunks
-    // for(int i = 0; i < nrows + 1; ++i){
-    //     chunk_ptrs[i] = newRowPtr[i];
-    // } 
+
+    for(int i = 0; i < nrows + 1; ++i){
+        chunk_ptrs[i] = newRowPtr[i];
+    } 
     for(int i = 0; i < nnz; ++i){
         col_idxs[i] = newCol[i];
         values[i] = newVal[i];
     }
-printf("perm 4\n");
+
     //free old _perm_utations
     delete[] val;
     delete[] rowPtr;
@@ -220,7 +221,7 @@ printf("perm 4\n");
 struct Config
 {
     long n_els_per_row{-1}; // ell
-    long chunk_size{8};    // sell-c-sigma
+    long chunk_size{1};    // sell-c-sigma
     long sigma{1};         // sell-c-sigma
 
     // Initialize rhs vector with random numbers.
@@ -229,7 +230,7 @@ struct Config
     // Override values of the matrix, read via mtx file, with random numbers.
     bool random_init_A{false};
 
-    // No. of repetitions to perform. 0 for automatic detection.
+    // No. of repetitions to perform.
     unsigned long n_repetitions{5};
 
     // Verify result of SpVM.

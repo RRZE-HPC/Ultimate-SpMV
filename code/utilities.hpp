@@ -948,7 +948,7 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -comm_halos [%i]\n",
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -comm_halos [%i]\n",
                             argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->comm_halos);
                     
 }
@@ -1107,7 +1107,6 @@ void verify_and_assign_inputs(
         else if (arg == "-seg_metis")
         {
             *seg_method = "seg-metis";
-            if(my_rank == 0){fprintf(stderr, "ERROR: seg-metis not fully implemented.\n");exit(1);}
         }
         else
         {
@@ -1123,14 +1122,6 @@ void verify_and_assign_inputs(
 #ifndef USE_METIS
     if (*seg_method == "seg-metis"){
         if(my_rank == 0){fprintf(stderr, "ERROR: seg-metis selected, but USE_METIS not defined in Makefile.\n");exit(1);}
-    }
-#endif
-#ifdef USE_METIS
-    if (*seg_method != "seg-metis"){
-        if(my_rank == 0){
-            fprintf(stderr, "ERROR: USE_METIS detected from Makefile, but seg-metis was not selected on cli.\n");
-            exit(1);
-        }
     }
 #endif
 
@@ -1170,6 +1161,15 @@ void apply_permutation(
     // printf("\n");
 }
 
+template <typename T> inline void sortPerm(T *arr, int *perm, int range_lo, int range_hi, bool rev=false)
+{
+    if(rev == false) {
+        std::stable_sort(perm+range_lo, perm+range_hi, [&](const int& a, const int& b) {return (arr[a] < arr[b]); });
+    } else {
+        std::stable_sort(perm+range_lo, perm+range_hi, [&](const int& a, const int& b) {return (arr[a] > arr[b]); });
+    }
+}
+
 /**
     @brief Convert mtx struct to sell-c-sigma data structures.
     @param *local_mtx : process local mtx data structure, that was populated by  
@@ -1194,17 +1194,25 @@ void convert_to_scs(
     scs->sigma = sigma;
 
     if (scs->sigma % scs->C != 0 && scs->sigma != 1) {
-        fprintf(stderr, "NOTE: sigma is not a multiple of C\n");
+#ifdef DEBUG_MODE
+    if(my_rank == 0){fprintf(stderr, "NOTE: sigma is not a multiple of C\n");}
+#endif
     }
 
     if (will_add_overflow(scs->n_rows, scs->C)) {
-        fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
+#ifdef DEBUG_MODE
+    if(my_rank == 0){fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");}
+    exit(1);
+#endif        
         // return false;
     }
     scs->n_chunks      = (local_mtx->n_rows + scs->C - 1) / scs->C;
 
     if (will_mult_overflow(scs->n_chunks, scs->C)) {
-        fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
+#ifdef DEBUG_MODE
+    if(my_rank == 0){fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");}
+    exit(1);
+#endif   
         // return false;
     }
     scs->n_rows_padded = scs->n_chunks * scs->C;

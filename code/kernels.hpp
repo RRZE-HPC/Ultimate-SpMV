@@ -11,8 +11,10 @@
  */
 template <typename VT, typename IT>
 static void
-spmv_omp_csr(const ST num_rows,
-             const IT * RESTRICT row_ptrs,
+spmv_omp_csr(const ST C, // 1
+             const ST num_rows, // n_chunks
+             const IT * RESTRICT row_ptrs, // chunk_ptrs
+             const IT * RESTRICT chunk_lengths, // unused
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
              const VT * RESTRICT x,
@@ -21,6 +23,8 @@ spmv_omp_csr(const ST num_rows,
     #pragma omp parallel for schedule(static)
     for (ST row = 0; row < num_rows; ++row) {
         VT sum{};
+        // #pragma nounroll
+        #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
         for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
             sum += values[j] * x[col_idxs[j]];
         }
@@ -142,7 +146,6 @@ scs_impl(const ST n_chunks,
         IT cs = chunk_ptrs[c];
 
         for (IT j = 0; j < chunk_lengths[c]; ++j) {
-            #pragma omp simd
             for (IT i = 0; i < C; ++i) {
                 tmp[i] += values[cs + j * C + i] * x[col_idxs[cs + j * C + i]];
             }

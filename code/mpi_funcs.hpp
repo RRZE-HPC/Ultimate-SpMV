@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #include "utilities.hpp"
-// #include "classes_structs.hpp"
+#include "classes_structs.hpp"
 
 #include <set>
 
@@ -466,11 +466,14 @@ void communicate_halo_elements(
 */
 template <typename VT, typename IT>
 void seg_work_sharing_arr(
-    const MtxData<VT, IT> *total_mtx,
+    MtxData<VT, IT> *total_mtx,
     IT *work_sharing_arr,
     const std::string *seg_method,
     const IT comm_size,
-    int my_rank)
+    int my_rank,
+    int* metis_part = NULL,
+    int* metis_perm = NULL,
+    int* metis_inv_perm = NULL)
 {
     work_sharing_arr[0] = 0;
 
@@ -524,6 +527,86 @@ void seg_work_sharing_arr(
         // (takes care of remainder rows)
         work_sharing_arr[comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
     }
+    else if (*seg_method == "seg-metis")
+    {
+#ifdef USE_METIS
+        // Create global scs format
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Converting COO format to crs for METIS\n");}
+#endif
+
+        ScsData<VT, IT> global_crs;
+        convert_to_scs(total_mtx, 1, 1, &global_crs);
+
+        //partition using METIS
+        int ncon = 1;
+        int nparts = comm_size;
+        int objval;
+        int nrows = global_crs.n_rows;
+
+        int *rowPtr = (global_crs.chunk_ptrs).data();
+        int *colIdx = (global_crs.col_idxs).data();
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Partitioning graph to %d parts\n", nparts);}
+#endif
+        
+        int metis_ret = METIS_PartGraphKway(&nrows, &ncon, rowPtr, colIdx, NULL, NULL, NULL, &nparts, NULL, NULL, NULL, &objval, metis_part);
+#ifdef DEBUG_MODE
+        if(metis_ret == METIS_OK)
+        {
+            printf("successfully partitioned graph to nparts=%d\n", nparts);
+        }
+        else
+        {
+            printf("Error in METIS partitioning\n");
+        }
+#endif
+        // from RACE library, sort partitioning and generate permutation vector
+        sortPerm<int>(metis_part, metis_perm, 0, nrows);
+
+        // Generate inverse permutation vector
+        generate_inv_perm<int>(metis_perm, metis_inv_perm, nrows);
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Permuting global scs matrix with METIS\n");}
+#endif
+        
+        global_crs.metis_permute(metis_perm, metis_inv_perm);
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Converting global scs matrix back to COO for uspmv interop.\n");}
+#endif
+        int elem_num = 0;
+        for(int row = 0; row < nrows; ++row){
+            for(int idx = global_crs.chunk_ptrs[row]; idx < global_crs.chunk_ptrs[row + 1]; ++idx){
+                (total_mtx->I)[elem_num] = row; // +1 to adjust for 1 based indexing in mm-format
+                (total_mtx->J)[elem_num] = (global_crs.col_idxs.data())[idx];
+                (total_mtx->values)[elem_num] = (global_crs.values.data())[idx];
+                ++elem_num;
+            }
+        }
+        // would be great to have a way to validate this^
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("METIS partition and permutation finished\n");}
+#endif
+
+        int metis_part_sizes[comm_size];
+        for(int i = 0; i < comm_size; ++i){
+            metis_part_sizes[i] = 0;
+        }
+
+        // Can only be between 0 and comm_size
+        for(int i = 0; i < nrows; ++i){
+            ++metis_part_sizes[metis_part[i]];
+        }
+
+        for(int i = 1; i < comm_size + 1; ++i){
+            work_sharing_arr[i] = metis_part_sizes[i-1] + work_sharing_arr[i-1]; 
+        }
+#endif
+    }
 
     // TODO: What other cases are there to protect against?
     // Protect against edge case where last process gets no work
@@ -533,12 +616,14 @@ void seg_work_sharing_arr(
         }
     }
 
-    // Print work sharing array. Nice for debugging
-    // printf("Work sharing array: ");
-    // for(int i = 0; i < comm_size + 1; ++i){
-    //     printf("%i, ", work_sharing_arr[i]);
-    // }
-    // printf("\n");
+#ifdef DEBUG_MODE
+    printf("work_sharing_array: [");
+    for(int i = 0; i < comm_size + 1; ++i){
+        (i != comm_size) ? printf("%i, ", work_sharing_arr[i]) : printf("%i", work_sharing_arr[i]);
+    }
+    printf("]\n");
+#endif
+
 }
 
 /**
@@ -637,7 +722,10 @@ void mpi_init_local_structs(
     const std::string *seg_method,
     IT *work_sharing_arr,
     int my_rank,
-    int comm_size)
+    int comm_size,
+    int* metis_part = NULL,
+    int* metis_perm = NULL,
+    int* metis_inv_perm = NULL)
 {
     MtxData<VT, IT> local_mtx;
 
@@ -654,11 +742,21 @@ void mpi_init_local_structs(
     if(my_rank == 0){printf("Segmenting and sending work to other processes.\n");}
 #endif
 
+    if (my_rank == 0)
+    {
+        // Segment global row pointers, and place into an array
+        if(*seg_method == "seg-metis"){
+            // total_mtx is coming out of this function (symmetrically) permuted
+            seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size, my_rank, metis_part, metis_perm, metis_inv_perm);
+        }
+        else{
+            seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size, my_rank, NULL, NULL, NULL);
+        }
+    }
+
     // Only split up work if there are more than 1 processes
     // if(comm_size > 1){ ??
     if (my_rank == 0){
-        // Segment global row pointers, and place into an array
-        seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, seg_method, comm_size, my_rank);
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
@@ -788,7 +886,7 @@ void mpi_init_local_structs(
               MPI_COMM_WORLD);
 
 #ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Converting COO matrix to SELL-C-SIG and permuting.\n");}
+    if(my_rank == 0){printf("Converting COO matrix to SELL-C-SIG and permuting locally (NOTE: rows only, i.e. nonsymetrically).\n");}
 #endif
     // convert local_mtx to local_scs and permute rows (if applicable)
     convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);

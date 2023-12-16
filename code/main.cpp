@@ -16,7 +16,7 @@
 #include <sstream>
 #include <vector>
 
-#define WARM_UP_REPS 15
+#define WARM_UP_REPS 100
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -59,12 +59,11 @@ void bench_spmv(
     int nzr_size = local_context->non_zero_receivers.size();
     int nzs_size = local_context->non_zero_senders.size();
 
-    // Permute x, since local matrix permuted symmetrically
+    // TODO: Permute x, since local matrix permuted symmetrically
     // std::vector<VT> local_x_permuted(local_x->size(), 0);
-    std::vector<VT> sorted_local_y(local_y->size(), 0);
-
     // apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
+    std::vector<VT> sorted_local_y(local_y->size(), 0);
 
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
@@ -95,14 +94,11 @@ void bench_spmv(
                     spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                         local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                         local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
                     std::swap(dummy_x, dummy_y);
-
-                    // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-                    //     printf("%lf", dummy_x[local_x->size() / 2]);
-                    //     exit(0);
-                    // }
-                    // MPI_Barrier(MPI_COMM_WORLD);
             }
         }
         else if(!config->comm_halos){
@@ -110,22 +106,23 @@ void bench_spmv(
                 spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
                 std::swap(dummy_x, dummy_y);
-
-                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-                //     printf("%lf", dummy_x[local_x->size() / 2]);
-                //     exit(0);
-                // }
             }
         }
         end_warm_up_loop_time = MPI_Wtime();
 
 
         // Use warm-up to calculate n_iter for real benchmark
-        int n_iter; // NOTE: is it correct for the root process' iteration count to be what is used?
+        int n_iter = 10; // NOTE: is it correct for the root process' iteration count to be what is used?
         if(my_rank == 0){
-            n_iter = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
+            // Guards against REALLY bad load balancing 
+            int num_reps_warm = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
+            if (num_reps_warm > 1)
+                n_iter = num_reps_warm;
         }
 
         MPI_Bcast(
@@ -161,15 +158,12 @@ void bench_spmv(
                 spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
                 
 
                 std::swap(dummy_x, dummy_y);
-
-                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-                //     printf("%lf", dummy_x[local_x->size() / 2]);
-                //     exit(0);
-                // }
-                // MPI_Barrier(MPI_COMM_WORLD);
             }
         }
         else if(!config->comm_halos){
@@ -177,14 +171,12 @@ void bench_spmv(
                 spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
                 
 
                 std::swap(dummy_x, dummy_y);
-
-                // if(dummy_x[0]>1.0){ // prevent compiler from eliminating loop
-                //     printf("%lf", dummy_x[local_x->size() / 2]);
-                //     exit(0);
-                // }
             }
         }
 
@@ -219,6 +211,9 @@ void bench_spmv(
             spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+            // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+            //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+            //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
             // In unsymmetric permutation, y need be sorted every iteration for accurate results
             apply_permutation(&(sorted_local_y)[0], &(*local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
@@ -292,6 +287,20 @@ void compute_result(
 
     // Allocate space for work sharing array
     IT work_sharing_arr[comm_size + 1];
+
+    // Allocate global permutation vectors
+    int *metis_part = NULL;
+    int *metis_perm = NULL;
+    int *metis_inv_perm = NULL;
+    if(*seg_method == "seg-metis"){
+        metis_part = new int[total_mtx->n_rows];
+        metis_perm = new int[total_mtx->n_rows];
+        for(int i = 0; i < total_mtx->n_rows; ++i){
+            metis_perm[i] = i;
+        }
+        metis_inv_perm = new int[total_mtx->n_rows];
+    }
+
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Init local structures.\n");}
 #endif
@@ -303,7 +312,10 @@ void compute_result(
         seg_method, 
         work_sharing_arr, 
         my_rank, 
-        comm_size
+        comm_size,
+        metis_part,
+        metis_perm,
+        metis_inv_perm
     );
 
     // Declare local vectors to be used
@@ -330,6 +342,9 @@ void compute_result(
         my_rank,
         comm_size
     );
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Complete bench_spmv.\n");}
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Gather results to root process.\n");}
@@ -356,28 +371,7 @@ void compute_result(
         std::vector<VT> sorted_local_y(local_scs.n_rows);
         r->x_out = local_x_copy;
         r->y_out = local_y.vec;
-        
-        // for(int i = 0; i < local_scs.n_rows; ++i){
-        //     std::cout << sorted_local_y[i] << std::endl;
-        // }
-        // printf("\n");
 
-        // for(int i = 0; i < local_scs.n_rows; ++i){
-        //     std::cout << r->y_out[i] << std::endl;
-        // }
-        // printf("\n");
-        
-        // apply_permutation(&(sorted_local_y)[0], &(r->y_out)[0], &(local_scs.old_to_new_idx)[0], local_scs.n_rows);
-        // std::swap(sorted_local_y, r->y_out);
-
-        // for(int i = 0; i < local_scs.n_rows; ++i){
-        //     std::cout << sorted_local_y[i] << std::endl;
-        // }
-        // printf("\n");
-        // for(int i = 0; i < local_scs.n_rows; ++i){
-        //     std::cout << r->y_out[i] << std::endl;
-        // }
-        // printf("\n");
         if (config->validate_result)
         {
             // TODO: is the size correct here?
@@ -446,6 +440,13 @@ void compute_result(
             r->total_x = total_x;
             r->total_spmvm_result = total_spmvm_result;
         }
+    }
+
+    // Delete allocated permutation vectors, if metis used
+    if(*seg_method == "seg-metis"){
+        delete[] metis_part;
+        delete[] metis_perm;
+        delete[] metis_inv_perm;
     }
 }
 

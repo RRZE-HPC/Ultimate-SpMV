@@ -1,7 +1,8 @@
 #ifndef WRITE_RESULTS
 #define WRITE_RESULTS
 
-#include "mkl.h"
+#include <mkl.h>
+#include <omp.h>
 
 template<typename VT, typename IT>
 void write_bench_to_file(
@@ -15,13 +16,18 @@ void write_bench_to_file(
     std::fstream working_file;
     int width = 32;
 
-    
+    int num_omp_threads;
+
+    #pragma omp parallel
+    {
+        num_omp_threads = omp_get_num_threads();
+    }
 
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with " << comm_size << " MPI processes" << std::endl; 
-    working_file << "C: " << config->chunk_size << ", data_type: " <<
-    typeid(VT).name() << ", repetitions: " << r->n_calls << ", comm_halos: " << config->comm_halos << ", and seg_method: " << *seg_method << std::endl;
+    working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
+    working_file << "C: " << config->chunk_size << " sigma: " << config->sigma << ", data_type: " <<
+    typeid(VT).name() << ", revisions: " << r->n_calls << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
     working_file << std::left << std::setw(width) << "Total Gflops:" <<
@@ -69,11 +75,17 @@ void write_dp_result_to_file(
     max_absolute_diff_elem_mkl = (*x)[0];
 
     std::cout.precision(16);
+    int num_omp_threads;
+
+    #pragma omp parallel
+    {
+        num_omp_threads = omp_get_num_threads();
+    }
 
     // Print parameters
     working_file.open(config->output_filename_dp, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with " << comm_size << " MPI processes" << std::endl; 
-    working_file << "C: " << config->chunk_size << ", data_type: " <<
+    working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
+    working_file << "C: " << config->chunk_size << " sigma: " << config->sigma << ", data_type: " <<
     'd' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
@@ -121,7 +133,7 @@ void write_dp_result_to_file(
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
 
-            if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
+            if((abs(relative_diff) > .01) || std::isinf(relative_diff)){
                 working_file << std::left << std::setw(width) << "ERROR";
             }
             else if(abs(relative_diff) > .0001){
@@ -194,8 +206,8 @@ void write_sp_result_to_file(
 ){
 
     int width;
-    float relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
-    float absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
+    double relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
+    double absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
     std::fstream working_file;
 
     max_relative_diff = 0;
@@ -206,18 +218,25 @@ void write_sp_result_to_file(
     max_absolute_diff_elem_spmvm = r->total_spmvm_result[0];
     max_absolute_diff_elem_mkl = (*x)[0];
 
-    std::cout.precision(8);
+    std::cout.precision(16);
+
+    int num_omp_threads;
+
+    #pragma omp parallel
+    {
+        num_omp_threads = omp_get_num_threads();
+    }
 
     // Print parameters
     working_file.open(config->output_filename_sp, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with " << comm_size << " MPI processes" << std::endl; 
-    working_file << "C: " << config->chunk_size << ", data_type: " <<
+    working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
+    working_file << "C: " << config->chunk_size << " sigma: " << config->sigma << ", data_type: " <<
     'f' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
     // Print header
     if(config->verbose_validation == 1){
-        width = 16;
+        width = 24;
 
         working_file << std::left << std::setw(width) << "mkl results:"
                     << std::left << std::setw(width) << "spmv results:"
@@ -259,7 +278,7 @@ void write_sp_result_to_file(
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
 
-            if((abs(relative_diff) > .01) || std::isnan(relative_diff) || std::isinf(relative_diff)){
+            if((abs(relative_diff) > .01) || std::isinf(relative_diff)){
                 working_file << std::left << std::setw(width) << "ERROR";
             }
             else if(abs(relative_diff) > .0001){
