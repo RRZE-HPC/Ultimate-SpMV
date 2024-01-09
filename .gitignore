@@ -2,8 +2,7 @@ test.cpp
 verify.sh
 setup.sh
 verify_results.txt
-spmv-omp
-spmv-omp-adv
+uspmv
 .vscode/
 valgrind_output.txt
 spmv_mkl_compare.txt

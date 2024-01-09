@@ -1,6 +1,8 @@
 COMPILER = icx
 VECTOR_LENGTH = 4
+COMM_HALOS = 1
 DEBUG_MODE = 0
+BARRIER_SYNC = 0
 
 # 0/1 library usage
 USE_METIS = 1
@@ -41,6 +43,14 @@ endif
 
 ifeq ($(DEBUG_MODE),1)
   CXXFLAGS += -g -DDEBUG_MODE
+endif
+
+ifeq ($(BARRIER_SYNC),1)
+  CXXFLAGS += -DBARRIER_SYNC
+endif
+
+ifeq ($(COMM_HALOS),1)
+  CXXFLAGS += -DCOMM_HALOS
 endif
 
 ifeq ($(USE_METIS),1)

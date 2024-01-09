@@ -251,11 +251,15 @@ struct Config
     // activate profile logs, only root process
     int log_prof = 0;
 
+    // NOTE: Moved to Makefile
     // communicate the halo elements in benchmark loop
-    int comm_halos = 1;
+    // int comm_halos = 1;
 
     // Configures if the code will be executed in bench mode (b) or solve mode (s)
     char mode = 'b'; 
+
+    // Runs benchmark for a specified number of seconds
+    double bench_time = 0.0;
 
     // Selects the default matrix storage format
     std::string kernel_format = "scs"; 

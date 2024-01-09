@@ -453,6 +453,7 @@ void communicate_halo_elements(
         }
     }
 
+    // TODO: try single waitall for sends and recieves
     MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
     MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
 }
