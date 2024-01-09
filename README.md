@@ -14,7 +14,7 @@ Options:
 - validate (0/1 check result against mkl option)
 - verbose (0/1 verbose validation of results)
 - mode (s/b either in solve mode or bench mode)
-- comm_halos (0/1 communicate halo elements option)
+- bench_time (minimum number of seconds to repeat benchmark)
  
 Notes:
 - Dependencies:
