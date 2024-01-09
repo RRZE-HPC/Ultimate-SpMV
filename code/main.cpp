@@ -75,8 +75,8 @@ void bench_spmv(
         double begin_warm_up_loop_time, end_warm_up_loop_time;
         begin_warm_up_loop_time = MPI_Wtime();
 
+        if(config->comm_halos){
             for(int k = 0; k < WARM_UP_REPS; ++k){
-#ifdef COMM_HALOS
                 communicate_halo_elements<VT, IT>(
                     local_scs,
                     local_context, 
@@ -90,7 +90,7 @@ void bench_spmv(
                     local_context->num_local_rows,
                     my_rank,
                     comm_size);
-#endif
+                    
                     spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                                         local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                                         local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
@@ -99,10 +99,27 @@ void bench_spmv(
                 //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
                     std::swap(dummy_x, dummy_y);
-#ifdef BARRIER_SYNC
+
+                if(config->ba_synch)
                     MPI_Barrier(MPI_COMM_WORLD);
-#endif
             }
+        }
+        else if(!config->comm_halos){
+            for(int k = 0; k < WARM_UP_REPS; ++k){
+                    spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+
+                    std::swap(dummy_x, dummy_y);
+
+                if(config->ba_synch)
+                    MPI_Barrier(MPI_COMM_WORLD);
+            }
+        }
+
 
         end_warm_up_loop_time = MPI_Wtime();
 
@@ -129,35 +146,50 @@ void bench_spmv(
             MPI_Barrier(MPI_COMM_WORLD);
             begin_bench_loop_time = MPI_Wtime();
             
-            for(int k = 0; k < n_iter; ++k){
-#ifdef COMM_HALOS
-                communicate_halo_elements<VT, IT>(
-                    local_scs,
-                    local_context, 
-                    local_x, 
-                    to_send_elems,
-                    work_sharing_arr, 
-                    recv_requests,
-                    nzs_size,
-                    send_requests,
-                    nzr_size,
-                    local_context->num_local_rows,
-                    my_rank,
-                    comm_size);
-#endif
+            if(config->comm_halos){
+                for(int k = 0; k < n_iter; ++k){
+                    communicate_halo_elements<VT, IT>(
+                        local_scs,
+                        local_context, 
+                        local_x, 
+                        to_send_elems,
+                        work_sharing_arr, 
+                        recv_requests,
+                        nzs_size,
+                        send_requests,
+                        nzr_size,
+                        local_context->num_local_rows,
+                        my_rank,
+                        comm_size);
 
-                spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                    local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                    local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                    spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                    // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                    //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                    //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                    
+
+                    std::swap(dummy_x, dummy_y);
+
+                    if(config->ba_synch)
+                        MPI_Barrier(MPI_COMM_WORLD);
+                }
+            }
+            else if (!config->comm_halos){
+                for(int k = 0; k < n_iter; ++k){
+                    spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
                 // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
                 //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
                 //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
                 
-
                 std::swap(dummy_x, dummy_y);
-#ifdef BARRIER_SYNC
-                MPI_Barrier(MPI_COMM_WORLD);
-#endif
+
+                if(config->ba_synch)
+                    MPI_Barrier(MPI_COMM_WORLD);
+                }
             }
 
             MPI_Barrier(MPI_COMM_WORLD);
@@ -177,47 +209,73 @@ void bench_spmv(
             int all_procs_finished = 0;
             // begin_bench_loop_time = MPI_Wtime();
             // MPI_Barrier(MPI_COMM_WORLD);
+            if(config->comm_halos){
 
-            do{
-                MPI_Barrier(MPI_COMM_WORLD);
-                begin_bench_loop_time = MPI_Wtime();
-
-                for(int k=0; k<n_iter; ++k) {
-#ifdef COMM_HALOS
-                    communicate_halo_elements<VT, IT>(
-                        local_scs,
-                        local_context, 
-                        local_x, 
-                        to_send_elems,
-                        work_sharing_arr, 
-                        recv_requests,
-                        nzs_size,
-                        send_requests,
-                        nzr_size,
-                        local_context->num_local_rows,
-                        my_rank,
-                        comm_size);
-#endif
-
-                    spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                    // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                    //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                    //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                    
-
-                    std::swap(dummy_x, dummy_y);
-    #ifdef BARRIER_SYNC
+                do{
                     MPI_Barrier(MPI_COMM_WORLD);
-    #endif
-                }
-                MPI_Barrier(MPI_COMM_WORLD);
-                n_iter = n_iter*2;
-                runtime = MPI_Wtime() - begin_bench_loop_time;
-            } while (runtime < config->bench_time);
-            n_iter = n_iter/2;
+                    begin_bench_loop_time = MPI_Wtime();
 
+                    for(int k=0; k<n_iter; ++k) {
+                        communicate_halo_elements<VT, IT>(
+                            local_scs,
+                            local_context, 
+                            local_x, 
+                            to_send_elems,
+                            work_sharing_arr, 
+                            recv_requests,
+                            nzs_size,
+                            send_requests,
+                            nzr_size,
+                            local_context->num_local_rows,
+                            my_rank,
+                            comm_size);
+
+                        spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                            local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                            local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                        // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                        //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                        //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                        
+
+                        std::swap(dummy_x, dummy_y);
+
+                        if(config->ba_synch)
+                            MPI_Barrier(MPI_COMM_WORLD);
+                    }
+                    MPI_Barrier(MPI_COMM_WORLD);
+                    n_iter = n_iter*2;
+                    runtime = MPI_Wtime() - begin_bench_loop_time;
+                } while (runtime < config->bench_time);
+                n_iter = n_iter/2;
+            }
+            else if(!config->comm_halos){
+
+                do{
+                    MPI_Barrier(MPI_COMM_WORLD);
+                    begin_bench_loop_time = MPI_Wtime();
+
+                    for(int k=0; k<n_iter; ++k) {
+
+                        spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                                            local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                                            local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                        // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
+                        //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
+                        //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
+                        
+
+                        std::swap(dummy_x, dummy_y);
+
+                        if(config->ba_synch)
+                            MPI_Barrier(MPI_COMM_WORLD);
+                    }
+                    MPI_Barrier(MPI_COMM_WORLD);
+                    n_iter = n_iter*2;
+                    runtime = MPI_Wtime() - begin_bench_loop_time;
+                } while (runtime < config->bench_time);
+                n_iter = n_iter/2;
+            }
             r->n_calls = n_iter;
             r->duration_total_s = runtime;
             r->duration_kernel_s = r->duration_total_s/ r->n_calls;
@@ -254,9 +312,9 @@ void bench_spmv(
             apply_permutation(&(sorted_local_y)[0], &(*local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
 
             std::swap(*local_x, sorted_local_y);
-#ifdef BARRIER_SYNC
-            MPI_Barrier(MPI_COMM_WORLD);
-#endif
+
+            if(config->ba_synch)
+                MPI_Barrier(MPI_COMM_WORLD);
         }
         // Give x results to y as output
         std::swap(*local_x, *local_y);

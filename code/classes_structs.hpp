@@ -251,9 +251,11 @@ struct Config
     // activate profile logs, only root process
     int log_prof = 0;
 
-    // NOTE: Moved to Makefile
     // communicate the halo elements in benchmark loop
-    // int comm_halos = 1;
+    int comm_halos = 1;
+
+    // synchronize with barriers each benchmark loop
+    int ba_synch = 0;
 
     // Configures if the code will be executed in bench mode (b) or solve mode (s)
     char mode = 'b'; 
