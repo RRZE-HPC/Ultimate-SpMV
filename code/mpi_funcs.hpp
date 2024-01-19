@@ -345,6 +345,7 @@ template <typename VT, typename IT>
 void communicate_halo_elements(
     ScsData<VT, IT> *local_scs,
     ContextData<VT, IT> *local_context,
+    Config *config, // shouldn't this be const?
     std::vector<VT> *local_x,
     VT *to_send_elems[],
     const IT *work_sharing_arr,
@@ -389,6 +390,7 @@ void communicate_halo_elements(
             // }
 
             // Move non-contiguous data to a contiguous buffer for communication
+            #pragma omp parallel for if(config->par_pack)   
             for(int i = 0; i < outgoing_buf_size; ++i){
                 // (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
                 (to_send_elems[to_proc_idx])[i] = (*local_x)[local_context->comm_send_idxs[receiving_proc][i]];
@@ -437,6 +439,7 @@ void communicate_halo_elements(
             // }
 
             // Move non-contiguous data to a contiguous buffer for communication
+            #pragma omp parallel for if(config->par_pack)
             for(int i = 0; i < outgoing_buf_size; ++i){
                 (to_send_elems[to_proc_idx])[i] = (*local_x)[local_context->comm_send_idxs[receiving_proc][i]];
             }

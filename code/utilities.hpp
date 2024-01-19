@@ -948,8 +948,8 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i]\n",
-                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos);
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i]\n",
+                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack);
                     
 }
 
@@ -1110,6 +1110,19 @@ void verify_and_assign_inputs(
             {
                 if(my_rank == 0){
                     fprintf(stderr, "ERROR: You can only choose to synchronize each iteration at barriers (1, i.e. yes) or not (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
+        else if (arg == "-par_pack")
+        {
+            config->par_pack = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->par_pack != 0 && config->par_pack != 1)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to pack contiguous elements for MPI_Isend in parallel (1, i.e. yes) or not (0, i.e. no).\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }

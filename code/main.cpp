@@ -80,6 +80,7 @@ void bench_spmv(
                 communicate_halo_elements<VT, IT>(
                     local_scs,
                     local_context, 
+                    config,
                     local_x, 
                     to_send_elems,
                     work_sharing_arr, 
@@ -151,6 +152,7 @@ void bench_spmv(
                     communicate_halo_elements<VT, IT>(
                         local_scs,
                         local_context, 
+                        config,
                         local_x, 
                         to_send_elems,
                         work_sharing_arr, 
@@ -219,6 +221,7 @@ void bench_spmv(
                         communicate_halo_elements<VT, IT>(
                             local_scs,
                             local_context, 
+                            config,
                             local_x, 
                             to_send_elems,
                             work_sharing_arr, 
@@ -290,6 +293,7 @@ void bench_spmv(
             communicate_halo_elements<VT, IT>(
                 local_scs,
                 local_context, 
+                config,
                 local_x, 
                 to_send_elems,
                 work_sharing_arr, 

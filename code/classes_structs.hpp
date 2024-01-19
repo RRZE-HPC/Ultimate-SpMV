@@ -257,6 +257,9 @@ struct Config
     // synchronize with barriers each benchmark loop
     int ba_synch = 0;
 
+    // Pack contiguous elements for MPI_Isend in parallel
+    int par_pack = 0;
+
     // Configures if the code will be executed in bench mode (b) or solve mode (s)
     char mode = 'b'; 
 
