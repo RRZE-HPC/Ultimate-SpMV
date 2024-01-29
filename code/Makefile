@@ -98,6 +98,20 @@ main.o: main.cpp $(REBUILD_DEPS)
 mmio.o: mmio.cpp mmio.h
 	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
 
+TEST_INC_DIR = $(PWD)
+
+tests: test_suite/catch.o test_suite/tests.o test_suite/test_data.o test_suite/catch.hpp
+	$(CXX) -I$(TEST_INC_DIR) test_suite/tests.o test_suite/catch.o test_suite/test_data.o -o test_suite/tests
+
+test_suite/catch.o: test_suite/catch.cpp test_suite/catch.hpp
+	$(CXX) -I$(TEST_INC_DIR) -c test_suite/catch.cpp -o test_suite/catch.o
+
+test_suite/tests.o: test_suite/tests.cpp test_suite/catch.hpp test_suite/test_data.hpp
+	$(CXX) -I$(TEST_INC_DIR) -c test_suite/tests.cpp -o test_suite/tests.o
+
+test_suite/test_data.o: test_suite/test_data.cpp
+	$(CXX) -I$(TEST_INC_DIR) -c test_suite/test_data.cpp -o test_suite/test_data.o
+
 .PHONY: clean
 clean:
 	-rm *.o

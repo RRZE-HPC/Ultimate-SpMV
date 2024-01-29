@@ -12,6 +12,10 @@
 
 #include <set>
 
+int test(){
+    return 1;
+}
+
 /**
     @brief Generate unique tags for communication, based on the cantor pairing function. 
     @param *send_tags : tags used in the main communication loop for Isend

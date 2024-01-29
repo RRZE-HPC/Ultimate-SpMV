@@ -16,6 +16,7 @@ Options:
 - mode (s/b either in solve mode or bench mode)
 - ba_synch (0/1 synch processes each benchmark loop)
 - comm_halos (0/1 communication halo elements each benchmark loop)
+- par_pack (0/1 pack elements contigously for MPI_Isend in parallel)
  
 Notes:
 - Dependencies:
@@ -29,6 +30,7 @@ Notes:
 	- module load oneapi/2023.2.0
 	- module load compiler
 	- export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/saturn/unrz/unrz139/.modules/oneapi-2023.2.0/compiler/2023.2.0/linux/compiler/lib/intel64
+- The par_pack option yields better performance for MPI+Openmp runs with poorly load balanced matrices
 
 TODO features:
 - CMake building for automatic file path detection
