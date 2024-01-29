@@ -2,6 +2,7 @@
 #define CLASSES_STRUCTS
 
 #include "vectors.h"
+#include "mmio.h"
 #include <ctime>
 #include <mpi.h>
 
@@ -16,6 +17,77 @@ using ST = long;
 // Initialize all matrices and vectors the same.
 // Use -rand to initialize randomly.
 static bool g_same_seed_for_every_vector = true;
+
+struct Config
+{
+    long n_els_per_row{-1}; // ell
+    long chunk_size{1};    // sell-c-sigma
+    long sigma{1};         // sell-c-sigma
+
+    // Initialize rhs vector with random numbers.
+    bool random_init_x{true};
+
+    // Override values of the matrix, read via mtx file, with random numbers.
+    bool random_init_A{false};
+
+    // No. of repetitions to perform.
+    unsigned long n_repetitions{5};
+
+    // Verify result of SpVM.
+    int validate_result = 1;
+
+    // Verify result against solution of COO kernel.
+    int verify_result_with_coo = 0;
+
+    // Print incorrect elements from solution.
+    // bool verbose_verification{true};
+
+    // Sort rows/columns of sparse matrix before
+    // converting it to a specific format.
+    int sort_matrix = 1;
+
+    int verbose_validation = 0;
+
+    // activate profile logs, only root process
+    int log_prof = 0;
+
+    // communicate the halo elements in benchmark loop
+    int comm_halos = 1;
+
+    // synchronize with barriers each benchmark loop
+    int ba_synch = 0;
+
+    // Pack contiguous elements for MPI_Isend in parallel
+    int par_pack = 0;
+
+    // Configures if the code will be executed in bench mode (b) or solve mode (s)
+    char mode = 'b'; 
+
+    // Runs benchmark for a specified number of seconds
+    double bench_time = 0.0;
+
+    // Mixed Precision bucket size, used for partitioning matrix
+    double bucket_size = 1.0;
+
+    // Default matrix segmentation method
+    std::string seg_method = "seg-rows";
+
+    // Default matrix data value type
+    std::string value_type = "dp";
+
+    // Selects the default matrix storage format
+    std::string kernel_format = "scs"; 
+
+    // filename for single precision results printing
+    std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
+
+    // filename for double precision results printing
+    std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
+
+    // filename for benchmark results printing
+    std::string output_filename_bench = "spmv_bench.txt";
+
+};
 
 template <typename VT, typename IT>
 struct MtxData
@@ -32,7 +104,7 @@ struct MtxData
     std::vector<VT> values;
 };
 
-template <typename VT, typename IT>
+template <typename IT>
 struct ContextData
 {
     // std::vector<IT> to_send_heri;
@@ -50,9 +122,6 @@ struct ContextData
     // TODO: remove and not store, do calculations earlier
     std::vector<std::vector<IT>> comm_send_idxs;
     std::vector<std::vector<IT>> comm_recv_idxs;
-
-    // TODO: I dont think context should be holding all elements needed to send...
-    std::vector<std::vector<VT>> elems_to_send;
 
     std::vector<IT> recv_counts_cumsum;
     std::vector<IT> send_counts_cumsum;
@@ -86,6 +155,7 @@ struct ScsData
     // TODO: ^ make V object as well?
 
     void metis_permute(int *_perm_, int*  _invPerm_);
+    void write_to_mtx_file(int my_rank, std::string file_out_name);
 };
 
 
@@ -126,7 +196,7 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
         //first find newRowPtr; therefore we can do proper NUMA init
         int _perm_Idx=0;
 #ifdef DEBUG_MODE
-    if(my_rank == 0){printf("nrows = %d\n", nrows);}
+    // if(my_rank == 0){printf("nrows = %d\n", nrows);}
 #endif
         
         for(int row=0; row<nrows; ++row)
@@ -218,67 +288,42 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
     delete[] newCol;
 }
 
-struct Config
+template <typename VT, typename IT>
+void ScsData<VT, IT>::write_to_mtx_file(
+    int my_rank,
+    std::string file_out_name)
 {
-    long n_els_per_row{-1}; // ell
-    long chunk_size{1};    // sell-c-sigma
-    long sigma{1};         // sell-c-sigma
+    //Convert csr back to coo for mtx format printing
+    std::vector<int> temp_rows(n_elements);
+    std::vector<int> temp_cols(n_elements);
+    std::vector<double> temp_values(n_elements);
 
-    // Initialize rhs vector with random numbers.
-    bool random_init_x{true};
+    int elem_num = 0;
+    for(int row = 0; row < n_rows; ++row){
+        for(int idx = chunk_ptrs[row]; idx < chunk_ptrs[row + 1]; ++idx){
+            temp_rows[elem_num] = row + 1; // +1 to adjust for 1 based indexing in mm-format
+            temp_cols[elem_num] = col_idxs[idx] + 1;
+            temp_values[elem_num] = values[idx];
+            ++elem_num;
+        }
+    }
 
-    // Override values of the matrix, read via mtx file, with random numbers.
-    bool random_init_A{false};
+    std::string out_file_name = file_out_name + "_rank_" + std::to_string(my_rank) + ".mtx"; 
 
-    // No. of repetitions to perform.
-    unsigned long n_repetitions{5};
+    mm_write_mtx_crd(
+        &out_file_name[0], 
+        n_rows, 
+        n_cols, 
+        n_elements, 
+        &(temp_rows)[0], 
+        &(temp_cols)[0], 
+        &(temp_values)[0], 
+        "MCRG" // TODO: <- make more general, i.e. flexible based on the matrix. Read from original mtx?
+    );
+}
 
-    // Verify result of SpVM.
-    int validate_result = 1;
 
-    // Verify result against solution of COO kernel.
-    int verify_result_with_coo = 0;
 
-    // Print incorrect elements from solution.
-    // bool verbose_verification{true};
-
-    // Sort rows/columns of sparse matrix before
-    // converting it to a specific format.
-    int sort_matrix = 1;
-
-    int verbose_validation = 0;
-
-    // activate profile logs, only root process
-    int log_prof = 0;
-
-    // communicate the halo elements in benchmark loop
-    int comm_halos = 1;
-
-    // synchronize with barriers each benchmark loop
-    int ba_synch = 0;
-
-    // Pack contiguous elements for MPI_Isend in parallel
-    int par_pack = 0;
-
-    // Configures if the code will be executed in bench mode (b) or solve mode (s)
-    char mode = 'b'; 
-
-    // Runs benchmark for a specified number of seconds
-    double bench_time = 0.0;
-
-    // Selects the default matrix storage format
-    std::string kernel_format = "scs"; 
-
-    // filename for single precision results printing
-    std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
-
-    // filename for double precision results printing
-    std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
-
-    // filename for benchmark results printing
-    std::string output_filename_bench = "spmv_bench.txt";
-
-};
 
 template <typename VT, typename IT>
 struct DefaultValues
@@ -342,6 +387,10 @@ struct Result
     std::vector<VT> x_out;
     std::vector<VT> total_spmvm_result;
     std::vector<VT> total_x;
+
+    // Mixed precision specific
+    double hp_nnz_percent;
+    double lp_nnz_percent;
 };
 
 // Honestly, probably not necessary

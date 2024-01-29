@@ -32,6 +32,49 @@ spmv_omp_csr(const ST C, // 1
     }
 }
 
+// TODO: I don't yet know how to se tup the signature to enable kernel picker
+template <typename IT>
+static void
+spmv_omp_csr_mp(
+             const ST num_rows, // n_chunks (same for both)
+             const ST hp_C, // 1
+             const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
+             const IT * RESTRICT hp_chunk_lengths, // unused
+             const IT * RESTRICT hp_col_idxs,
+             const double * RESTRICT hp_values,
+             const double * RESTRICT hp_x,
+             double * RESTRICT hp_y, 
+             const ST lp_C, // 1
+             const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
+             const IT * RESTRICT lp_chunk_lengths, // unused
+             const IT * RESTRICT lp_col_idxs,
+             const float * RESTRICT lp_values,
+             const float * RESTRICT lp_x,
+             float * RESTRICT lp_y // unused
+             )
+{
+            // Each thread will traverse the hp struct, then the lp struct
+        // Load balancing depends on sparsity pattern AND data distribution
+    #pragma omp parallel for schedule(static)
+    for (ST row = 0; row < num_rows; ++row) {
+        double hp_sum{};
+        // #pragma nounroll
+        #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
+        for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+            hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+        }
+
+        float lp_sum{};
+        // #pragma nounroll
+        #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+        for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
+            lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+        }
+
+        hp_y[row] = hp_sum + lp_sum;
+    }
+}
+
 
 /**
  * Kernel for ELL format, data structures use row major (RM) layout.

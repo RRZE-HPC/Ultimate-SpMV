@@ -1,20 +1,16 @@
 #ifndef MPI_FUNCS
 #define MPI_FUNCS
 
+#include "mmio.h"
+#include "utilities.hpp"
+#include "classes_structs.hpp"
+
 #include <unordered_map>
 #include <unordered_set>
 #include <numeric>
 #include <map>
 #include <unistd.h>
-
-#include "utilities.hpp"
-#include "classes_structs.hpp"
-
 #include <set>
-
-int test(){
-    return 1;
-}
 
 /**
     @brief Generate unique tags for communication, based on the cantor pairing function. 
@@ -348,7 +344,7 @@ void collect_local_needed_heri(
 template <typename VT, typename IT>
 void communicate_halo_elements(
     ScsData<VT, IT> *local_scs,
-    ContextData<VT, IT> *local_context,
+    ContextData<IT> *local_context,
     Config *config, // shouldn't this be const?
     std::vector<VT> *local_x,
     VT *to_send_elems[],
@@ -712,6 +708,71 @@ void define_bookkeeping_type(
     MPI_Type_commit(bk_type);
 }
 
+template <typename VT, typename IT>
+void seperate_lp_from_hp(
+    Config *config,
+    MtxData<VT, IT> *local_mtx, 
+    MtxData<double, int> *hp_local_mtx, 
+    MtxData<float, int> *lp_local_mtx,
+    int my_rank)
+{
+    double threshold = config->bucket_size;
+
+    hp_local_mtx->is_sorted = local_mtx->is_sorted;
+    hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    hp_local_mtx->n_rows = local_mtx->n_rows;
+    hp_local_mtx->n_cols = local_mtx->n_cols;
+
+    lp_local_mtx->is_sorted = local_mtx->is_sorted;
+    lp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    lp_local_mtx->n_rows = local_mtx->n_rows;
+    lp_local_mtx->n_cols = local_mtx->n_cols;
+
+    int lp_elem_ctr = 0;
+    int hp_elem_ctr = 0;
+
+    std::vector<int> hp_local_I;
+    std::vector<int> hp_local_J;
+    std::vector<double> hp_local_vals;
+    hp_local_mtx->I = hp_local_I;
+    hp_local_mtx->J = hp_local_J;
+    hp_local_mtx->values = hp_local_vals;
+
+    std::vector<int> lp_local_I;
+    std::vector<int> lp_local_J;
+    std::vector<float> lp_local_vals;
+    lp_local_mtx->I = lp_local_I;
+    lp_local_mtx->J = lp_local_J;
+    lp_local_mtx->values = lp_local_vals;
+
+    // Scan local_mtx
+    for(int i = 0; i < local_mtx->nnz; ++i){
+        // If element value below threshold, place in hp_local_mtx
+        if(abs(local_mtx->values[i]) >= threshold){   
+            hp_local_mtx->values.push_back(local_mtx->values[i]);
+            hp_local_mtx->I.push_back(local_mtx->I[i]);
+            hp_local_mtx->J.push_back(local_mtx->J[i]);
+            ++hp_elem_ctr;
+        }
+        else{
+            // else, place in lp_local_mtx 
+            lp_local_mtx->values.push_back(local_mtx->values[i]);
+            lp_local_mtx->I.push_back(local_mtx->I[i]);
+            lp_local_mtx->J.push_back(local_mtx->J[i]);
+            ++lp_elem_ctr;
+        }
+    }
+
+    hp_local_mtx->nnz = hp_elem_ctr;
+    lp_local_mtx->nnz = lp_elem_ctr;
+
+    if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
+        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when separating into lp and hp structs.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr));
+        exit(1); 
+    }
+}
+
+
 /** 
     @brief Initialize total_mtx, segment and send this to local_mtx, convert to local_scs format, init comm information
     @param *local_scs : pointer to local scs struct
@@ -724,7 +785,9 @@ void define_bookkeeping_type(
 template<typename VT, typename IT>
 void mpi_init_local_structs(
     ScsData<VT, IT> *local_scs,
-    ContextData<VT, IT> *local_context,
+    ScsData<double, IT> *hp_local_scs,
+    ScsData<float, IT> *lp_local_scs,
+    ContextData<IT> *local_context,
     MtxData<VT, IT> *total_mtx,
     Config *config, // shouldn't this be const?
     const std::string *seg_method,
@@ -897,7 +960,42 @@ void mpi_init_local_structs(
     if(my_rank == 0){printf("Converting COO matrix to SELL-C-SIG and permuting locally (NOTE: rows only, i.e. nonsymetrically).\n");}
 #endif
     // convert local_mtx to local_scs and permute rows (if applicable)
-    convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+
+    // Only used for mixed precision
+    MtxData<double, int> hp_local_mtx;
+    MtxData<float, int> lp_local_mtx;
+
+    if (config->value_type == "mp"){
+        // Keeping COO format, partition local_mtx into high and low precision structs, based on
+        seperate_lp_from_hp<VT,IT>(config, &local_mtx, &hp_local_mtx, &lp_local_mtx, my_rank);
+
+        // Higher and Lower precision scs is only populated if we are computing in mixed precision
+        convert_to_scs<double, IT>(&hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
+        convert_to_scs<float, IT>(&lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);  
+
+#ifdef OUTPUT_SPARSITY
+        printf("Writing sparsity pattern to output file.\n");
+        std::string file_out_name;
+        file_out_name = "hp_local_scs";
+        hp_local_scs->write_to_mtx_file(my_rank, file_out_name);
+        file_out_name = "lp_local_scs";
+        lp_local_scs->write_to_mtx_file(my_rank, file_out_name);
+        MPI_Barrier(MPI_COMM_WORLD);
+        exit(0);
+#endif OUTPUT_SPARSITY
+    }
+    else{
+        // convert local_mtx to local_scs
+        convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+#ifdef OUTPUT_SPARSITY
+        printf("Writing sparsity pattern to output file.\n");
+        std::string file_out_name;
+        file_out_name = "local_scs";
+        local_scs->write_to_mtx_file(my_rank, file_out_name);
+        MPI_Barrier(MPI_COMM_WORLD);
+        exit(0);
+#endif OUTPUT_SPARSITY
+    }
 
     // permute columns with additional routine
     // std::vector<int> non_perm(local_scs->n_rows);

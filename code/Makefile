@@ -1,9 +1,10 @@
 COMPILER = icx
 VECTOR_LENGTH = 4
-DEBUG_MODE = 0
+DEBUG_MODE = 1
+OUTPUT_SPARSITY = 0
 
 # 0/1 library usage
-USE_METIS = 1
+USE_METIS = 0
 USE_LIKWID = 0
 
 # compiler options
@@ -41,6 +42,10 @@ endif
 
 ifeq ($(DEBUG_MODE),1)
   CXXFLAGS += -g -DDEBUG_MODE
+endif
+
+ifeq ($(OUTPUT_SPARSITY),1)
+  CXXFLAGS += -DOUTPUT_SPARSITY
 endif
 
 ifeq ($(USE_METIS),1)

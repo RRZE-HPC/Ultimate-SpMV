@@ -1,6 +1,8 @@
 #ifndef UTILITIES
 #define UTILITIES
 
+#include "classes_structs.hpp"
+
 #include <mpi.h>
 #include <cstdarg>
 #include <random>
@@ -948,8 +950,8 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i]\n",
-                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack);
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%g]\n",
+                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size);
                     
 }
 
@@ -1128,6 +1130,19 @@ void verify_and_assign_inputs(
                 }
             }
         }
+        else if (arg == "-bucket_size")
+        {
+            config->bucket_size = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->bucket_size <= 0)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: bucket_size must be > 0.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
         else if (arg == "-dp")
         {
             *value_type = "dp";
@@ -1135,6 +1150,10 @@ void verify_and_assign_inputs(
         else if (arg == "-sp")
         {
             *value_type = "sp";
+        }
+        else if (arg == "-mp")
+        {
+            *value_type = "mp";
         }
         else if (arg == "-seg_rows")
         {
@@ -1393,13 +1412,25 @@ class SimpleDenseMatrix {
     public:
         std::vector<VT> vec;
 
-        SimpleDenseMatrix(const ContextData<VT, IT> *local_context){
+        SimpleDenseMatrix(void){
+        }
+
+        SimpleDenseMatrix(const ContextData<IT> *local_context){
             // TODO: not too sure about this
             IT padding_from_heri = (local_context->recv_counts_cumsum).back();
             IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
 
             vec.resize(needed_padding + local_context->num_local_rows, 0);
         }
+
+        // SimpleDenseMatrix(std::vector<VT> vec_to_copy, const ContextData<VT, IT> *local_context){
+        //     // TODO: not too sure about this
+        //     IT padding_from_heri = (local_context->recv_counts_cumsum).back();
+        //     IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+
+        //     vec.resize(needed_padding + local_context->num_local_rows, 0);
+        //     vec(vec_to_copy.begin(), vec_to_copy.end());
+        // }
 
         void init(Config *config){
             DefaultValues<VT, IT> default_values;
@@ -1409,6 +1440,14 @@ class SimpleDenseMatrix {
                 default_values.x, 
                 config->random_init_x);
         }
+
+        // void populte(std::vector<double> vec_to_copy, const ContextData<IT> *local_context){
+        //     IT padding_from_heri = (local_context->recv_counts_cumsum).back();
+        //     IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+
+        //     vec.resize(needed_padding + local_context->num_local_rows, 0);
+        //     vec(vec_to_copy.begin(), vec_to_copy.end());
+        // }
 };
 
 template<typename IT>
@@ -1443,5 +1482,182 @@ int cantor_pairing(int a, int b) {
     return c;
 }
  
+
+inline void sort_perm(int *arr, int *perm, int len, bool rev=false)
+{
+    if(rev == false) {
+        std::stable_sort(perm+0, perm+len, [&](const int& a, const int& b) {return (arr[a] < arr[b]); });
+    } else {
+        std::stable_sort(perm+0, perm+len, [&](const int& a, const int& b) {return (arr[a] > arr[b]); });
+    }
+}
+
+template <typename VT, typename IT>
+void read_mtx(
+    const std::string matrix_file_name,
+    Config config,
+    MtxData<VT, IT> *total_mtx,
+    int my_rank)
+{
+    char* filename = const_cast<char*>(matrix_file_name.c_str());
+    IT nrows, ncols, nnz;
+    VT *val_ptr;
+    IT *I_ptr;
+    IT *J_ptr;
+
+    MM_typecode matcode;
+    FILE *f;
+
+    if ((f = fopen(filename, "r")) == NULL) {printf("Unable to open file");}
+
+    if (mm_read_banner(f, &matcode) != 0)
+    {
+        printf("mm_read_unsymetric: Could not process Matrix Market banner ");
+        printf(" in file [%s]\n", filename);
+        // return -1;
+    }
+
+    fclose(f);
+
+    // bool compatible_flag = (mm_is_sparse(matcode) && (mm_is_real(matcode)||mm_is_pattern(matcode))) && (mm_is_symmetric(matcode) || mm_is_general(matcode));
+    bool compatible_flag = (mm_is_sparse(matcode) && (mm_is_real(matcode)||mm_is_pattern(matcode)||mm_is_integer(matcode))) && (mm_is_symmetric(matcode) || mm_is_general(matcode));
+    bool symm_flag = mm_is_symmetric(matcode);
+    bool pattern_flag = mm_is_pattern(matcode);
+
+    if(!compatible_flag)
+    {
+        printf("The matrix market file provided is not supported.\n Reason :\n");
+        if(!mm_is_sparse(matcode))
+        {
+            printf(" * matrix has to be sparse\n");
+        }
+
+        if(!mm_is_real(matcode) && !(mm_is_pattern(matcode)))
+        {
+            printf(" * matrix has to be real or pattern\n");
+        }
+
+        if(!mm_is_symmetric(matcode) && !mm_is_general(matcode))
+        {
+            printf(" * matrix has to be either general or symmetric\n");
+        }
+
+        exit(0);
+    }
+
+    //int ncols;
+    IT *row_unsorted;
+    IT *col_unsorted;
+    VT *val_unsorted;
+
+    if(mm_read_unsymmetric_sparse<VT, IT>(filename, &nrows, &ncols, &nnz, &val_unsorted, &row_unsorted, &col_unsorted) < 0)
+    {
+        printf("Error in file reading\n");
+        exit(1);
+    }
+    if(nrows != ncols)
+    {
+        printf("Matrix not square. Currently only square matrices are supported\n");
+        exit(1);
+    }
+
+    //If matrix market file is symmetric; create a general one out of it
+    if(symm_flag)
+    {
+        // printf("Creating a general matrix out of a symmetric one\n");
+
+        int ctr = 0;
+
+        //this is needed since diagonals might be missing in some cases
+        for(int idx=0; idx<nnz; ++idx)
+        {
+            ++ctr;
+            if(row_unsorted[idx]!=col_unsorted[idx])
+            {
+                ++ctr;
+            }
+        }
+
+        int new_nnz = ctr;
+
+        IT *row_general = new IT[new_nnz];
+        IT *col_general = new IT[new_nnz];
+        VT *val_general = new VT[new_nnz];
+
+        int idx_gen=0;
+
+        for(int idx=0; idx<nnz; ++idx)
+        {
+            row_general[idx_gen] = row_unsorted[idx];
+            col_general[idx_gen] = col_unsorted[idx];
+            val_general[idx_gen] = val_unsorted[idx];
+            ++idx_gen;
+
+            if(row_unsorted[idx] != col_unsorted[idx])
+            {
+                row_general[idx_gen] = col_unsorted[idx];
+                col_general[idx_gen] = row_unsorted[idx];
+                val_general[idx_gen] = val_unsorted[idx];
+                ++idx_gen;
+            }
+        }
+
+        free(row_unsorted);
+        free(col_unsorted);
+        free(val_unsorted);
+
+        nnz = new_nnz;
+
+        //assign right pointers for further proccesing
+        row_unsorted = row_general;
+        col_unsorted = col_general;
+        val_unsorted = val_general;
+
+        // delete[] row_general;
+        // delete[] col_general;
+        // delete[] val_general;
+    }
+
+    //permute the col and val according to row
+    IT* perm = new IT[nnz];
+
+    // pramga omp parallel for?
+    for(int idx=0; idx<nnz; ++idx)
+    {
+        perm[idx] = idx;
+    }
+
+    sort_perm(row_unsorted, perm, nnz);
+
+    IT *col = new IT[nnz];
+    IT *row = new IT[nnz];
+    VT *val = new VT[nnz];
+
+    // pramga omp parallel for?
+    for(int idx=0; idx<nnz; ++idx)
+    {
+        col[idx] = col_unsorted[perm[idx]];
+        val[idx] = val_unsorted[perm[idx]];
+        row[idx] = row_unsorted[perm[idx]];
+    }
+
+    delete[] perm;
+    delete[] col_unsorted;
+    delete[] val_unsorted;
+    delete[] row_unsorted;
+
+    total_mtx->values = std::vector<VT>(val, val + nnz);
+    total_mtx->I = std::vector<IT>(row, row + nnz);
+    total_mtx->J = std::vector<IT>(col, col + nnz);
+    total_mtx->n_rows = nrows;
+    total_mtx->n_cols = ncols;
+    total_mtx->nnz = nnz;
+    total_mtx->is_sorted = 1; // TODO: not sure
+    total_mtx->is_symmetric = 0; // TODO: not sure
+
+    delete[] val;
+    delete[] row;
+    delete[] col;
+}
 
 #endif
