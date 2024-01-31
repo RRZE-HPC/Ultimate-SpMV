@@ -1,6 +1,6 @@
 COMPILER = icx
 VECTOR_LENGTH = 4
-DEBUG_MODE = 1
+DEBUG_MODE = 0
 OUTPUT_SPARSITY = 0
 
 # 0/1 library usage

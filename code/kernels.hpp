@@ -17,7 +17,7 @@ spmv_omp_csr(const ST C, // 1
              const IT * RESTRICT chunk_lengths, // unused
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
-             const VT * RESTRICT x,
+             VT * RESTRICT x,
              VT * RESTRICT y)
 {
     #pragma omp parallel for schedule(static)
@@ -32,7 +32,7 @@ spmv_omp_csr(const ST C, // 1
     }
 }
 
-// TODO: I don't yet know how to se tup the signature to enable kernel picker
+// TODO: I don't yet know how to set-up the signature to enable kernel picker
 template <typename IT>
 static void
 spmv_omp_csr_mp(
@@ -75,20 +75,24 @@ spmv_omp_csr_mp(
     }
 }
 
-
+// TODO: known to be wrong
 /**
  * Kernel for ELL format, data structures use row major (RM) layout.
  */
 template <typename VT, typename IT>
 static void
 spmv_omp_ell_rm(
-        const ST num_rows,
-        const ST nelems_per_row,
-        const IT * RESTRICT col_idxs,
-        const VT * RESTRICT values,
-        const VT * RESTRICT x,
-        VT * RESTRICT y)
+    const ST C, // unused
+    const ST num_rows,
+    const IT * RESTRICT chunk_ptrs, // unused
+    const IT * RESTRICT chunk_lengths,
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT x,
+    VT * RESTRICT y)
 {
+    ST nelems_per_row = chunk_lengths[1] - chunk_lengths[0];
+    std::cout << nelems_per_row << std::endl;
     #pragma omp parallel for schedule(static)
     for (ST row = 0; row < num_rows; row++) {
         VT sum{};
@@ -102,19 +106,23 @@ spmv_omp_ell_rm(
     }
 }
 
+// TODO: known to be wrong
 /**
  * Kernel for ELL format, data structures use column major (CM) layout.
  */
 template <typename VT, typename IT>
 static void
 spmv_omp_ell_cm(
-        const ST num_rows,
-        const ST nelems_per_row,
-        const IT * RESTRICT col_idxs,
-        const VT * RESTRICT values,
-        const VT * RESTRICT x,
-        VT * RESTRICT y)
+    const ST C, // unused
+    const ST num_rows,
+    const IT * RESTRICT chunk_ptrs, // unused
+    const IT * RESTRICT chunk_lengths,
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT x,
+    VT * RESTRICT y)
 {
+    ST nelems_per_row = chunk_lengths[1] - chunk_lengths[0];
     #pragma omp parallel for schedule(static)
     for (ST row = 0; row < num_rows; row++) {
         VT sum{};
@@ -140,7 +148,7 @@ spmv_omp_scs(const ST C,
              const IT * RESTRICT chunk_lengths,
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
-             const VT * RESTRICT x,
+             VT * RESTRICT x,
              VT * RESTRICT y)
 {
 
@@ -178,7 +186,7 @@ scs_impl(const ST n_chunks,
          const IT * RESTRICT chunk_lengths,
          const IT * RESTRICT col_idxs,
          const VT * RESTRICT values,
-         const VT * RESTRICT x,
+         VT * RESTRICT x,
          VT * RESTRICT y)
 {
 
@@ -216,7 +224,7 @@ spmv_omp_scs_adv(
              const IT * RESTRICT chunk_lengths,
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
-             const VT * RESTRICT x,
+             VT * RESTRICT x,
              VT * RESTRICT y)
 {
     switch (C)
@@ -239,5 +247,4 @@ spmv_omp_scs_adv(
         exit(1);
     }
 }
-
 #endif

@@ -26,8 +26,11 @@ void write_bench_to_file(
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
-    working_file << "C: " << config->chunk_size << " sigma: " << config->sigma << ", data_type: " <<
-    typeid(VT).name() << ", revisions: " << r->n_calls << ", and seg_method: " << *seg_method << std::endl;
+    working_file << "kernel: " << config->kernel_format; 
+    if(config->kernel_format == "scs"){
+        working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
+    }
+    working_file << ", data_type: " << typeid(VT).name() << ", revisions: " << r->n_calls << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
     working_file << std::left << std::setw(width) << "Total Gflops:" <<

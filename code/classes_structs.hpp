@@ -3,6 +3,8 @@
 
 #include "vectors.h"
 #include "mmio.h"
+#include "kernels.hpp"
+#include <functional> 
 #include <ctime>
 #include <mpi.h>
 
@@ -38,9 +40,6 @@ struct Config
 
     // Verify result against solution of COO kernel.
     int verify_result_with_coo = 0;
-
-    // Print incorrect elements from solution.
-    // bool verbose_verification{true};
 
     // Sort rows/columns of sparse matrix before
     // converting it to a specific format.
@@ -89,6 +88,308 @@ struct Config
 
 };
 
+template <typename IT>
+struct ContextData
+{
+    std::vector<IT> non_zero_senders;
+    std::vector<IT> non_zero_receivers;
+
+    std::vector<std::vector<IT>> send_tags;
+    std::vector<std::vector<IT>> recv_tags;
+
+    // TODO: probably more performant to do calculations earlier, and not store here
+    std::vector<std::vector<IT>> comm_send_idxs;
+    std::vector<std::vector<IT>> comm_recv_idxs;
+
+    std::vector<IT> recv_counts_cumsum;
+    std::vector<IT> send_counts_cumsum;
+
+    IT num_local_rows;
+    IT scs_padding;
+    IT total_nnz;
+};
+
+template <typename VT, typename IT>
+struct CommArgs
+{
+    Config *config;
+    ContextData<IT> *local_context;
+    std::vector<VT> *local_x;
+    VT **to_send_elems;
+    const IT *work_sharing_arr;
+    // const IT *perm; // TODO: perms, i.e. from METIS, need to be included
+    MPI_Request *recv_requests;
+    const IT *nzs_size;
+    MPI_Request *send_requests;
+    const IT *nzr_size;
+    const IT *num_local_elems;
+    const IT *my_rank;
+    const IT* comm_size;
+};
+
+template <typename VT, typename IT>
+struct KernelArgs
+{
+    Config *config;
+    ST C;
+    ST n_chunks;
+    IT * RESTRICT chunk_ptrs;
+    IT * RESTRICT chunk_lengths;
+    IT * RESTRICT col_idxs;
+    VT * RESTRICT values;
+    VT * RESTRICT local_x;
+    VT * RESTRICT local_y;
+
+    // TODO: mixed precision kernel args will be different
+    // const ST,
+    // const ST,
+    // const IT * RESTRICT,
+    // const IT * RESTRICT,
+    // const IT * RESTRICT, 
+    // const double * RESTRICT,
+    // const double * RESTRICT,
+    // double * RESTRICT,
+    // const ST,
+    // const IT * RESTRICT,
+    // const IT * RESTRICT,
+    // const IT * RESTRICT,
+    // const float * RESTRICT,
+    // const float * RESTRICT,
+    // float * RESTRICT
+};
+
+template <typename VT, typename IT>
+class SpmvKernel {
+    private:
+        // TODO: Will need a different typedef for mixed precision
+        typedef std::function<void(
+            const ST, // C
+            const ST, // n_chunks
+            const IT *, // chunk_ptrs
+            const IT *, // chunk_lengths
+            const IT *, // col_idxs
+            const VT *, // values
+            VT *, // x
+            VT * //y
+        )> Func_ptr;
+
+        Func_ptr kernel_func_ptr;
+
+        void *kernel_args_encoded;
+        void *comm_args_encoded;
+
+        // Decode kernel args
+        // KernelArgs<VT, IT> *kernel_args_encoded;
+        KernelArgs<VT, IT> *kernel_args_decoded = (KernelArgs<VT, IT>*) kernel_args_encoded;
+        Config *config = kernel_args_decoded->config;
+        const ST C = kernel_args_decoded->C;
+        const ST num_rows = kernel_args_decoded->n_chunks;
+        const IT * RESTRICT row_ptrs = kernel_args_decoded->chunk_ptrs;
+        const IT * RESTRICT chunk_lengths = kernel_args_decoded->chunk_lengths;
+        const IT * RESTRICT col_idxs = kernel_args_decoded->col_idxs;
+        const VT * RESTRICT values = kernel_args_decoded->values;
+
+        // Decode comm args
+        // CommArgs<VT, IT> *comm_args_encoded;
+        CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
+        // Config *config = comm_args_decoded->config;
+        ContextData<IT> *local_context = comm_args_decoded->local_context;
+        // std::vector<VT> *local_x = comm_args_decoded->local_x;
+        // std::vector<VT> *local_y = comm_args_decoded->local_y;
+        VT **to_send_elems = comm_args_decoded->to_send_elems;
+        const IT *work_sharing_arr = comm_args_decoded->work_sharing_arr;
+        // const IT *perm = comm_args_decoded->perm; // TODO
+        MPI_Request *recv_requests = comm_args_decoded->recv_requests;
+        const IT nzs_size = *(comm_args_decoded->nzs_size);
+        MPI_Request *send_requests = comm_args_decoded->send_requests;
+        const IT nzr_size = *(comm_args_decoded->nzr_size);
+        const IT num_local_elems = *(comm_args_decoded->num_local_elems);
+        const IT my_rank = *(comm_args_decoded->my_rank);
+        const IT comm_size = *(comm_args_decoded->comm_size);
+
+    public:
+        VT * RESTRICT local_x = kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
+        VT * RESTRICT local_y = kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
+
+        SpmvKernel(void *kernel_args_encoded_, void *comm_args_encoded_): kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
+            if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+                if(my_rank == 0)
+                    std::cout << "CRS kernel selected" << std::endl;
+                // TODO: More performant to just instantiate template here?
+                kernel_func_ptr = spmv_omp_csr<VT, IT>;
+            }
+            else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
+                if(my_rank == 0)
+                    std::cout << "ELL_rm kernel selected" << std::endl;
+                kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
+            }
+            else if (config->kernel_format == "ell" || config->kernel_format == "ell_cm"){
+                if(my_rank == 0)
+                    std::cout << "ELL_cm kernel selected" << std::endl;
+                kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
+            }
+            else if (config->kernel_format == "scs" 
+                && config->chunk_size != 1
+                && config->chunk_size != 2 
+                && config->chunk_size != 4
+                && config->chunk_size != 8
+                && config->chunk_size != 16
+                && config->chunk_size != 32
+                && config->chunk_size != 64){
+                if(my_rank == 0)
+                    std::cout << "SCS kernel selected" << std::endl;
+                kernel_func_ptr = spmv_omp_scs<VT, IT>;
+            }
+            else if (config->kernel_format == "scs"){
+                // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
+                if(my_rank == 0)
+                    std::cout << "Advanced SCS kernel selected" << std::endl;
+                kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+            }
+            else {
+                std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
+                exit(1);
+            }
+        }
+
+        inline void init_halo_exchange(void){
+            int outgoing_buf_size, incoming_buf_size;
+            int receiving_proc, sending_proc;
+
+            // TODO: DRY
+            if (typeid(VT) == typeid(float))
+            {
+                for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
+                {
+                    sending_proc = local_context->non_zero_senders[from_proc_idx];
+                    incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
+#ifdef DEBUG_MODE
+                    std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+#endif
+
+                    MPI_Irecv(
+                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        incoming_buf_size,
+                        MPI_FLOAT,
+                        sending_proc,
+                        (local_context->recv_tags[sending_proc])[my_rank],
+                        MPI_COMM_WORLD,
+                        &recv_requests[from_proc_idx]
+                    );
+                }
+                for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
+                {
+                    receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+                    outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
+
+#ifdef DEBUG_MODE
+                    if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
+                        std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
+                        exit(1);
+                    }
+#endif
+
+                    // Move non-contiguous data to a contiguous buffer for communication
+                    #pragma omp parallel for if(config->par_pack)   
+                    for(int i = 0; i < outgoing_buf_size; ++i){
+                        // (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
+                        (to_send_elems[to_proc_idx])[i] = local_x[local_context->comm_send_idxs[receiving_proc][i]];
+
+                    }
+#ifdef DEBUG_MODE
+                    std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
+#endif
+                    MPI_Isend(
+                        &(to_send_elems[to_proc_idx])[0],
+                        outgoing_buf_size,
+                        MPI_FLOAT,
+                        receiving_proc,
+                        (local_context->send_tags[my_rank])[receiving_proc],
+                        MPI_COMM_WORLD,
+                        &send_requests[to_proc_idx]
+                    );
+                }
+            }
+            else if (typeid(VT) == typeid(double)){
+                for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
+                {
+                    sending_proc = local_context->non_zero_senders[from_proc_idx];
+                    incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
+
+#ifdef DEBUG_MODE
+                    std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+#endif
+                    MPI_Irecv(
+                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        incoming_buf_size,
+                        MPI_DOUBLE,
+                        sending_proc,
+                        (local_context->recv_tags[sending_proc])[my_rank],
+                        MPI_COMM_WORLD,
+                        &recv_requests[from_proc_idx]
+                    );
+
+
+                }
+
+                // TODO: more performant varients?
+                // for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+                // for(auto to_proc : local_context->non_zero_receivers)
+                for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
+                {
+                    receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+                    outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
+
+#ifdef DEBUG_MODE
+                    if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
+                        std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
+                        exit(1);
+                    }
+#endif
+
+                    // Move non-contiguous data to a contiguous buffer for communication
+                    #pragma omp parallel for if(config->par_pack)
+                    for(int i = 0; i < outgoing_buf_size; ++i){
+                        (to_send_elems[to_proc_idx])[i] = local_x[local_context->comm_send_idxs[receiving_proc][i]];
+                    }
+#ifdef DEBUG_MODE
+                    std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
+#endif
+
+                    MPI_Isend(
+                        &(to_send_elems[to_proc_idx])[0],
+                        outgoing_buf_size,
+                        MPI_DOUBLE,
+                        receiving_proc,
+                        (local_context->send_tags[my_rank])[receiving_proc],
+                        MPI_COMM_WORLD,
+                        &send_requests[to_proc_idx]
+                    );
+                }
+            }
+        }
+
+        inline void finalize_halo_exchange(void){
+            MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
+            MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
+        }
+
+        inline void execute_spmv(){
+            // TODO: validate performance
+            kernel_func_ptr(
+                C,
+                num_rows,
+                row_ptrs,
+                chunk_lengths,
+                col_idxs,
+                values,
+                local_x,
+                local_y
+            );
+        }
+};
+
+
 template <typename VT, typename IT>
 struct MtxData
 {
@@ -102,35 +403,6 @@ struct MtxData
     std::vector<IT> I;
     std::vector<IT> J;
     std::vector<VT> values;
-};
-
-template <typename IT>
-struct ContextData
-{
-    // std::vector<IT> to_send_heri;
-    // std::vector<IT> local_needed_heri;
-
-    // std::vector<IT> shift_vec; //how does this work, with these on the heap?
-    // std::vector<IT> incidence_vec;
-
-    std::vector<IT> non_zero_senders;
-    std::vector<IT> non_zero_receivers;
-
-    std::vector<std::vector<IT>> send_tags;
-    std::vector<std::vector<IT>> recv_tags;
-
-    // TODO: remove and not store, do calculations earlier
-    std::vector<std::vector<IT>> comm_send_idxs;
-    std::vector<std::vector<IT>> comm_recv_idxs;
-
-    std::vector<IT> recv_counts_cumsum;
-    std::vector<IT> send_counts_cumsum;
-
-    IT num_local_rows;
-    IT scs_padding;
-    IT total_nnz;
-
-    // what else?
 };
 
 template <typename VT, typename IT>
@@ -322,9 +594,6 @@ void ScsData<VT, IT>::write_to_mtx_file(
     );
 }
 
-
-
-
 template <typename VT, typename IT>
 struct DefaultValues
 {
@@ -393,7 +662,7 @@ struct Result
     double lp_nnz_percent;
 };
 
-// Honestly, probably not necessary
+// NOTE: purely for convieience, not entirely necessary
 template <typename ST>
 struct MtxDataBookkeeping
 {

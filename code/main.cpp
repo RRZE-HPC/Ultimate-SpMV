@@ -25,11 +25,17 @@
 /**
     @brief Perform SPMVM kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
-    @param *local_scs : pointer to local scs struct 
-    @param *local_context : struct containing local_scs + communication information
+    @param *local_scs : pointer to process-local scs struct 
+    @param *hp_local_scs : pointer to higher precision local scs struct, only used for mixed precision 
+    @param *lp_local_scs : pointer to lower precision local scs struct, only used for mixed precision
+    @param *local_context : struct containing communication information
     @param *work_sharing_arr : the array describing the partitioning of the rows
-    @param *local_y : local results vector, instance of SimpleDenseMatrix class
+    @param *local_y : Process-local results vector, instance of SimpleDenseMatrix class
+    @param *hp_local_y : Process-local higher precision results vector, only used for mixed precision 
+    @param *lp_local_y : Process-local lower precision results vector, only used for mixed precision 
     @param *local_x : local RHS vector, instance of SimpleDenseMatrix class
+    @param *hp_local_x : Process-local higher precision RHS vector, only used for mixed precision 
+    @param *lp_local_x : Process-local lower precision RHS vector, only used for mixed precision 
     @param *r : a Result struct, in which results of the benchmark are stored
 */
 template <typename VT, typename IT>
@@ -53,8 +59,6 @@ void bench_spmv(
     // Allocate a send buffer for each process we're sending a message to
     int nz_comms = local_context->non_zero_receivers.size();
     int nz_recver;
-    MPI_Request recv_requests[comm_size];
-    MPI_Request send_requests[comm_size];
 
     VT *to_send_elems[nz_comms];
     for(int i = 0; i < nz_comms; ++i){
@@ -65,9 +69,46 @@ void bench_spmv(
     int nzr_size = local_context->non_zero_receivers.size();
     int nzs_size = local_context->non_zero_senders.size();
 
+    // Delare MPI requests for non-blocking communication
+    MPI_Request *recv_requests = new MPI_Request[local_context->non_zero_senders.size()];
+    MPI_Request *send_requests = new MPI_Request[local_context->non_zero_receivers.size()];
+
     // TODO: Permute x, since local matrix permuted symmetrically
     // std::vector<VT> local_x_permuted(local_x->size(), 0);
     // apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+
+    // Encode kernel args into struct
+    KernelArgs<VT, IT> *kernel_args_encoded = new KernelArgs<VT, IT>;
+    kernel_args_encoded->config = config;
+    kernel_args_encoded->C = local_scs->C;
+    kernel_args_encoded->n_chunks = local_scs->n_chunks;
+    kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
+    kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
+    kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
+    kernel_args_encoded->values = local_scs->values.data();
+    kernel_args_encoded->local_x = &(*local_x)[0];
+    kernel_args_encoded->local_y = &(*local_y)[0];
+    void *kernel_args_void_ptr = (void*) kernel_args_encoded;
+
+    // Encode comm args into struct
+    CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
+    comm_args_encoded->config = config;
+    comm_args_encoded->local_context = local_context;
+    comm_args_encoded->local_x = local_x;
+    comm_args_encoded->to_send_elems = to_send_elems;
+    comm_args_encoded->work_sharing_arr = work_sharing_arr;
+    // comm_args_encoded->perm = local_scs->race_inv_perm; // <- TODO:
+    comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
+    comm_args_encoded->nzs_size = &nzs_size;
+    comm_args_encoded->send_requests = send_requests;
+    comm_args_encoded->nzr_size = &nzr_size;
+    comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
+    comm_args_encoded->my_rank = &my_rank;
+    comm_args_encoded->comm_size = &comm_size;
+    void *comm_args_void_ptr = (void*) comm_args_encoded;
+
+    // Pass args to construct spmv_kernel object
+    SpmvKernel<VT, IT> spmv_kernel(kernel_args_void_ptr, comm_args_void_ptr);
 
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
@@ -81,48 +122,10 @@ void bench_spmv(
 
         if(config->comm_halos){
             for(int k = 0; k < WARM_UP_REPS; ++k){
-                communicate_halo_elements<VT, IT>(
-                    local_scs,
-                    local_context, 
-                    config,
-                    local_x, 
-                    to_send_elems,
-                    work_sharing_arr, 
-                    recv_requests,
-                    nzs_size,
-                    send_requests,
-                    nzr_size,
-                    local_context->num_local_rows,
-                    my_rank,
-                    comm_size);
-                    
-                // spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                if(config->value_type == "sp" || config->value_type == "dp"){
-                    spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                }
-                else if (config->value_type == "mp"){
-                    spmv_omp_csr_mp<IT>(
-                        hp_local_scs->n_chunks, //n rows same for both hp and lp 
-                        hp_local_scs->C,
-                        hp_local_scs->chunk_ptrs.data(),
-                        hp_local_scs->chunk_lengths.data(), 
-                        hp_local_scs->col_idxs.data(),
-                        hp_local_scs->values.data(), 
-                        &(*hp_local_x)[0], 
-                        &(*hp_local_y)[0], 
-                        lp_local_scs->C,
-                        lp_local_scs->chunk_ptrs.data(),
-                        lp_local_scs->chunk_lengths.data(), 
-                        lp_local_scs->col_idxs.data(),
-                        lp_local_scs->values.data(), 
-                        &(*lp_local_x)[0], 
-                        &(*lp_local_y)[0]
-                    );
-                }
+                spmv_kernel.init_halo_exchange();
+                spmv_kernel.finalize_halo_exchange();
+                spmv_kernel.execute_spmv();
+
                     std::swap(dummy_x, dummy_y);
 
                 if(config->ba_synch)
@@ -131,38 +134,9 @@ void bench_spmv(
         }
         else if(!config->comm_halos){
             for(int k = 0; k < WARM_UP_REPS; ++k){
-                // spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                if(config->value_type == "sp" || config->value_type == "dp"){
-                    spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                }
-                else if (config->value_type == "mp"){
-                    spmv_omp_csr_mp<IT>(
-                        hp_local_scs->n_chunks, //n rows same for both hp and lp 
-                        hp_local_scs->C,
-                        hp_local_scs->chunk_ptrs.data(),
-                        hp_local_scs->chunk_lengths.data(), 
-                        hp_local_scs->col_idxs.data(),
-                        hp_local_scs->values.data(), 
-                        &(*hp_local_x)[0], 
-                        &(*hp_local_y)[0], 
-                        lp_local_scs->C,
-                        lp_local_scs->chunk_ptrs.data(),
-                        lp_local_scs->chunk_lengths.data(), 
-                        lp_local_scs->col_idxs.data(),
-                        lp_local_scs->values.data(), 
-                        &(*lp_local_x)[0], 
-                        &(*lp_local_y)[0]
-                    );
-                }
 
-                    std::swap(dummy_x, dummy_y);
+                spmv_kernel.execute_spmv();
+                std::swap(dummy_x, dummy_y);
 
                 if(config->ba_synch)
                     MPI_Barrier(MPI_COMM_WORLD);
@@ -197,52 +171,11 @@ void bench_spmv(
             
             if(config->comm_halos){
                 for(int k = 0; k < n_iter; ++k){
-                    communicate_halo_elements<VT, IT>(
-                        local_scs,
-                        local_context, 
-                        config,
-                        local_x, 
-                        to_send_elems,
-                        work_sharing_arr, 
-                        recv_requests,
-                        nzs_size,
-                        send_requests,
-                        nzr_size,
-                        local_context->num_local_rows,
-                        my_rank,
-                        comm_size);
 
-                    // spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                    //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                    //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                    // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                    //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                    //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                if(config->value_type == "sp" || config->value_type == "dp"){
-                    spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                }
-                else if (config->value_type == "mp"){
-                    spmv_omp_csr_mp<IT>(
-                        hp_local_scs->n_chunks, //n rows same for both hp and lp 
-                        hp_local_scs->C,
-                        hp_local_scs->chunk_ptrs.data(),
-                        hp_local_scs->chunk_lengths.data(), 
-                        hp_local_scs->col_idxs.data(),
-                        hp_local_scs->values.data(), 
-                        &(*hp_local_x)[0], 
-                        &(*hp_local_y)[0], 
-                        lp_local_scs->C,
-                        lp_local_scs->chunk_ptrs.data(),
-                        lp_local_scs->chunk_lengths.data(), 
-                        lp_local_scs->col_idxs.data(),
-                        lp_local_scs->values.data(), 
-                        &(*lp_local_x)[0], 
-                        &(*lp_local_y)[0]
-                    );
-                }
-                    
+                    spmv_kernel.init_halo_exchange();
+                    spmv_kernel.finalize_halo_exchange();
+                    spmv_kernel.execute_spmv();
+
                     std::swap(dummy_x, dummy_y);
 
                     if(config->ba_synch)
@@ -251,36 +184,8 @@ void bench_spmv(
             }
             else if (!config->comm_halos){
                 for(int k = 0; k < n_iter; ++k){
-                // spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                //     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                //     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                if(config->value_type == "sp" || config->value_type == "dp"){
-                    spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                }
-                else if (config->value_type == "mp"){
-                    spmv_omp_csr_mp<IT>(
-                        hp_local_scs->n_chunks, //n rows same for both hp and lp 
-                        hp_local_scs->C,
-                        hp_local_scs->chunk_ptrs.data(),
-                        hp_local_scs->chunk_lengths.data(), 
-                        hp_local_scs->col_idxs.data(),
-                        hp_local_scs->values.data(), 
-                        &(*hp_local_x)[0], 
-                        &(*hp_local_y)[0], 
-                        lp_local_scs->C,
-                        lp_local_scs->chunk_ptrs.data(),
-                        lp_local_scs->chunk_lengths.data(), 
-                        lp_local_scs->col_idxs.data(),
-                        lp_local_scs->values.data(), 
-                        &(*lp_local_x)[0], 
-                        &(*lp_local_y)[0]
-                    );
-                }
+
+                    spmv_kernel.execute_spmv();
                 
                 std::swap(dummy_x, dummy_y);
 
@@ -313,54 +218,10 @@ void bench_spmv(
                     begin_bench_loop_time = MPI_Wtime();
 
                     for(int k=0; k<n_iter; ++k) {
-                        communicate_halo_elements<VT, IT>(
-                            local_scs,
-                            local_context, 
-                            config,
-                            local_x, 
-                            to_send_elems,
-                            work_sharing_arr, 
-                            recv_requests,
-                            nzs_size,
-                            send_requests,
-                            nzr_size,
-                            local_context->num_local_rows,
-                            my_rank,
-                            comm_size);
 
-
-                if(config->value_type == "sp" || config->value_type == "dp"){
-                    spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                }
-                else if (config->value_type == "mp"){
-                    spmv_omp_csr_mp<IT>(
-                        hp_local_scs->n_chunks, //n rows same for both hp and lp 
-                        hp_local_scs->C,
-                        hp_local_scs->chunk_ptrs.data(),
-                        hp_local_scs->chunk_lengths.data(), 
-                        hp_local_scs->col_idxs.data(),
-                        hp_local_scs->values.data(), 
-                        &(*hp_local_x)[0], 
-                        &(*hp_local_y)[0], 
-                        lp_local_scs->C,
-                        lp_local_scs->chunk_ptrs.data(),
-                        lp_local_scs->chunk_lengths.data(), 
-                        lp_local_scs->col_idxs.data(),
-                        lp_local_scs->values.data(), 
-                        &(*lp_local_x)[0], 
-                        &(*lp_local_y)[0]
-                    );
-                }
-
-                        // spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                        //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                        //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                        // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                        //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                        //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                        
+                        spmv_kernel.init_halo_exchange();
+                        spmv_kernel.finalize_halo_exchange();
+                        spmv_kernel.execute_spmv();
 
                         std::swap(dummy_x, dummy_y);
 
@@ -381,38 +242,7 @@ void bench_spmv(
 
                     for(int k=0; k<n_iter; ++k) {
 
-                        // spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                        //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                        //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                        // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                        //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                        //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-
-                        if(config->value_type == "sp" || config->value_type == "dp"){
-                            spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                                local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                                local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-                        }
-                        else if (config->value_type == "mp"){
-                            spmv_omp_csr_mp<IT>(
-                                hp_local_scs->n_chunks, //n rows same for both hp and lp 
-                                hp_local_scs->C,
-                                hp_local_scs->chunk_ptrs.data(),
-                                hp_local_scs->chunk_lengths.data(), 
-                                hp_local_scs->col_idxs.data(),
-                                hp_local_scs->values.data(), 
-                                &(*hp_local_x)[0], 
-                                &(*hp_local_y)[0], 
-                                lp_local_scs->C,
-                                lp_local_scs->chunk_ptrs.data(),
-                                lp_local_scs->chunk_lengths.data(), 
-                                lp_local_scs->col_idxs.data(),
-                                lp_local_scs->values.data(), 
-                                &(*lp_local_x)[0], 
-                                &(*lp_local_y)[0]
-                            );
-                        }
-
+                        spmv_kernel.execute_spmv();
                         std::swap(dummy_x, dummy_y);
 
                         if(config->ba_synch)
@@ -433,94 +263,69 @@ void bench_spmv(
         }
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
-        std::vector<VT> sorted_local_y(local_y->size(), 0);
-        std::vector<double> sorted_hp_local_y(local_y->size(), 0);
-        std::vector<float> sorted_lp_local_y(local_y->size(), 0);
+        // std::vector<VT> sorted_local_y(local_y->size(), 0);
+        // std::vector<double> sorted_hp_local_y(local_y->size(), 0);
+        // std::vector<float> sorted_lp_local_y(local_y->size(), 0);
 
         for (int i = 0; i < config->n_repetitions; ++i)
         {
-            communicate_halo_elements<VT, IT>(
-                local_scs,
-                local_context, 
-                config,
-                local_x, 
-                to_send_elems,
-                work_sharing_arr, 
-                recv_requests,
-                nzs_size,
-                send_requests,
-                nzr_size,
-                local_context->num_local_rows,
-                my_rank,
-                comm_size);
+            spmv_kernel.init_halo_exchange();
+            spmv_kernel.finalize_halo_exchange();
+            spmv_kernel.execute_spmv();
+            std::swap(spmv_kernel.local_x, spmv_kernel.local_y);
 
-                if(config->value_type == "sp" || config->value_type == "dp"){
-                    spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-                                        local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-                                        local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
 
-                    apply_permutation<VT, IT>(&(sorted_local_y)[0], &(*local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+            // TODO: reintroduce mixed precision
+            // else if (config->value_type == "mp"){
+            //     spmv_omp_csr_mp<IT>(
+            //         hp_local_scs->n_chunks, //n rows same for both hp and lp 
+            //         hp_local_scs->C,
+            //         hp_local_scs->chunk_ptrs.data(),
+            //         hp_local_scs->chunk_lengths.data(), 
+            //         hp_local_scs->col_idxs.data(),
+            //         hp_local_scs->values.data(), 
+            //         &(*hp_local_x)[0], 
+            //         &(*hp_local_y)[0], 
+            //         lp_local_scs->C,
+            //         lp_local_scs->chunk_ptrs.data(),
+            //         lp_local_scs->chunk_lengths.data(), 
+            //         lp_local_scs->col_idxs.data(),
+            //         lp_local_scs->values.data(), 
+            //         &(*lp_local_x)[0], 
+            //         &(*lp_local_y)[0]
+            //     );
+                
+            //     // Need to copy data which was accumulated in hp, into lp for swapping with lp_x
+            //     // purely implmenetation dependent, and shouldn't be considered in benchmarking
 
-                    std::swap(*local_x, sorted_local_y);
-                }
-                else if (config->value_type == "mp"){
-                    spmv_omp_csr_mp<IT>(
-                        hp_local_scs->n_chunks, //n rows same for both hp and lp 
-                        hp_local_scs->C,
-                        hp_local_scs->chunk_ptrs.data(),
-                        hp_local_scs->chunk_lengths.data(), 
-                        hp_local_scs->col_idxs.data(),
-                        hp_local_scs->values.data(), 
-                        &(*hp_local_x)[0], 
-                        &(*hp_local_y)[0], 
-                        lp_local_scs->C,
-                        lp_local_scs->chunk_ptrs.data(),
-                        lp_local_scs->chunk_lengths.data(), 
-                        lp_local_scs->col_idxs.data(),
-                        lp_local_scs->values.data(), 
-                        &(*lp_local_x)[0], 
-                        &(*lp_local_y)[0]
-                    );
-                    
-                    // Need to copy data which was accumulated in hp, into lp for swapping with lp_x
-                    // purely implmenetation dependent, and shouldn't be considered in benchmarking
+            //     for(int i = 0; i < hp_local_y->size(); ++i){
+            //         (*lp_local_y)[i] = static_cast<float>((*hp_local_y)[i]);
+            //     }
 
-                    for(int i = 0; i < hp_local_y->size(); ++i){
-                        (*lp_local_y)[i] = static_cast<float>((*hp_local_y)[i]);
-                    }
+            //     apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(*hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
+            //     apply_permutation<float, IT>(&(sorted_lp_local_y)[0], &(*lp_local_y)[0], &(lp_local_scs->old_to_new_idx)[0], lp_local_scs->n_rows);
 
-                    apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(*hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
-                    apply_permutation<float, IT>(&(sorted_lp_local_y)[0], &(*lp_local_y)[0], &(lp_local_scs->old_to_new_idx)[0], lp_local_scs->n_rows);
+            //     std::swap(*hp_local_x, sorted_hp_local_y);
+            //     std::swap(*lp_local_x, sorted_lp_local_y);
 
-                    std::swap(*hp_local_x, sorted_hp_local_y);
-                    std::swap(*lp_local_x, sorted_lp_local_y);
-                }
-
-            // spmv_omp_scs_adv<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-            //                         local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-            //                         local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-            // spmv_omp_csr<VT, IT>(local_scs->C, local_scs->n_chunks, local_scs->chunk_ptrs.data(),
-            //                     local_scs->chunk_lengths.data(), local_scs->col_idxs.data(),
-            //                     local_scs->values.data(), &(*local_x)[0], &(*local_y)[0]);
-
-            // In unsymmetric permutation, y need be sorted every iteration for accurate results
-            // apply_permutation(&(sorted_local_y)[0], &(*local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-
-            // std::swap(*local_x, sorted_local_y);
 
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
         }
-        // Give x results to y as output
-        if(config->value_type == "mp"){
-            // Will be double precision
-            for(int i = 0; i < hp_local_x->size(); ++i){
-                (*local_y)[i] = (*hp_local_x)[i];
+        // // Give x results to y as output
+        // if(config->value_type == "mp"){
+        //     // Will be double precision
+            // TODO: just a convieience, will polish up later
+            for(int i = 0; i < local_x->size(); ++i){
+                (*local_y)[i] = (spmv_kernel.local_x)[i];
             }
-        }
-        else{
-            std::swap(*local_x, *local_y);
-        }
+            
+        // }
+        // else{
+            // std::swap(*local_x, *local_y);
+                //         std::cout << spmv_kernel.local_x[0] << std::endl;
+                // std::cout << spmv_kernel.local_y[0] << std::endl;
+        // }
     }
 
     // Delete the allocated space for each other process
@@ -560,131 +365,35 @@ void bench_spmv(
     r->sigma           = local_scs->sigma;
 
     if(config->value_type == "mp"){
-        // Mixed precision specific
         r->hp_nnz_percent = hp_local_scs->nnz / local_context->total_nnz;
         r->lp_nnz_percent = lp_local_scs->nnz / local_context->total_nnz;
     }
+
+    delete[] recv_requests;
+    delete[] send_requests;
+    delete[] comm_args_encoded;
+    delete[] kernel_args_encoded;
 }
 
 /**
-    @brief The main harness for the SPMVM kernel, in which we first segment distribute the needed structs. Validation happens outside this routine
-    @param *total_mtx : complete mtx struct, read .mtx file with mtx_reader.h
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
+    @brief Gather results (either result of computation, or benchmark metrics) to the root MPI process
     @param *config : struct to initialze default values and user input
-    @param *r : a Result struct, in which results of the computation are stored
+    @param *r : a Result struct, in which results of the benchmark are stored
+    @param *work_sharing_arr : the array describing the partitioning of the rows
+    @param *local_x_copy : copy of local RHS vector used for validation against MKL
+    @param *local_y : Process-local results vector, instance of SimpleDenseMatrix class
 */
 template <typename VT, typename IT>
-void compute_result(
-    MtxData<VT, IT> *total_mtx,
-    const std::string *seg_method,
+void gather_results(
     Config *config,
     Result<VT, IT> *r,
+    IT *work_sharing_arr,
+    std::vector<VT> local_x_copy,
+    std::vector<VT> local_y,
     int my_rank,
-    int comm_size)
-{
-    // TODO: bring back matrix stats
-    // MatrixStats<double> matrix_stats;
-    // bool matrix_stats_computed = false;
-
-    // Declare local structs on each process
-    ScsData<VT, IT> local_scs;
-    // Must be declared, but only used for mixed precision case
-    ScsData<double, IT> hp_local_scs;
-    ScsData<float, IT> lp_local_scs;
-
-    ContextData<IT> local_context;
-
-    // Allocate space for work sharing array
-    IT work_sharing_arr[comm_size + 1];
-
-    // Allocate global permutation vectors
-    int *metis_part = NULL;
-    int *metis_perm = NULL;
-    int *metis_inv_perm = NULL;
-    if(*seg_method == "seg-metis"){
-        metis_part = new int[total_mtx->n_rows];
-        metis_perm = new int[total_mtx->n_rows];
-        for(int i = 0; i < total_mtx->n_rows; ++i){
-            metis_perm[i] = i;
-        }
-        metis_inv_perm = new int[total_mtx->n_rows];
-    }
-
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Init local structures.\n");}
-#endif
-    mpi_init_local_structs<VT, IT>(
-        &local_scs,
-        &hp_local_scs,
-        &lp_local_scs,
-        &local_context, 
-        total_mtx,
-        config, 
-        seg_method, 
-        work_sharing_arr, 
-        my_rank, 
-        comm_size,
-        metis_part,
-        metis_perm,
-        metis_inv_perm
-    );
-
-    // Declare local vectors to be used
-    SimpleDenseMatrix<VT, IT> local_x(&local_context);
-    // Must be declared, but only used for mixed precision case
-    // TODO: not efficient for storage
-    SimpleDenseMatrix<double, IT> hp_local_x(&local_context);
-    SimpleDenseMatrix<float, IT> lp_local_x(&local_context);
-
-    SimpleDenseMatrix<VT, IT> local_y(&local_context);
-
-    // We only need the higher precision y here, but both are needed for templating purposes
-    SimpleDenseMatrix<double, IT> hp_local_y(&local_context);
-    SimpleDenseMatrix<float, IT> lp_local_y(&local_context);
-
-    // Initialize local_x, either randomly, with default values defined in classes_structs.hpp,
-    // or with 0s (by default)
-    local_x.init(config);
-
-    // TODO: verify
-    if(config->value_type == "mp"){
-        for(int i = 0; i < (local_x.vec).size(); ++i){
-            hp_local_x.vec[i] = static_cast<double>(local_x.vec[i]);
-            lp_local_x.vec[i] = static_cast<float>(local_x.vec[i]);
-        }
-    }
-    // std::vector<double> hp_local_x_populated( local_x.begin(), local_x.end() );
-    // Copy contents of local_x for output, and validation against mkl
-    std::vector<VT> local_x_copy = local_x.vec;
-
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Enter bench_spmv.\n");}
-#endif
-    bench_spmv<VT, IT>(
-        config,
-        &local_scs,
-        &hp_local_scs,
-        &lp_local_scs,
-        &local_context,
-        work_sharing_arr,
-        &local_y.vec,
-        &hp_local_y.vec,
-        &lp_local_y.vec,
-        &local_x.vec,
-        &hp_local_x.vec,
-        &lp_local_x.vec,
-        r,
-        my_rank,
-        comm_size
-    );
-
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Complete bench_spmv.\n");}
-#endif
-
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Gather results to root process.\n");}
-#endif
+    int comm_size
+){
+    IT num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 
     if(config->mode == 'b'){
         double *perfs_from_procs_arr = new double[comm_size];
@@ -704,9 +413,9 @@ void compute_result(
         delete[] perfs_from_procs_arr;
     }
     else if(config->mode == 's'){
-        std::vector<VT> sorted_local_y(local_scs.n_rows);
+        std::vector<VT> sorted_local_y(num_local_rows);
         r->x_out = local_x_copy;
-        r->y_out = local_y.vec;
+        r->y_out = local_y;
 
         if (config->validate_result)
         {
@@ -714,7 +423,6 @@ void compute_result(
             std::vector<VT> total_spmvm_result(work_sharing_arr[comm_size], 0);
             std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
 
-            IT num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
             IT counts_arr[comm_size];
             IT displ_arr_bk[comm_size];
 
@@ -729,6 +437,7 @@ void compute_result(
             }
 
             if (typeid(VT) == typeid(double)){
+                // Gather all y_vector results to root
                 MPI_Gatherv(&(r->y_out)[0],
                             num_local_rows,
                             MPI_DOUBLE,
@@ -738,7 +447,7 @@ void compute_result(
                             MPI_DOUBLE,
                             0,
                             MPI_COMM_WORLD);
-
+                // Gather all x_vector copies to root for mkl validation
                 MPI_Gatherv(&local_x_copy[0],
                             num_local_rows,
                             MPI_DOUBLE,
@@ -777,9 +486,134 @@ void compute_result(
             r->total_spmvm_result = total_spmvm_result;
         }
     }
+}
+
+/**
+    @brief The main harness for the SpMV kernel, in which we:
+        1. Segment and distribute the needed structs to each MPI process (mpi_init_local_structs),
+        2. Benchmark the selected SpMV kernel (bench_spmv),
+        3. Gather benchmark results to the root MPI process (gather_results).
+    @param *total_mtx : global mtx struct, read from a .mtx file (or generated with ScaMaC TODO)
+    @param *config : struct to initialze default values and user input
+    @param *r : a Result struct, in which results of the benchmark/computation are stored
+*/
+template <typename VT, typename IT>
+void compute_result(
+    MtxData<VT, IT> *total_mtx,
+    Config *config,
+    Result<VT, IT> *r,
+    int my_rank,
+    int comm_size)
+{
+    // TODO: bring back matrix stats!
+    // MatrixStats<double> matrix_stats;
+    // bool matrix_stats_computed = false;
+
+    // Declare local structs on each process
+    ScsData<VT, IT> local_scs;
+
+    // Must be declared, but only used for mixed precision case
+    ScsData<double, IT> hp_local_scs;
+    ScsData<float, IT> lp_local_scs;
+
+    ContextData<IT> local_context;
+
+    // Allocate space for work sharing array
+    IT work_sharing_arr[comm_size + 1];
+
+    // Allocate global permutation vectors
+    int *metis_part = NULL;
+    int *metis_perm = NULL;
+    int *metis_inv_perm = NULL;
+    if(config->seg_method == "seg-metis"){
+        metis_part = new int[total_mtx->n_rows];
+        metis_perm = new int[total_mtx->n_rows];
+        for(int i = 0; i < total_mtx->n_rows; ++i){
+            metis_perm[i] = i;
+        }
+        metis_inv_perm = new int[total_mtx->n_rows];
+    }
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Init local structures.\n");}
+#endif
+    mpi_init_local_structs<VT, IT>(
+        &local_scs,
+        &hp_local_scs,
+        &lp_local_scs,
+        &local_context, 
+        total_mtx,
+        config, 
+        work_sharing_arr, 
+        my_rank, 
+        comm_size,
+        metis_part,
+        metis_perm,
+        metis_inv_perm
+    );
+
+    // Declare local vectors to be used
+    SimpleDenseMatrix<VT, IT> local_x(&local_context);
+
+    // Must be declared, but only used for mixed precision case
+    // TODO: not efficient for storage
+    SimpleDenseMatrix<double, IT> hp_local_x(&local_context);
+    SimpleDenseMatrix<float, IT> lp_local_x(&local_context);
+
+    SimpleDenseMatrix<VT, IT> local_y(&local_context);
+
+    // NOTE: a low precision y vector is needed for swapping with low precision x
+    SimpleDenseMatrix<double, IT> hp_local_y(&local_context);
+    SimpleDenseMatrix<float, IT> lp_local_y(&local_context);
+
+    // Initialize local_x, either randomly, with default values defined in classes_structs.hpp,
+    // or with 1s (by default)
+    local_x.init(config);
+
+    // TODO: wrap in method or something
+    if(config->value_type == "mp"){
+        for(int i = 0; i < (local_x.vec).size(); ++i){
+            hp_local_x.vec[i] = static_cast<double>(local_x.vec[i]);
+            lp_local_x.vec[i] = static_cast<float>(local_x.vec[i]);
+        }
+    }
+
+    // Copy contents of local_x for output, and validation against mkl
+    std::vector<VT> local_x_copy = local_x.vec;
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Enter bench_spmv.\n");}
+#endif
+    bench_spmv<VT, IT>(
+        config,
+        &local_scs,
+        &hp_local_scs,
+        &lp_local_scs,
+        &local_context,
+        work_sharing_arr,
+        &local_y.vec,
+        &hp_local_y.vec,
+        &lp_local_y.vec,
+        &local_x.vec,
+        &hp_local_x.vec,
+        &lp_local_x.vec,
+        r,
+        my_rank,
+        comm_size
+    );
+    MPI_Barrier(MPI_COMM_WORLD);
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Complete bench_spmv.\n");}
+#endif
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Gather results to root process.\n");}
+#endif
+    gather_results(config, r, work_sharing_arr, local_x_copy, local_y.vec, my_rank, comm_size);
 
     // Delete allocated permutation vectors, if metis used
-    if(*seg_method == "seg-metis"){
+    if(config->seg_method == "seg-metis"){
         delete[] metis_part;
         delete[] metis_perm;
         delete[] metis_inv_perm;
@@ -793,7 +627,7 @@ int main(int argc, char *argv[]){
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
 #ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Beginning of USpMV execution.\n");}
+    if(my_rank == 0){printf("Beginning of USpMV main execution.\n");}
 #endif
 
     double begin_main_time = MPI_Wtime();
@@ -803,6 +637,7 @@ int main(int argc, char *argv[]){
 
     // Set defaults for cl inputs
     std::string seg_method = "seg-rows";
+    std::string kernel_format = "scs";
     std::string value_type = "dp";
     int C = config.chunk_size;
     int sigma = config.sigma;
@@ -810,9 +645,10 @@ int main(int argc, char *argv[]){
 
     double total_walltimes[comm_size];
 
-    verify_and_assign_inputs(argc, argv, &matrix_file_name, &seg_method, &value_type, &config, my_rank);
+    parse_cli_inputs(argc, argv, &matrix_file_name, &seg_method, &kernel_format, &value_type, &config, my_rank);
 
     config.seg_method = seg_method;
+    config.kernel_format = kernel_format;
     config.value_type = value_type;
 
     if (config.value_type == "dp")
@@ -829,11 +665,12 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
 #endif
-        compute_result<double, int>(&total_mtx, &(config.seg_method), &config, &r, my_rank, comm_size);
+        compute_result<double, int>(&total_mtx, &config, &r, my_rank, comm_size);
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
         double time_per_proc = MPI_Wtime() - begin_main_time;
+
         // Gather all times for printing of results
         MPI_Gather(
             &time_per_proc,
@@ -884,7 +721,7 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
 #endif
-        compute_result<float, int>(&total_mtx, &(config.seg_method), &config, &r, my_rank, comm_size);
+        compute_result<float, int>(&total_mtx, &config, &r, my_rank, comm_size);
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
@@ -941,7 +778,7 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
 #endif
-        compute_result<double, int>(&total_mtx, &(config.seg_method), &config, &r, my_rank, comm_size);
+        compute_result<double, int>(&total_mtx, &config, &r, my_rank, comm_size);
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
@@ -988,7 +825,7 @@ int main(int argc, char *argv[]){
     MPI_Finalize();
 
 #ifdef DEBUG_MODE
-    if(my_rank == 0){printf("End of USpMV execution.\n");}
+    if(my_rank == 0){printf("End of USpMV main execution.\n");}
 #endif
     return 0;
 }

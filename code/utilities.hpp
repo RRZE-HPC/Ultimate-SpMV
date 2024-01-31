@@ -949,7 +949,7 @@ void cli_options_messge(
     std::string *seg_method,
     std::string *value_type,
     Config *config){
-    fprintf(stderr, "Usage: %s martix-market-filename [options]\n"
+    fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n"
                                     "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%g]\n",
                             argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size);
                     
@@ -965,23 +965,25 @@ void cli_options_messge(
         or made from the default value defined in the DefaultValues struct
     @param *config : struct to initialze default values and user input
 */
-void verify_and_assign_inputs(
+void parse_cli_inputs(
     int argc,
     char *argv[],
     std::string *file_name_str,
     std::string *seg_method,
+    std::string *kernel_format,
     std::string *value_type,
     Config *config,
     int my_rank)
 {
-    if (argc < 2)
+    if (argc < 3)
     {
         if(my_rank == 0){cli_options_messge(argc, argv, seg_method, value_type, config);exit(1);}
     }
 
     *file_name_str = argv[1];
+    *kernel_format = argv[2];
 
-    int args_start_index = 2;
+    int args_start_index = 3;
     for (int i = args_start_index; i < argc; ++i)
     {
         std::string arg = argv[i];
@@ -1012,7 +1014,7 @@ void verify_and_assign_inputs(
                 }
             }
         }
-        else if (arg == "-bench_time")
+        else if (arg == "-bench_time" || arg == "-bench-time")
         {
 
             config->bench_time = atof(argv[++i]); // i.e. grab the NEXT
@@ -1078,7 +1080,7 @@ void verify_and_assign_inputs(
                 }
             }
         }
-        else if (arg == "-rand_x")
+        else if (arg == "-rand_x" || arg == "-rand-x")
         {
             config->random_init_x = atoi(argv[++i]); // i.e. grab the NEXT
 
@@ -1091,7 +1093,7 @@ void verify_and_assign_inputs(
                 }
             }
         }
-        else if (arg == "-comm_halos")
+        else if (arg == "-comm_halos" || arg == "-comm-halos")
         {
             config->comm_halos = atoi(argv[++i]); // i.e. grab the NEXT
 
@@ -1104,7 +1106,7 @@ void verify_and_assign_inputs(
                 }
             }
         }
-        else if (arg == "-ba_synch")
+        else if (arg == "-ba_synch" || arg == "-ba-synch")
         {
             config->ba_synch = atoi(argv[++i]); // i.e. grab the NEXT
 
@@ -1117,7 +1119,7 @@ void verify_and_assign_inputs(
                 }
             }
         }
-        else if (arg == "-par_pack")
+        else if (arg == "-par_pack" || arg == "-par-pack")
         {
             config->par_pack = atoi(argv[++i]); // i.e. grab the NEXT
 
@@ -1130,7 +1132,7 @@ void verify_and_assign_inputs(
                 }
             }
         }
-        else if (arg == "-bucket_size")
+        else if (arg == "-bucket_size" || arg == "-bucket-size")
         {
             config->bucket_size = atoi(argv[++i]); // i.e. grab the NEXT
 
@@ -1155,15 +1157,15 @@ void verify_and_assign_inputs(
         {
             *value_type = "mp";
         }
-        else if (arg == "-seg_rows")
+        else if (arg == "-seg_rows" || arg == "-seg-rows")
         {
             *seg_method = "seg-rows";
         }
-        else if (arg == "-seg_nnz")
+        else if (arg == "-seg_nnz" || arg == "-seg-nnz")
         {
             *seg_method = "seg-nnz";
         }
-        else if (arg == "-seg_metis")
+        else if (arg == "-seg_metis" || arg == "-seg-metis")
         {
             *seg_method = "seg-metis";
         }
@@ -1192,6 +1194,10 @@ void verify_and_assign_inputs(
     //         if(my_rank == 0){cli_options_messge(argc, argv, seg_method, value_type, config);exit(1);}
     //     }
     // }
+    std::vector<std::string> acceptable_kernels{"crs", "csr", "scs", "ell_rm", "ell", "ell_cm"};
+    if (std::find(std::begin(acceptable_kernels), std::end(acceptable_kernels), *kernel_format) == std::end(acceptable_kernels)){
+        if(my_rank == 0){fprintf(stderr, "ERROR: kernel format not recognized.\n");exit(1);}
+    }
 }
 
 template <typename IT>
@@ -1406,50 +1412,6 @@ void convert_to_scs(
     // return true;
 }
 
-// A basic class, to make a vector from the mtx context
-template <typename VT, typename IT>
-class SimpleDenseMatrix {
-    public:
-        std::vector<VT> vec;
-
-        SimpleDenseMatrix(void){
-        }
-
-        SimpleDenseMatrix(const ContextData<IT> *local_context){
-            // TODO: not too sure about this
-            IT padding_from_heri = (local_context->recv_counts_cumsum).back();
-            IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
-
-            vec.resize(needed_padding + local_context->num_local_rows, 0);
-        }
-
-        // SimpleDenseMatrix(std::vector<VT> vec_to_copy, const ContextData<VT, IT> *local_context){
-        //     // TODO: not too sure about this
-        //     IT padding_from_heri = (local_context->recv_counts_cumsum).back();
-        //     IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
-
-        //     vec.resize(needed_padding + local_context->num_local_rows, 0);
-        //     vec(vec_to_copy.begin(), vec_to_copy.end());
-        // }
-
-        void init(Config *config){
-            DefaultValues<VT, IT> default_values;
-            init_std_vec_with_ptr_or_value(
-                vec, 
-                vec.size(),
-                default_values.x, 
-                config->random_init_x);
-        }
-
-        // void populte(std::vector<double> vec_to_copy, const ContextData<IT> *local_context){
-        //     IT padding_from_heri = (local_context->recv_counts_cumsum).back();
-        //     IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
-
-        //     vec.resize(needed_padding + local_context->num_local_rows, 0);
-        //     vec(vec_to_copy.begin(), vec_to_copy.end());
-        // }
-};
-
 template<typename IT>
 std::vector<IT> find_items1(std::vector<IT> const &v, int target) {
     std::vector<int> indices;
@@ -1659,5 +1621,49 @@ void read_mtx(
     delete[] row;
     delete[] col;
 }
+
+// A basic class, to make a vector from the mtx context
+template <typename VT, typename IT>
+class SimpleDenseMatrix {
+    public:
+        std::vector<VT> vec;
+
+        SimpleDenseMatrix(void){
+        }
+
+        SimpleDenseMatrix(const ContextData<IT> *local_context){
+            // TODO: not too sure about this
+            IT padding_from_heri = (local_context->recv_counts_cumsum).back();
+            IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+
+            vec.resize(needed_padding + local_context->num_local_rows, 0);
+        }
+
+        // SimpleDenseMatrix(std::vector<VT> vec_to_copy, const ContextData<VT, IT> *local_context){
+        //     // TODO: not too sure about this
+        //     IT padding_from_heri = (local_context->recv_counts_cumsum).back();
+        //     IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+
+        //     vec.resize(needed_padding + local_context->num_local_rows, 0);
+        //     vec(vec_to_copy.begin(), vec_to_copy.end());
+        // }
+
+        void init(Config *config){
+            DefaultValues<VT, IT> default_values;
+            init_std_vec_with_ptr_or_value(
+                vec, 
+                vec.size(),
+                default_values.x, 
+                config->random_init_x);
+        }
+
+        // void populte(std::vector<double> vec_to_copy, const ContextData<IT> *local_context){
+        //     IT padding_from_heri = (local_context->recv_counts_cumsum).back();
+        //     IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+
+        //     vec.resize(needed_padding + local_context->num_local_rows, 0);
+        //     vec(vec_to_copy.begin(), vec_to_copy.end());
+        // }
+};
 
 #endif
