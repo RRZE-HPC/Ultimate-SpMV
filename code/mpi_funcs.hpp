@@ -12,6 +12,10 @@
 #include <unistd.h>
 #include <set>
 
+#ifdef USE_SPMP
+    #include "SpMP/CSR.hpp"
+#endif
+
 /**
     @brief Generate unique tags for communication, based on the cantor pairing function. 
     @param *send_tags : tags used in the main communication loop for Isend
@@ -487,11 +491,6 @@ void seg_work_sharing_arr(
     if(total_mtx->n_rows < comm_size){
         if(my_rank == 0){printf("seg_work_sharing_arr ERROR: total_mtx->n_rows < comm_size.\n");exit(1);}
     }
-    for(int i = 1; i < comm_size + 1; ++i){
-        if(work_sharing_arr[i] < work_sharing_arr[i-1]){
-            if(my_rank == 0){printf("seg_work_sharing_arr ERROR: flaw in work_sharing_arr, work_sharing_arr[i] < work_sharing_arr[i-1].\n");exit(1);}
-        }
-    }
 
     if ("seg-rows" == *seg_method)
     {
@@ -586,7 +585,7 @@ void seg_work_sharing_arr(
     if(my_rank == 0){printf("Permuting global scs matrix with METIS\n");}
 #endif
         
-        global_crs.metis_permute(metis_perm, metis_inv_perm);
+        global_crs.permute(metis_perm, metis_inv_perm);
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Converting global scs matrix back to COO for uspmv interop.\n");}
@@ -637,6 +636,12 @@ void seg_work_sharing_arr(
     }
     printf("]\n");
 #endif
+
+    for(int i = 1; i < comm_size + 1; ++i){
+        if(work_sharing_arr[i] < work_sharing_arr[i-1]){
+            if(my_rank == 0){printf("seg_work_sharing_arr ERROR: flaw in work_sharing_arr, work_sharing_arr[i] < work_sharing_arr[i-1].\n");exit(1);}
+        }
+    }
 
 }
 
@@ -1004,15 +1009,9 @@ void mpi_init_local_structs(
     }
     else{
         // NOTE: ALL one-precision kernels pass through here
-        
         // convert local_mtx to local_scs
         convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
-
-        std::vector<VT> test(local_scs->chunk_ptrs.data(), local_scs->chunk_ptrs.data() + local_scs->n_chunks+1);
-
-        std::cout << local_scs->chunk_ptrs[0] << " =? " << local_scs->chunk_ptrs.data()[0] << " =? " << test[0] << std::endl;
-        std::cout << local_scs->chunk_ptrs[1] << " =? " << local_scs->chunk_ptrs.data()[1] << " =? " << test[1] <<  std::endl;
-        exit(0);
+        // local_scs->print();
 
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");
@@ -1092,5 +1091,21 @@ void mpi_init_local_structs(
     local_context->send_counts_cumsum = send_counts_cumsum;
     local_context->num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
     local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
+
+    // Should this be the place where you do local RCM? Try it
+// #ifdef USE_SPMP
+//     if(local_scs->rcm_viable())
+//         local_scs->do_rcm(my_rank);
+//     else{
+//         if(my_rank == 0){printf("local_scs ERROR: Matrix not viable for RCM permutation.\n");exit(1);}
+//     }
+        
+// #endif
+
+    // TODO: which instances does it make sense to symmetrically permute the local matrix?
+    // TODO: only single precision for now
+    // std::vector<IT> empty_perm(local_scs->n_rows);
+    // std::iota(std::begin(empty_perm), std::end(empty_perm), 0); // Fill with 0, 1, ..., scs->n_rows.
+    // local_scs->permute(&(empty_perm)[0], local_scs->old_to_new_idx.data()); // pass and emptry perm vec, since rows already permed
 }
 #endif

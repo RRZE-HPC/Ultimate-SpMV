@@ -272,8 +272,6 @@ void bench_spmv(
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
             spmv_kernel.execute_spmv();
-            // std::swap(spmv_kernel.local_x, spmv_kernel.local_y);
-
 
             // TODO: reintroduce mixed precision
             // else if (config->value_type == "mp"){
@@ -308,14 +306,9 @@ void bench_spmv(
             //     std::swap(*hp_local_x, sorted_hp_local_y);
             //     std::swap(*lp_local_x, sorted_lp_local_y);
 
-            // TODO: bandaid. This is the per-rep row-wise permutation which should not be necessary
-            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl;
+            // TODO: bandaid. This is the per-rep row-wise permutation which should not be necessary. But for SCS it might be, for repeated spmvs
             apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-            // std::cout << "sorted_local_y[0] = " << (sorted_local_y)[0] << std::endl; // Here the data appears to be right
-            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl;
             spmv_kernel.swap_with_x(&(sorted_local_y)[0]);
-            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl; // the swap goes right too
-            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl;
 
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
@@ -326,15 +319,10 @@ void bench_spmv(
             ;
         }
         else{
-            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl;
-            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl;
             // TODO: Bandaid, since swapping doesn't work here for some reason
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = (spmv_kernel.local_x)[i];
             }
-            // spmv_kernel.swap_with_x(&(*local_y)[0]);
-            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl;
-            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl; // local_y does not get changed...
         }
     }
 

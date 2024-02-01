@@ -74,7 +74,8 @@ spyfig.get_yaxis().set_visible(True)#False)
 #spyfig.set_yticks(ticks)
 
 if mode==0:
-    pyplot.savefig(matrixname+"perm.png",dpi=1500)
+    # pyplot.savefig(matrixname+"perm.png",dpi=1500)
+    pyplot.savefig(matrixname+".png",dpi=1500)
 elif mode==1:
     pyplot.savefig(matrixname+"_perm.png",dpi=1500)
 elif mode==2:

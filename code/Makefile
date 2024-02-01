@@ -1,10 +1,11 @@
 COMPILER = icx
 VECTOR_LENGTH = 4
-DEBUG_MODE = 0
+DEBUG_MODE = 1
 OUTPUT_SPARSITY = 0
 
 # 0/1 library usage
 USE_METIS = 1
+# USE_SPMP = 0
 USE_LIKWID = 0
 
 # compiler options
@@ -75,6 +76,18 @@ ifeq ($(USE_LIKWID),1)
   endif
   CXXFLAGS  += -DUSE_LIKWID $(LIKWID_INC) $(LIKWID_LIB) -llikwid
 endif
+
+# ifeq ($(USE_SPMP),1)
+#   SPMP_INC =
+#   SPMP_LIB = /home/hpc/ihpc/ihpc062h/HPC_HiWi/thesis/SPMP/SpMP/libspmp.a
+#   ifeq ($(SPMP_INC),)
+#     $(error USE_SPMP selected, but no include path given in SPMP_INC)
+#   endif
+#   ifeq ($(SPMP_LIB),)
+#     $(error USE_SPMP selected, but no library path given in SPMP_LIB)
+#   endif
+#   CXXFLAGS  += -DUSE_SPMP $(SPMP_INC) $(SPMP_LIB)
+# endif
 
 # Further memory debugging options
 ifeq ($(ASAN),1)

@@ -1343,8 +1343,6 @@ void convert_to_scs(
         cur_chunk_ptr += scs->chunk_lengths[i] * scs->C;
     }
 
-    
-
     ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
                         + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
     scs->chunk_ptrs[scs->n_chunks] = n_scs_elements;
@@ -1408,6 +1406,16 @@ void convert_to_scs(
     scs->new_to_old_idx = inv_perm;
 
     scs->n_elements = n_scs_elements;
+
+    // Experimental 2024_02_01, I do not want the rows permuted yet... so permute back
+    // if sigma > C, I can see this being a problem
+    // for (ST i = 0; i < scs->n_rows_padded; ++i) {
+    //     IT old_row_idx = n_els_per_row[i].first;
+
+    //     if (old_row_idx < scs->n_rows) {
+    //         scs->old_to_new_idx[old_row_idx] = i;
+    //     }
+    // }    
 
     // return true;
 }

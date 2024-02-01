@@ -21,7 +21,7 @@ TEST_CASE("Validate COO matrix splitting function 'seperate_lp_from_hp' ", "[req
     }
 }
 
-TEST_CASE("Validate function 'convert_to_scs' for various c and sigma values", "[require]"){
+TEST_CASE("Validate function 'convert_to_scs' for c = 1 and sigma = 1 fixed", "[require]"){
     SECTION("Test scs conversion with COO Matrix M1, c=1, s=1 (i.e. crs)"){
         std::cout << "Test 2..." << std::endl;
 
@@ -58,4 +58,19 @@ TEST_CASE("Validate function 'convert_to_scs' for various c and sigma values", "
         M1_lp_scs_1_1^exp_M1_lp_scs_1_1;
         REQUIRE((M1_lp_scs_1_1 == exp_M1_lp_scs_1_1));
     }
+
+// TEST_CASE("Validate function 'convert_to_scs' for c > 1 and sigma = 1 fixed", "[require]"){
+//     SECTION("Test scs conversion with COO Matrix M1, c=1, s=1 (i.e. crs)"){
+
+//     }
+
+// TEST_CASE("Validate function 'convert_to_scs' for sigma > 1 and c = 1 fixed", "[require]"){
+//     SECTION("Test scs conversion with COO Matrix M1, c=1, s=1 (i.e. crs)"){
+        
+//     }
+
+// TEST_CASE("Validate function 'convert_to_scs' for sigma > 1 and c > 1 ", "[require]"){
+//     SECTION("Test scs conversion with COO Matrix M1, c=1, s=1 (i.e. crs)"){
+        
+//     }
 }

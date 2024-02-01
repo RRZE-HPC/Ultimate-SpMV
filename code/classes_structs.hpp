@@ -11,6 +11,9 @@
 #ifdef USE_METIS
     #include <metis.h>
 #endif
+#ifdef USE_SPMP
+    #include "SpMP/CSR.hpp"
+#endif
 
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
@@ -537,9 +540,10 @@ struct ScsData
     std::vector<int> new_to_old_idx; //inverse of above
     // TODO: ^ make V object as well?
 
-    void metis_permute(int *_perm_, int*  _invPerm_);
+    void permute(IT *_perm_, IT*  _invPerm_);
     void write_to_mtx_file(int my_rank, std::string file_out_name);
     void assign_explicit_test_data(ScsExplicitData<VT, IT> *explicit_test_data);
+    // void do_rcm(void);
     void print(void);
 
     // Useful operators for unit testing
@@ -743,15 +747,91 @@ void ScsData<VT, IT>::print(void){
     }
 }
 
+// template <typename VT, typename IT>
+// bool ScsData<VT, IT>::rcm_viable(void){}
+
+// template <typename VT, typename IT>
+// void ScsData<VT, IT>::do_rcm(void){
+//     int nrows = n_rows;
+//     int rowPtr = chunk_ptrs.data();
+//     SpMP::CSR *csr = NULL;
+//     csr = new SpMP::CSR(nrows, nrows, rowPtr, col, val);
+//     int *rcmPerm;
+//     int *rcmInvPerm;
+//     if(csr->isSymmetric(true, true)){
+//         int orig_threads = 1;
+//         printf("Doing RCM permutation\n");
+//         #pragma omp parallel
+//         {
+//             orig_threads = omp_get_num_threads();
+//         }
+//         omp_set_num_threads(1);
+
+//         if(csr->isSymmetric(false,false))
+//         {
+//             bfsPerm = new int[nrows];
+//             bfsInvPerm = new int[nrows];
+//             csr->getBFSPermutation(perm, inversePerm);
+//             csr->getRCMPermutation(rcmInvPerm, rcmPerm);
+//         }
+//         else
+//         {
+//             printf("Matrix not symmetric RCM cannot be done\n");
+//         }
+//         omp_set_num_threads(orig_threads);
+//         delete csr;
+//     }
+//     else{
+//         printf("do_rcm ERROR: Matrix not symmetric, cannot perform RCM.\n");
+//         exit(1);
+//     }
+// }
+
+// template <typename VT, typename IT>
+// void ScsData<VT, IT>::do_bfs(void){
+//     int nrows = n_rows;
+//     int rowPtr = chunk_ptrs.data();
+//     SpMP::CSR *csr = NULL;
+//     csr = new SpMP::CSR(nrows, nrows, rowPtr, col, val);
+//     int *rcmPerm;
+//     int *rcmInvPerm;
+//     if(csr->isSymmetric(true, true)){
+//         int orig_threads = 1;
+//         printf("Doing RCM permutation\n");
+//         #pragma omp parallel
+//         {
+//             orig_threads = omp_get_num_threads();
+//         }
+//         omp_set_num_threads(1);
+
+//         if(csr->isSymmetric(false,false))
+//         {
+//             bfsPerm = new int[nrows];
+//             bfsInvPerm = new int[nrows];
+//             csr->getBFSPermutation(perm, inversePerm);
+//             csr->getRCMPermutation(rcmInvPerm, rcmPerm);
+//         }
+//         else
+//         {
+//             printf("Matrix not symmetric RCM cannot be done\n");
+//         }
+//         omp_set_num_threads(orig_threads);
+//         delete csr;
+//     }
+//     else{
+//         printf("do_rcm ERROR: Matrix not symmetric, cannot perform RCM.\n");
+//         exit(1);
+//     }
+// }
 
 template <typename VT, typename IT>
-void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
+void ScsData<VT, IT>::permute(IT *_perm_, IT*  _invPerm_){
     int nrows = n_rows; // <- stupid
 
     // TODO: not efficient, but a workaround
-    int *rowPtr = new int[nrows+1];
-    int *col = new int[nnz];
-    double *val = new double[nnz];
+    IT *rowPtr = new IT[nrows+1];
+    IT *col = new IT[nnz];
+    VT *val = new VT[nnz];
 
     for(int i = 0; i < nrows + 1; ++i){
         rowPtr[i] = (chunk_ptrs.data())[i];
@@ -762,11 +842,11 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
     } 
     
 
-    double* newVal = (double*)malloc(sizeof(double)*nnz);
+    VT* newVal = (VT*)malloc(sizeof(VT)*nnz);
         //new double[block_size*block_size*nnz];
-    int* newCol = (int*)malloc(sizeof(int)*nnz);
+    IT* newCol = (IT*)malloc(sizeof(IT)*nnz);
         //new int[nnz];
-    int* newRowPtr = (int*)malloc(sizeof(int)*(nrows+1));
+    IT* newRowPtr = (IT*)malloc(sizeof(IT)*(nrows+1));
         //new int[nrows+1];
 /*
     double *newVal = (double*) malloc(sizeof(double)*nnz);
@@ -779,7 +859,7 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
     if(_perm_ != NULL)
     {
         //first find newRowPtr; therefore we can do proper NUMA init
-        int _perm_Idx=0;
+        IT _perm_Idx=0;
 #ifdef DEBUG_MODE
     // if(my_rank == 0){printf("nrows = %d\n", nrows);}
 #endif
@@ -787,7 +867,7 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
         for(int row=0; row<nrows; ++row)
         {
             //row _perm_utation
-            int _perm_Row = _perm_[row];
+            IT _perm_Row = _perm_[row];
             for(int idx=rowPtr[_perm_Row]; idx<rowPtr[_perm_Row+1]; ++idx)
             {
                 ++_perm_Idx;
@@ -810,7 +890,7 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
         for(int row=0; row<nrows; ++row)
         {
             //row _perm_utation
-            int _perm_Row = _perm_[row];
+            IT _perm_Row = _perm_[row];
 
             for(int _perm_Idx=newRowPtr[row],idx=rowPtr[_perm_Row]; _perm_Idx<newRowPtr[row+1]; ++idx,++_perm_Idx)
             {
@@ -833,11 +913,11 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
                 //     exit(1);
                 // }
                 if (newCol[_perm_Idx] >= n_cols){
-                    printf("metis_permute ERROR: Element at index %d has blow up column index: %d.\n", _perm_Idx,newCol[_perm_Idx]);
+                    printf("SCS permute ERROR: Element at index %d has blow up column index: %d.\n", _perm_Idx,newCol[_perm_Idx]);
                     exit(1);     
                 }
                 if (newCol[_perm_Idx] < 0){
-                    printf("metis_permute ERROR: Element at index %d has negative column index: %d.\n", _perm_Idx, newCol[_perm_Idx]);
+                    printf("SCS permute ERROR: Element at index %d has negative column index: %d.\n", _perm_Idx, newCol[_perm_Idx]);
                     exit(1);
                 }
             }
@@ -889,19 +969,45 @@ void ScsData<VT, IT>::write_to_mtx_file(
     int my_rank,
     std::string file_out_name)
 {
-    //Convert csr back to coo for mtx format printing
-    std::vector<int> temp_rows(n_elements);
-    std::vector<int> temp_cols(n_elements);
-    std::vector<double> temp_values(n_elements);
+    // NOTE: will write all scs matrices as double precision. Doesn't matter now, but might in the future
+    // Convert csr back to coo for mtx format printing
+    // TODO: Haven't quite figured out for SCS, C>1
+    // std::vector<int> temp_rows(n_elements);
+    // std::vector<int> temp_cols(n_elements);
+    // std::vector<double> temp_values(n_elements);
 
-    int elem_num = 0;
-    for(int row = 0; row < n_rows; ++row){
-        for(int idx = chunk_ptrs[row]; idx < chunk_ptrs[row + 1]; ++idx){
-            temp_rows[elem_num] = row + 1; // +1 to adjust for 1 based indexing in mm-format
-            temp_cols[elem_num] = col_idxs[idx] + 1;
-            temp_values[elem_num] = values[idx];
-            ++elem_num;
+    ST n_scs_elements = chunk_ptrs[n_chunks - 1]
+                        + chunk_lengths[n_chunks - 1] * C;
+
+    std::vector<int> temp_rows(n_scs_elements);
+    std::vector<int> temp_cols(n_scs_elements);
+    std::vector<double> temp_values(n_scs_elements);
+
+    int tmp_row_cntr = 0;
+    int line_cntr = 0;
+    int elems_in_row = 0;
+    for(int chunk_idx = 0; chunk_idx < n_chunks; ++chunk_idx){ // for each chunk
+        int elems_in_chunk = chunk_ptrs[chunk_idx + 1] - chunk_ptrs[chunk_idx];
+        for(int chunk_elem = 0; chunk_elem < elems_in_chunk; ++chunk_elem){ 
+            // scan each element in this chunk
+            temp_rows[tmp_row_cntr] = line_cntr + 1;
+            ++elems_in_row;
+           
+            if(elems_in_row * C == elems_in_chunk){
+                // If we reach the end of the row in this chunk
+                ++line_cntr;
+                elems_in_row = 0;
+            }
+            ++tmp_row_cntr;
         }
+        ++line_cntr;
+    }
+
+    // TODO: temp_cols and temp_values should only have n_elements, not n_scs_elements...?
+    // or should they actually be n_scs_elements?
+    for(int idx = 0; idx < n_scs_elements; ++idx){
+        temp_cols[idx] = col_idxs[idx] + 1;
+        temp_values[idx] = values[idx]; // Just keep as doubles for writing to mtx file
     }
 
     std::string out_file_name = file_out_name + "_rank_" + std::to_string(my_rank) + ".mtx"; 
