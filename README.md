@@ -2,7 +2,7 @@
 ## MPI+X SpMV with SELL-C-sigma format
 
 Example:\
-	```mpirun -n 4 ./uspmv matrix.mtx <options>```
+	```mpirun -n 4 ./uspmv crs matrix.mtx <options>```
 
 Options:
 - c (chunk size)
@@ -19,6 +19,8 @@ Options:
 - par_pack (0/1 pack elements contigously for MPI_Isend in parallel)
  
 Notes:
+- kernel_format can be any one of: crs, scs, ell
+- The -c and -s options are only relevant when the scs kernel is selected
 - Dependencies:
 	- mkl (used for validation of results)
 	- intelmpi

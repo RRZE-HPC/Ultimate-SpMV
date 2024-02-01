@@ -82,6 +82,7 @@ struct Config
 
     // filename for double precision results printing
     std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
+    // std::string output_filename_dp = "/home/hpc/ihpc/ihpc062h/HPC_HiWi/fresh_USpMV/Ultimate-SpMV/code/scripts/results/spmv_mkl_compare_dp.txt";
 
     // filename for benchmark results printing
     std::string output_filename_bench = "spmv_bench.txt";
@@ -374,7 +375,7 @@ class SpmvKernel {
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
         }
 
-        inline void execute_spmv(){
+        inline void execute_spmv(void){
             // TODO: validate performance
             kernel_func_ptr(
                 C,
@@ -386,6 +387,14 @@ class SpmvKernel {
                 local_x,
                 local_y
             );
+        }
+
+        inline void swap_with_x(VT * RESTRICT vec_to_swap){
+            std::swap(vec_to_swap, local_x);
+        }
+
+        inline void swap_with_y(VT * RESTRICT vec_to_swap){
+            std::swap(vec_to_swap, local_y);
         }
 };
 
@@ -403,6 +412,108 @@ struct MtxData
     std::vector<IT> I;
     std::vector<IT> J;
     std::vector<VT> values;
+
+    void print(void);
+
+    // Useful operators for unit testing
+    bool operator==(MtxData<VT, IT> &rhs)
+    {
+        return (
+            (n_rows == rhs.n_rows) &&
+            (n_cols == rhs.n_cols) &&
+            (nnz == rhs.nnz) &&
+            (is_sorted == rhs.is_sorted) &&
+            (is_symmetric == rhs.is_symmetric) &&
+            (I == rhs.I) &&
+            (J == rhs.J) &&
+            (values == rhs.values)
+        );
+    }
+
+    void operator^(MtxData<VT, IT> &rhs)
+    {
+        if (n_rows != rhs.n_rows){
+            std::cout << "n_rows != rhs.n_rows" << std::endl;
+        }
+        if (n_cols != rhs.n_cols){
+            std::cout << "n_cols != rhs.n_cols" << std::endl;
+        }
+        if (nnz != rhs.nnz){
+            std::cout << "nnz != rhs.nnz" << std::endl;
+        }
+        if (is_sorted != rhs.is_sorted){
+            std::cout << "is_sorted == rhs.is_sorted" << std::endl;
+        }
+        if (is_symmetric != rhs.is_symmetric){
+            std::cout << "is_symmetric != rhs.is_symmetric" << std::endl;
+        }
+        if(I != rhs.I){
+            std::cout << "I != rhs.I" << std::endl;
+        }
+        if(I.size() != rhs.I.size()){
+            std::cout << "I.size() " << I.size() << " != rhs.I.size() " << rhs.I.size() << std::endl;
+        }
+        if(J != rhs.J){
+            std::cout << "J != rhs.J" << std::endl;
+        }
+        if(J.size() != rhs.J.size()){
+            std::cout << "J.size() " << J.size() << " != rhs.J.size() " << rhs.I.size() << std::endl;
+        }
+        if(values != rhs.values){
+            std::cout << "values != rhs.values" << std::endl;
+        }
+        if(values.size() != rhs.values.size()){
+            std::cout << "values.size() " << values.size() << " != rhs.values.size() " << rhs.values.size() << std::endl;
+        }
+    }
+};
+
+template <typename VT, typename IT>
+void MtxData<VT, IT>::print(void){
+    std::cout << "n_rows = " << n_rows << std::endl;
+    std::cout << "n_cols = " << n_cols << std::endl;
+    std::cout << "nnz = " << nnz << std::endl;
+    std::cout << "is_sorted = " << is_sorted << std::endl;
+    std::cout << "is_symmetric = " << is_symmetric << std::endl;
+
+    std::cout << "I = [";
+    for(int i = 0; i < nnz; ++i){
+        std::cout << I[i];
+        if(i == nnz-1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+
+    std::cout << "J = [";
+    for(int i = 0; i < nnz; ++i){
+        std::cout << J[i];
+        if(i == nnz-1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+
+    std::cout << "values = [";
+    for(int i = 0; i < nnz; ++i){
+        std::cout << values[i];
+        if(i == nnz-1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+}
+
+// This is only a unit testing convenience
+template <typename VT, typename IT>
+struct ScsExplicitData
+{
+    std::vector<IT> chunk_ptrs;
+    std::vector<IT> chunk_lengths;
+    std::vector<IT> col_idxs;
+    std::vector<VT> values;
+    std::vector<IT> old_to_new_idx;
+    std::vector<IT> new_to_old_idx;
 };
 
 template <typename VT, typename IT>
@@ -428,7 +539,209 @@ struct ScsData
 
     void metis_permute(int *_perm_, int*  _invPerm_);
     void write_to_mtx_file(int my_rank, std::string file_out_name);
+    void assign_explicit_test_data(ScsExplicitData<VT, IT> *explicit_test_data);
+    void print(void);
+
+    // Useful operators for unit testing
+    bool operator==(ScsData<VT, IT> &rhs)
+    {
+        bool chunk_ptrs_check = true;
+        bool chunk_lengths_check = true;
+        bool col_idxs_check = true;
+        bool values_check = true;
+        bool old_to_new_idx_check = true;
+        bool new_to_old_idx_check = true;
+
+        for(int i = 0; i < n_chunks+1; ++i){
+            if(chunk_ptrs[i] != rhs.chunk_ptrs[i]){
+                chunk_ptrs_check = false;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_chunks; ++i){
+            if(chunk_lengths[i] != rhs.chunk_lengths[i]){
+                chunk_lengths_check = false;
+                break;
+            }
+        }
+
+        ST n_scs_elements = chunk_ptrs[n_chunks - 1]
+                    + chunk_lengths[n_chunks - 1] * C;
+
+        for(int i = 0; i < n_scs_elements; ++i){
+            if(col_idxs[i] != rhs.col_idxs[i]){
+                col_idxs_check = false;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_scs_elements; ++i){
+            if(values[i] != rhs.values[i]){
+                values_check = false;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_rows; ++i){
+            if(old_to_new_idx[i] != rhs.old_to_new_idx[i]){
+                old_to_new_idx_check = false;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_rows; ++i){
+            if(new_to_old_idx[i] != rhs.new_to_old_idx[i]){
+                new_to_old_idx_check = false;
+                break;
+            }
+        }
+
+        return (
+            (C == rhs.C) &&
+            (sigma == rhs.sigma) &&
+            (n_rows == rhs.n_rows) &&
+            (n_cols == rhs.n_cols) &&
+            (n_rows_padded == rhs.n_rows_padded) &&
+            (n_chunks == rhs.n_chunks) &&
+            (n_elements == rhs.n_elements) &&
+            (nnz == rhs.nnz) &&
+            chunk_ptrs_check &&
+            chunk_lengths_check &&
+            col_idxs_check &&
+            values_check &&
+            old_to_new_idx_check &&
+            new_to_old_idx_check
+        );
+    }
+
+    void operator^(ScsData<VT, IT> &rhs)
+    {
+        if (C != rhs.C){std::cout << "C != rhs.C" << std::endl;}
+        if (sigma != rhs.sigma){std::cout << "sigma != rhs.sigma" << std::endl;}
+        if (n_rows != rhs.n_rows){std::cout << "n_rows != rhs.n_rows" << std::endl;}
+        if (n_cols != rhs.n_cols){std::cout << "n_cols != rhs.n_cols" << std::endl;}
+        if (n_rows_padded != rhs.n_rows_padded){std::cout << "n_rows_padded != rhs.n_rows_padded" << std::endl;}
+        if (n_chunks != rhs.n_chunks){std::cout << "n_chunks != rhs.n_chunks" << std::endl;}
+        if (n_elements != rhs.n_elements){std::cout << "n_elements != rhs.n_elements" << std::endl;}
+        if (nnz != rhs.nnz){std::cout << "nnz != rhs.nnz" << std::endl;}
+
+        for(int i = 0; i < n_chunks+1; ++i){
+            if(chunk_ptrs[i] != rhs.chunk_ptrs[i]){
+                std::cout << "chunk_ptrs != rhs.chunk_ptrs" << std::endl;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_chunks; ++i){
+            if(chunk_lengths[i] != rhs.chunk_lengths[i]){
+                std::cout << "chunk_lengths != rhs.chunk_lengths" << std::endl;
+                break;
+            }
+        }
+
+        ST n_scs_elements = chunk_ptrs[n_chunks - 1]
+                    + chunk_lengths[n_chunks - 1] * C;
+
+
+        for(int i = 0; i < n_scs_elements; ++i){
+            if(col_idxs[i] != rhs.col_idxs[i]){
+                std::cout << "col_idxs != rhs.col_idxs" << std::endl;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_scs_elements; ++i){
+            if(values[i] != rhs.values[i]){
+                std::cout << "values != rhs.values" << std::endl;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_rows; ++i){
+            if(old_to_new_idx[i] != rhs.old_to_new_idx[i]){
+                std::cout << "old_to_new_idx != rhs.old_to_new_idx" << std::endl;
+                break;
+            }
+        }
+
+        for(int i = 0; i < n_rows; ++i){
+            if(new_to_old_idx[i] != rhs.new_to_old_idx[i]){
+                std::cout << "new_to_old_idx != rhs.new_to_old_idx" << std::endl;
+                break;
+            }
+        }
+    }
 };
+
+template <typename VT, typename IT>
+void ScsData<VT, IT>::print(void){
+
+    std::cout << "C = " << C << std::endl;
+    std::cout << "sigma = " << sigma << std::endl;
+    std::cout << "n_rows = " << n_rows << std::endl;
+    std::cout << "n_cols = " << n_cols << std::endl;
+    std::cout << "n_rows_padded = " << n_rows_padded << std::endl;
+    std::cout << "n_chunks = " << n_chunks << std::endl;
+    std::cout << "n_elements = " << n_elements << std::endl;
+    std::cout << "nnz = " << nnz << std::endl;
+
+    std::cout << "chunk_ptrs = [";
+    for(int i = 0; i < n_chunks + 1; ++i){
+        std::cout << chunk_ptrs[i];
+        if(i == n_chunks)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+
+    std::cout << "chunk_lengths = [";
+    for(int i = 0; i < n_chunks; ++i){
+        std::cout << chunk_lengths[i];
+        if(i == n_chunks - 1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+
+    ST n_scs_elements = chunk_ptrs[n_chunks - 1] + chunk_lengths[n_chunks - 1] * C;
+
+    std::cout << "col_idxs = [";
+    for(int i = 0; i < n_scs_elements; ++i){
+        std::cout << col_idxs[i];
+        if(i == n_scs_elements - 1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+
+    std::cout << "values = [";
+    for(int i = 0; i < n_scs_elements; ++i){
+        std::cout << values[i];
+        if(i == n_scs_elements - 1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+
+    std::cout << "old_to_new_idx = [";
+    for(int i = 0; i < n_rows; ++i){
+        std::cout << old_to_new_idx[i];
+        if(i == n_rows - 1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+
+    std::cout << "new_to_old_idx = [";
+    for(int i = 0; i < n_rows; ++i){
+        std::cout << new_to_old_idx[i];
+        if(i == n_rows - 1)
+            std::cout << "]" << std::endl;
+        else
+            std::cout << ", ";
+    }
+}
 
 
 template <typename VT, typename IT>
@@ -558,6 +871,17 @@ void ScsData<VT, IT>::metis_permute(int *_perm_, int*  _invPerm_){
     delete[] newVal;
     delete[] newRowPtr;
     delete[] newCol;
+}
+
+template <typename VT, typename IT>
+void ScsData<VT, IT>::assign_explicit_test_data(ScsExplicitData<VT, IT> *explicit_test_data){
+    // Uses new V operator
+    chunk_ptrs=(&explicit_test_data->chunk_ptrs);
+    chunk_lengths=(&explicit_test_data->chunk_lengths);
+    col_idxs=(&explicit_test_data->col_idxs);
+    values<=(&explicit_test_data->values);
+    old_to_new_idx=(&explicit_test_data->old_to_new_idx);
+    new_to_old_idx=explicit_test_data->new_to_old_idx;
 }
 
 template <typename VT, typename IT>

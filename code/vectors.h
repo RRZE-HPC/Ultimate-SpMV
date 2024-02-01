@@ -64,9 +64,23 @@ private:
 template<typename VT, typename IT>
 class Vector : public BaseVector<VT, IT>
 {
+    // const IT n_rows;
+    // std::vector<VT> values;
+
 public:
 
     Vector() = default;
+
+    // // Dane ctor addition 2024.01.31, only for unit testing
+    // Vector(const IT n_rows_, std::vector<VT> values_) : n_rows(n_rows_), values(values_)
+    // {
+    //     this->data(allocate(this->n_rows));
+
+    //     for (ST i = 0; i < this->n_rows; ++i) {
+    //         // (*this)[i] = values[i];
+    //         this->data()[i] = values[i];
+    //     }
+    // }
 
     explicit Vector(const IT n_rows)
     : BaseVector<VT, IT>(n_rows)
@@ -87,6 +101,8 @@ public:
 
         return *this;
     }
+
+
 
     virtual ~Vector()
     {
@@ -111,6 +127,26 @@ public:
 
         return lhs;
     }
+
+    // Dane's unit testing additions //
+    Vector & operator=(std::vector<IT> *rhs)
+    {
+        // std::cout << "WARNING: This V operator is only used for unit testing convenience." << std::endl; 
+        for (ST i = 0; i < this->n_rows; ++i) {
+            (*this)[i] = (*rhs)[i];
+        }
+        return *this;
+    }
+
+    Vector & operator<=(std::vector<VT> *rhs)
+    {
+        // std::cout << "WARNING: This V operator is only used for unit testing convenience." << std::endl; 
+        for (ST i = 0; i < this->n_rows; ++i) {
+            (*this)[i] = (*rhs)[i];
+        }
+        return *this;
+    }
+    //////////////////////////////////////
 
 private:
 

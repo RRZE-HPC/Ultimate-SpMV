@@ -88,8 +88,11 @@ void write_dp_result_to_file(
     // Print parameters
     working_file.open(config->output_filename_dp, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
-    working_file << "C: " << config->chunk_size << " sigma: " << config->sigma << ", data_type: " <<
-    'd' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
+    working_file << "kernel: " << config->kernel_format; 
+    if(config->kernel_format == "scs"){
+        working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
+    }
+    working_file << ", data_type: " << "d" << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
     // Print header
@@ -233,8 +236,11 @@ void write_sp_result_to_file(
     // Print parameters
     working_file.open(config->output_filename_sp, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
-    working_file << "C: " << config->chunk_size << " sigma: " << config->sigma << ", data_type: " <<
-    'f' << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
+    working_file << "kernel: " << config->kernel_format; 
+    if(config->kernel_format == "scs"){
+        working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
+    }
+    working_file << ", data_type: " << "f" << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
     working_file << std::endl;
 
     // Print header

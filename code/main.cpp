@@ -263,7 +263,7 @@ void bench_spmv(
         }
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
-        // std::vector<VT> sorted_local_y(local_y->size(), 0);
+        std::vector<VT> sorted_local_y(local_y->size(), 0);
         // std::vector<double> sorted_hp_local_y(local_y->size(), 0);
         // std::vector<float> sorted_lp_local_y(local_y->size(), 0);
 
@@ -272,7 +272,7 @@ void bench_spmv(
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
             spmv_kernel.execute_spmv();
-            std::swap(spmv_kernel.local_x, spmv_kernel.local_y);
+            // std::swap(spmv_kernel.local_x, spmv_kernel.local_y);
 
 
             // TODO: reintroduce mixed precision
@@ -302,30 +302,40 @@ void bench_spmv(
             //         (*lp_local_y)[i] = static_cast<float>((*hp_local_y)[i]);
             //     }
 
-            //     apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(*hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
+                // apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(*hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
             //     apply_permutation<float, IT>(&(sorted_lp_local_y)[0], &(*lp_local_y)[0], &(lp_local_scs->old_to_new_idx)[0], lp_local_scs->n_rows);
 
             //     std::swap(*hp_local_x, sorted_hp_local_y);
             //     std::swap(*lp_local_x, sorted_lp_local_y);
 
+            // TODO: bandaid. This is the per-rep row-wise permutation which should not be necessary
+            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl;
+            apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+            // std::cout << "sorted_local_y[0] = " << (sorted_local_y)[0] << std::endl; // Here the data appears to be right
+            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl;
+            spmv_kernel.swap_with_x(&(sorted_local_y)[0]);
+            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl; // the swap goes right too
+            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl;
 
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
         }
-        // // Give x results to y as output
-        // if(config->value_type == "mp"){
-        //     // Will be double precision
-            // TODO: just a convieience, will polish up later
-            for(int i = 0; i < local_x->size(); ++i){
+
+        // Give sorted results to local_y for Results object gathering and output
+        if(config->value_type == "mp"){
+            ;
+        }
+        else{
+            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl;
+            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl;
+            // TODO: Bandaid, since swapping doesn't work here for some reason
+            for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = (spmv_kernel.local_x)[i];
             }
-            
-        // }
-        // else{
-            // std::swap(*local_x, *local_y);
-                //         std::cout << spmv_kernel.local_x[0] << std::endl;
-                // std::cout << spmv_kernel.local_y[0] << std::endl;
-        // }
+            // spmv_kernel.swap_with_x(&(*local_y)[0]);
+            // std::cout << "spmv_kernel.local_x[0] = " << (spmv_kernel.local_x)[0] << std::endl;
+            // std::cout << "local_y[0] = " << (*local_y)[0] << std::endl; // local_y does not get changed...
+        }
     }
 
     // Delete the allocated space for each other process

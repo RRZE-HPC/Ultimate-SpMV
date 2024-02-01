@@ -4,7 +4,7 @@ DEBUG_MODE = 0
 OUTPUT_SPARSITY = 0
 
 # 0/1 library usage
-USE_METIS = 0
+USE_METIS = 1
 USE_LIKWID = 0
 
 # compiler options
@@ -49,6 +49,7 @@ ifeq ($(OUTPUT_SPARSITY),1)
 endif
 
 ifeq ($(USE_METIS),1)
+  # !!! include your own file paths !!!
   METIS_INC = -I/home/hpc/ihpc/ihpc062h/install/include/
   METIS_LIB = /home/hpc/ihpc/ihpc062h/install/lib/libmetis.a
   ifeq ($(METIS_INC),)
@@ -63,7 +64,7 @@ ifeq ($(USE_METIS),1)
 endif
 
 ifeq ($(USE_LIKWID),1)
-  # Just loading module
+  # !!! include your own file paths !!! (I'm just loading module, which comes with file paths)
   # LIKWID_INC =
   # LIKWID_LIB = 
   ifeq ($(LIKWID_INC),)
@@ -105,7 +106,7 @@ mmio.o: mmio.cpp mmio.h
 
 TEST_INC_DIR = $(PWD)
 
-tests: test_suite/catch.o test_suite/tests.o test_suite/test_data.o test_suite/catch.hpp
+tests: test_suite/catch.o test_suite/tests.o test_suite/test_data.o test_suite/catch.hpp $(REBUILD_DEPS)
 	$(CXX) -I$(TEST_INC_DIR) test_suite/tests.o test_suite/catch.o test_suite/test_data.o -o test_suite/tests
 
 test_suite/catch.o: test_suite/catch.cpp test_suite/catch.hpp
@@ -120,6 +121,10 @@ test_suite/test_data.o: test_suite/test_data.cpp
 .PHONY: clean
 clean:
 	-rm *.o
+
+.PHONY: tests_clean
+tests_clean:
+	-rm test_suite/test_data.o test_suite/tests.o
 
 .PHONY: rm
 rm:

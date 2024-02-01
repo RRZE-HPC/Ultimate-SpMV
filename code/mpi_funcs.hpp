@@ -483,6 +483,16 @@ void seg_work_sharing_arr(
 
     IT segment;
 
+    // Common sense checks
+    if(total_mtx->n_rows < comm_size){
+        if(my_rank == 0){printf("seg_work_sharing_arr ERROR: total_mtx->n_rows < comm_size.\n");exit(1);}
+    }
+    for(int i = 1; i < comm_size + 1; ++i){
+        if(work_sharing_arr[i] < work_sharing_arr[i-1]){
+            if(my_rank == 0){printf("seg_work_sharing_arr ERROR: flaw in work_sharing_arr, work_sharing_arr[i] < work_sharing_arr[i-1].\n");exit(1);}
+        }
+    }
+
     if ("seg-rows" == *seg_method)
     {
         IT rowsPerProc;
@@ -716,14 +726,12 @@ void define_bookkeeping_type(
 */
 template <typename VT, typename IT>
 void seperate_lp_from_hp(
-    Config *config,
+    double threshold,
     MtxData<VT, IT> *local_mtx, 
     MtxData<double, int> *hp_local_mtx, 
     MtxData<float, int> *lp_local_mtx,
-    int my_rank)
+    int my_rank = NULL)
 {
-    double threshold = config->bucket_size;
-
     hp_local_mtx->is_sorted = local_mtx->is_sorted;
     hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
     hp_local_mtx->n_rows = local_mtx->n_rows;
@@ -773,8 +781,11 @@ void seperate_lp_from_hp(
     lp_local_mtx->nnz = lp_elem_ctr;
 
     if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
-        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when separating into lp and hp structs.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr));
-        exit(1); 
+        if(my_rank == 0){
+            printf("seperate_lp_from_hp ERROR: %i Elements have been lost when separating \
+            into lp and hp structs.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr));
+            exit(1);
+        }
     }
 }
 
@@ -974,7 +985,7 @@ void mpi_init_local_structs(
     if (config->value_type == "mp"){
         // TODO: test all splitting and matrix conversion routines after splitting
         // Keeping COO format, partition local_mtx into high and low precision structs, based on
-        seperate_lp_from_hp<VT,IT>(config, &local_mtx, &hp_local_mtx, &lp_local_mtx, my_rank);
+        seperate_lp_from_hp<VT,IT>(config->bucket_size, &local_mtx, &hp_local_mtx, &lp_local_mtx, my_rank);
 
         // Higher and Lower precision scs is only populated if we are computing in mixed precision
         convert_to_scs<double, IT>(&hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
@@ -992,8 +1003,17 @@ void mpi_init_local_structs(
 #endif
     }
     else{
+        // NOTE: ALL one-precision kernels pass through here
+        
         // convert local_mtx to local_scs
         convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+
+        std::vector<VT> test(local_scs->chunk_ptrs.data(), local_scs->chunk_ptrs.data() + local_scs->n_chunks+1);
+
+        std::cout << local_scs->chunk_ptrs[0] << " =? " << local_scs->chunk_ptrs.data()[0] << " =? " << test[0] << std::endl;
+        std::cout << local_scs->chunk_ptrs[1] << " =? " << local_scs->chunk_ptrs.data()[1] << " =? " << test[1] <<  std::endl;
+        exit(0);
+
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");
         std::string file_out_name;
