@@ -1134,7 +1134,7 @@ void parse_cli_inputs(
         }
         else if (arg == "-bucket_size" || arg == "-bucket-size")
         {
-            config->bucket_size = atoi(argv[++i]); // i.e. grab the NEXT
+            config->bucket_size = atof(argv[++i]); // i.e. grab the NEXT
 
             if (config->bucket_size <= 0)
             {
@@ -1179,7 +1179,7 @@ void parse_cli_inputs(
         }
     }
 
-    // Sanity checks
+    // Sanity checks //
 #ifndef USE_METIS
     if (*seg_method == "seg-metis"){
         if(my_rank == 0){fprintf(stderr, "ERROR: seg-metis selected, but USE_METIS not defined in Makefile.\n");exit(1);}
@@ -1197,6 +1197,10 @@ void parse_cli_inputs(
     std::vector<std::string> acceptable_kernels{"crs", "csr", "scs", "ell_rm", "ell", "ell_cm"};
     if (std::find(std::begin(acceptable_kernels), std::end(acceptable_kernels), *kernel_format) == std::end(acceptable_kernels)){
         if(my_rank == 0){fprintf(stderr, "ERROR: kernel format not recognized.\n");exit(1);}
+    }
+
+    if((*value_type == "mp" && *kernel_format != "crs") || (*value_type == "mp" && *kernel_format != "crs")){
+        if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
     }
 }
 

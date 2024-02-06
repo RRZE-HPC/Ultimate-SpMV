@@ -23,7 +23,7 @@
 #endif
 
 /**
-    @brief Perform SPMVM kernel, either in "solve" mode or "bench" mode
+    @brief Perform SPMV kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
     @param *local_scs : pointer to process-local scs struct 
     @param *hp_local_scs : pointer to higher precision local scs struct, only used for mixed precision 
@@ -154,7 +154,7 @@ void bench_spmv(
     //     }
     // }
 
-    // Enter main COMM-SPMVM-SWAP loop, bench mode
+    // Enter main COMM-SPMV-SWAP loop, bench mode
     if(config->mode == 'b'){
         std::vector<VT> dummy_x(local_x->size(), 1.0);
         std::vector<VT> dummy_y(local_y->size(), 0.0);
@@ -306,7 +306,7 @@ void bench_spmv(
                                 / 1e9;                   // Only count usefull flops
         }
     }
-    else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
+    else if(config->mode == 's'){ // Enter main COMM-SPMV-SWAP loop, solve mode
         std::vector<VT> sorted_local_y(local_y->size(), 0);
 
         // Only relevant for mixed precision
@@ -500,9 +500,9 @@ void gather_results(
 
     if(config->mode == 'b'){
         double *perfs_from_procs_arr = new double[comm_size];
-        int *hp_nnz_per_procs_arr = new int[comm_size];
-        int *lp_nnz_per_procs_arr = new int[comm_size];
-        int *nnz_per_procs_arr = new int[comm_size];
+        unsigned long *hp_nnz_per_procs_arr = new unsigned long[comm_size];
+        unsigned long *lp_nnz_per_procs_arr = new unsigned long[comm_size];
+        unsigned long *nnz_per_procs_arr = new unsigned long[comm_size];
 
         MPI_Gather(&(r->perf_gflops),
                 1,
@@ -515,37 +515,37 @@ void gather_results(
 
         MPI_Gather(&(r->hp_nnz),
                 1,
-                MPI_INT,
+                MPI_UNSIGNED_LONG,
                 hp_nnz_per_procs_arr,
                 1,
-                MPI_INT,
+                MPI_UNSIGNED_LONG,
                 0,
                 MPI_COMM_WORLD);
 
         MPI_Gather(&(r->lp_nnz),
                 1,
-                MPI_INT,
+                MPI_UNSIGNED_LONG,
                 lp_nnz_per_procs_arr,
                 1,
-                MPI_INT,
+                MPI_UNSIGNED_LONG,
                 0,
                 MPI_COMM_WORLD);
 
         MPI_Gather(&(r->nnz),
                 1,
-                MPI_INT,
+                MPI_UNSIGNED_LONG,
                 nnz_per_procs_arr,
                 1,
-                MPI_INT,
+                MPI_UNSIGNED_LONG,
                 0,
                 MPI_COMM_WORLD);
                 
 
         // NOTE: Garbage values for all but root process
         r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + comm_size);
-        r->hp_nnz_per_proc = std::vector<int>(hp_nnz_per_procs_arr, hp_nnz_per_procs_arr + comm_size);
-        r->lp_nnz_per_proc = std::vector<int>(lp_nnz_per_procs_arr, lp_nnz_per_procs_arr + comm_size);
-        r->nnz_per_proc = std::vector<int>(nnz_per_procs_arr, nnz_per_procs_arr + comm_size);
+        r->hp_nnz_per_proc = std::vector<unsigned long>(hp_nnz_per_procs_arr, hp_nnz_per_procs_arr + comm_size);
+        r->lp_nnz_per_proc = std::vector<unsigned long>(lp_nnz_per_procs_arr, lp_nnz_per_procs_arr + comm_size);
+        r->nnz_per_proc = std::vector<unsigned long>(nnz_per_procs_arr, nnz_per_procs_arr + comm_size);
 
         r->cumulative_hp_nnz = 0;
         r->cumulative_lp_nnz = 0;
@@ -571,7 +571,7 @@ void gather_results(
         if (config->validate_result)
         {
             // TODO: is the size correct here?
-            std::vector<VT> total_spmvm_result(work_sharing_arr[comm_size], 0);
+            std::vector<VT> total_uspmv_result(work_sharing_arr[comm_size], 0);
             std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
 
             IT counts_arr[comm_size];
@@ -592,7 +592,7 @@ void gather_results(
                 MPI_Gatherv(&(r->y_out)[0],
                             num_local_rows,
                             MPI_DOUBLE,
-                            &total_spmvm_result[0],
+                            &total_uspmv_result[0],
                             counts_arr,
                             displ_arr_bk,
                             MPI_DOUBLE,
@@ -613,7 +613,7 @@ void gather_results(
                 MPI_Gatherv(&(r->y_out)[0],
                             num_local_rows,
                             MPI_FLOAT,
-                            &total_spmvm_result[0],
+                            &total_uspmv_result[0],
                             counts_arr,
                             displ_arr_bk,
                             MPI_FLOAT,
@@ -634,7 +634,7 @@ void gather_results(
             // If we're verifying results, assign total vectors to Result object
             // NOTE: Garbage values for all but root process
             r->total_x = total_x;
-            r->total_spmvm_result = total_spmvm_result;
+            r->total_uspmv_result = total_uspmv_result;
         }
     }
 }
@@ -813,6 +813,7 @@ int main(int argc, char *argv[]){
 #endif
             read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
             r.total_nnz = total_mtx.nnz;
+            r.total_rows = total_mtx.n_rows;
         }
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
@@ -846,7 +847,7 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Writing validation results to file.\n");}
 #endif
-                    write_dp_result_to_file(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_dp_result, comm_size);
+                    write_result_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_dp_result, comm_size);
                 }
                 else{
                 }
@@ -870,6 +871,7 @@ int main(int argc, char *argv[]){
 #endif
             read_mtx<float, int>(matrix_file_name, config, &total_mtx, my_rank);
             r.total_nnz = total_mtx.nnz;
+            r.total_rows = total_mtx.n_rows;
         }
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
@@ -903,7 +905,7 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Writing validation results to file.\n");}
 #endif
-                    write_sp_result_to_file(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_sp_result, comm_size);
+                    write_result_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_sp_result, comm_size);
                 }
                 else{
                 }
@@ -929,6 +931,7 @@ int main(int argc, char *argv[]){
 #endif
             read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
             r.total_nnz = total_mtx.nnz;
+            r.total_rows = total_mtx.n_rows;
         }
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
@@ -962,7 +965,7 @@ int main(int argc, char *argv[]){
     if(my_rank == 0){printf("Writing validation results to file.\n");}
 #endif
                     // Validate against doubles, but it would be nice to validate against both dp and sp.
-                    write_dp_result_to_file(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_dp_result, comm_size);
+                    write_result_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_dp_result, comm_size);
                 }
                 else{
                 }

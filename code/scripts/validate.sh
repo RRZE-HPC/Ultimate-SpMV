@@ -158,27 +158,27 @@ declare -a sigmas=("1" "2" "3" "4" "8" "16" "32" "64" "128")
 # done
 
 # Config 7. Check scs kernel with C>1, sigma>C, MPI off
-export I_MPI_PIN_DOMAIN="72:compact"
-export OMP_NUM_THREADS=72
-export OMP_PLACES=cores
-export OMP_PROC_BIND=close
-for C in "${Cs[@]}";
-do
-    for sigma in "${sigmas[@]}";
-    do
-        for seg_method in "${seg_types[@]}";
-        do
-            for rand_opt in 0 1;
-            do
-                if ["$sigma" > "$C"];
-                then
-                    mpirun -n 1 ./../uspmv_validate ../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                    mpirun -n 1 ./../uspmv_validate ../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                fi
-            done
-        done
-    done
-done
+# export I_MPI_PIN_DOMAIN="72:compact"
+# export OMP_NUM_THREADS=72
+# export OMP_PLACES=cores
+# export OMP_PROC_BIND=close
+# for C in "${Cs[@]}";
+# do
+#     for sigma in "${sigmas[@]}";
+#     do
+#         for seg_method in "${seg_types[@]}";
+#         do
+#             for rand_opt in 0 1;
+#             do
+#                 if ["$sigma" > "$C"];
+#                 then
+#                     mpirun -n 1 ./../uspmv_validate ../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                     mpirun -n 1 ./../uspmv_validate ../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                 fi
+#             done
+#         done
+#     done
+# done
 
 # # Config 8. Check scs kernel with C>1, sigma>C, MPI on
 # for C in "${Cs[@]}";

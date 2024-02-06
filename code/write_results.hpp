@@ -4,6 +4,21 @@
 #include <mkl.h>
 #include <omp.h>
 #include <iomanip>
+#include <cmath>
+
+template<typename VT, typename IT>
+void compute_euclid_dist(
+    Result<VT, IT> *r,
+    std::vector<VT> *x
+){
+    long double tmp = 0; // NOTE: does this need to be VT?
+
+    #pragma omp parallel for reduction(+:tmp)
+    for(int i = 0; i < r->total_rows; ++i){
+        tmp += (r->total_uspmv_result[i] - (*x)[i]) * (r->total_uspmv_result[i] - (*x)[i]);
+    }
+    r->euclid_dist = sqrt(tmp);
+}
 
 template<typename VT, typename IT>
 void write_bench_to_file(
@@ -55,35 +70,38 @@ void write_bench_to_file(
 
 
 /**
-    @brief Write the double precision comparison results to an external text file for validation
+    @brief Write the comparison results to an external text file for validation
     @param *file_name_str : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
     @param *y_out : the vector declared to either hold the process local result, 
         or the global result if verification is selected as an option
     @param *r : a Result struct, in which results of the computations are stored
-    @param *x : the output from the mkl routine, against which we verify our spmvm result
+    @param *x : the output from the mkl routine, against which we verify our uspmv result
 */
-void write_dp_result_to_file(
+template<typename VT, typename IT>
+void write_result_to_file(
     const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
-    Result<double, int> *r,
-    std::vector<double> *x,
+    Result<VT, IT> *r,
+    std::vector<VT> *x,
     int comm_size
 
 ){
+    compute_euclid_dist<VT, IT>(r, x);
+
     int width;
-    double relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
-    double absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
+    VT relative_diff, max_relative_diff, max_relative_diff_elem_uspmv, max_relative_diff_elem_mkl;
+    VT absolute_diff, max_absolute_diff, max_absolute_diff_elem_uspmv, max_absolute_diff_elem_mkl;
     std::fstream working_file;
 
     max_relative_diff = 0;
-    max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
+    max_relative_diff_elem_uspmv = r->total_uspmv_result[0];
     max_relative_diff_elem_mkl = (*x)[0];
 
     max_absolute_diff = 0;
-    max_absolute_diff_elem_spmvm = r->total_spmvm_result[0];
+    max_absolute_diff_elem_uspmv = r->total_uspmv_result[0];
     max_absolute_diff_elem_mkl = (*x)[0];
 
     std::cout.precision(16);
@@ -95,23 +113,42 @@ void write_dp_result_to_file(
     }
 
     // Print parameters
-    working_file.open(config->output_filename_dp, std::fstream::in | std::fstream::out | std::fstream::app);
+    std::string output_filename;
+    if(config->value_type == "dp"){
+        output_filename = config->output_filename_dp;
+    }
+    else if(config->value_type == "sp"){
+        output_filename = config->output_filename_sp;
+    }
+    else if(config->value_type == "mp"){
+        output_filename = config->output_filename_mp;
+    }
+    working_file.open(output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
     }
-    working_file << ", data_type: " << "d" << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
-    working_file << std::endl;
+    if(config->value_type == "dp"){
+        working_file << ", data_type: " << "dp";
+    }
+    else if(config->value_type == "sp"){
+        working_file << ", data_type: " << "sp";
+    }
+    else if(config->value_type == "mp"){
+        working_file << ", data_type: " << "mp";
+    }
+    working_file << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
 
     // Print header
     if(config->verbose_validation == 1){
         width = 24;
 
         working_file << std::left << std::setw(width) << "mkl results:"
-                    << std::left << std::setw(width) << "spmv results:"
+                    << std::left << std::setw(width) << "uspmv results:"
                     << std::left << std::setw(width) << "rel. diff(%):" 
-                    << std::left << std::setw(width) << "abs. diff:" << std::endl;
+                    << std::left << std::setw(width) << "abs. diff:" 
+                    << std::endl;
 
         working_file << std::left << std::setw(width) << "-----------"
                     << std::left << std::setw(width) << "------------"
@@ -122,11 +159,12 @@ void write_dp_result_to_file(
         width = 18;
         working_file 
                     << std::left << std::setw(width-2) << "mkl rel. elem:"
-                    << std::left << std::setw(width) << "spmvm rel. elem:"
+                    << std::left << std::setw(width) << "uspmv rel. elem:"
                     << std::left << std::setw(width) << "MAX rel. diff(%):" 
                     << std::left << std::setw(width-1) << "mkl abs. elem:"
-                    << std::left << std::setw(width) << "spmvm abs. elem:"
+                    << std::left << std::setw(width) << "uspmv abs. elem:"
                     << std::left << std::setw(width) << "MAX abs. diff:"
+                    << std::left << std::setw(width) << "||mkl - uspmv||_2"
                     << std::endl;
 
         working_file 
@@ -135,16 +173,17 @@ void write_dp_result_to_file(
                     << std::left << std::setw(width) << "----------------"
                     << std::left << std::setw(width-1) << "-------------"
                     << std::left << std::setw(width) << "---------------"
-                    << std::left << std::setw(width) << "-------------" << std::endl;
+                    << std::left << std::setw(width) << "-------------" 
+                    << std::left << std::setw(width) << "-----------------" << std::endl;
     }
-    for(int i = 0; i < r->total_spmvm_result.size(); ++i){
-        relative_diff = abs(((*x)[i] - r->total_spmvm_result[i])/(*x)[i]);
-        absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
+    for(int i = 0; i < r->total_uspmv_result.size(); ++i){
+        relative_diff = abs(((*x)[i] - r->total_uspmv_result[i])/(*x)[i]);
+        absolute_diff = abs((*x)[i] - r->total_uspmv_result[i]);
         
         if(config -> verbose_validation == 1)
         {
             working_file << std::left << std::setprecision(16) << std::setw(width) << (*x)[i]
-                        << std::left << std::setw(width) << r->total_spmvm_result[i]
+                        << std::left << std::setw(width) << r->total_uspmv_result[i]
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
 
@@ -161,12 +200,12 @@ void write_dp_result_to_file(
         {
             if(relative_diff > max_relative_diff){
                 max_relative_diff = relative_diff;
-                max_relative_diff_elem_spmvm = r->total_spmvm_result[i];
+                max_relative_diff_elem_uspmv = r->total_uspmv_result[i];
                 max_relative_diff_elem_mkl = (*x)[i];
             }
             if(absolute_diff > max_absolute_diff){
                 max_absolute_diff = absolute_diff;
-                max_absolute_diff_elem_spmvm = r->total_spmvm_result[i];
+                max_absolute_diff_elem_uspmv = r->total_uspmv_result[i];
                 max_absolute_diff_elem_mkl = (*x)[i];
             }
         }
@@ -180,159 +219,12 @@ void write_dp_result_to_file(
     {
         working_file 
                     << std::left << std::setw(width) << max_relative_diff_elem_mkl
-                    << std::left << std::setw(width) << max_relative_diff_elem_spmvm
+                    << std::left << std::setw(width) << max_relative_diff_elem_uspmv
                     << std::left << std::setw(width) << 100 * max_relative_diff
                     << std::left << std::setw(width) << max_absolute_diff_elem_mkl
-                    << std::left << std::setw(width) << max_absolute_diff_elem_spmvm
-                    << std::left << std::setw(width) << max_absolute_diff;
-                         
-        if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
-        ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
-        working_file << std::left << std::setw(width) << "ERROR";       
-        }
-        else if(abs(max_relative_diff) > .0001){
-        working_file << std::left << std::setw(width) << "WARNING";
-        }
-
-        working_file << std::endl;
-    }
-    working_file << "\n";
-    working_file.close();
-}
-
-
-/**
-    @brief Write the single precision comparison results to an external text file for validation
-    @param *file_name_str : name of the matrix-matket format data, taken from the cli
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *config : struct to initialze default values and user input
-    @param *y_out : the vector declared to either hold the process local result, 
-        or the global result if verification is selected as an option
-    @param *r : a Result struct, in which results of the computations are stored
-    @param *x : the output from the mkl routine, against which we verify our spmvm result
-*/
-void write_sp_result_to_file(
-    const std::string *matrix_file_name,
-    const std::string *seg_method,
-    Config *config,
-    Result<float, int> *r,
-    std::vector<float> *x,
-    int comm_size
-){
-
-    int width;
-    double relative_diff, max_relative_diff, max_relative_diff_elem_spmvm, max_relative_diff_elem_mkl;
-    double absolute_diff, max_absolute_diff, max_absolute_diff_elem_spmvm, max_absolute_diff_elem_mkl;
-    std::fstream working_file;
-
-    max_relative_diff = 0;
-    max_relative_diff_elem_spmvm = r->total_spmvm_result[0];
-    max_relative_diff_elem_mkl = (*x)[0];
-
-    max_absolute_diff = 0;
-    max_absolute_diff_elem_spmvm = r->total_spmvm_result[0];
-    max_absolute_diff_elem_mkl = (*x)[0];
-
-    std::cout.precision(16);
-
-    int num_omp_threads;
-
-    #pragma omp parallel
-    {
-        num_omp_threads = omp_get_num_threads();
-    }
-
-    // Print parameters
-    working_file.open(config->output_filename_sp, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with " << comm_size << " MPI processes, and " << num_omp_threads << " thread(s) per proc" << std::endl; 
-    working_file << "kernel: " << config->kernel_format; 
-    if(config->kernel_format == "scs"){
-        working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
-    }
-    working_file << ", data_type: " << "f" << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
-    working_file << std::endl;
-
-    // Print header
-    if(config->verbose_validation == 1){
-        width = 24;
-
-        working_file << std::left << std::setw(width) << "mkl results:"
-                    << std::left << std::setw(width) << "spmv results:"
-                    << std::left << std::setw(width) << "rel. diff(%):" 
-                    << std::left << std::setw(width) << "abs. diff:" << std::endl;
-
-        working_file << std::left << std::setw(width) << "-----------"
-                    << std::left << std::setw(width) << "------------"
-                    << std::left << std::setw(width) << "------------"
-                    << std::left << std::setw(width) << "---------" << std::endl;
-    }
-    else if(config->verbose_validation == 0){
-        width = 18;
-        working_file 
-                    << std::left << std::setw(width-2) << "mkl rel. elem:"
-                    << std::left << std::setw(width) << "spmvm rel. elem:"
-                    << std::left << std::setw(width) << "MAX rel. diff(%):" 
-                    << std::left << std::setw(width-1) << "mkl abs. elem:"
-                    << std::left << std::setw(width) << "spmvm abs. elem:"
-                    << std::left << std::setw(width) << "MAX abs. diff:"
-                    << std::endl;
-
-        working_file 
-                    << std::left << std::setw(width-2) << "-------------"
-                    << std::left << std::setw(width) << "---------------"
-                    << std::left << std::setw(width) << "----------------"
-                    << std::left << std::setw(width-1) << "-------------"
-                    << std::left << std::setw(width) << "---------------"
-                    << std::left << std::setw(width) << "-------------" << std::endl;
-    }
-    for(int i = 0; i < r->total_spmvm_result.size(); ++i){
-        relative_diff = abs(((*x)[i] - r->total_spmvm_result[i])/(*x)[i]);
-        absolute_diff = abs((*x)[i] - r->total_spmvm_result[i]);
-        
-        if(config -> verbose_validation == 1)
-        {
-            working_file << std::left << std::setprecision(16) << std::setw(width) << (*x)[i]
-                        << std::left << std::setw(width) << r->total_spmvm_result[i]
-                        << std::left << std::setw(width) << 100 * relative_diff
-                        << std::left  << std::setw(width) << absolute_diff;
-
-            if((abs(relative_diff) > .01) || std::isinf(relative_diff)){
-                working_file << std::left << std::setw(width) << "ERROR";
-            }
-            else if(abs(relative_diff) > .0001){
-                working_file << std::left << std::setw(width) << "WARNING";
-            }
-
-        working_file << std::endl;
-        }
-        else if(config -> verbose_validation == 0)
-        {
-            if(relative_diff > max_relative_diff){
-                max_relative_diff = relative_diff;
-                max_relative_diff_elem_spmvm = r->total_spmvm_result[i];
-                max_relative_diff_elem_mkl = (*x)[i];
-            }
-            if(absolute_diff > max_absolute_diff){
-                max_absolute_diff = absolute_diff;
-                max_absolute_diff_elem_spmvm = r->total_spmvm_result[i];
-                max_absolute_diff_elem_mkl = (*x)[i];
-            }
-        }
-        else
-        {
-            std::cout << "Validation verbose level not recognized" << std::endl;
-            exit(1);
-        }
-    }
-    if(config->verbose_validation == 0)
-    {
-        working_file 
-                    << std::left << std::setw(width) << max_relative_diff_elem_mkl
-                    << std::left << std::setw(width) << max_relative_diff_elem_spmvm
-                    << std::left << std::setw(width) << 100 * max_relative_diff
-                    << std::left << std::setw(width) << max_absolute_diff_elem_mkl
-                    << std::left << std::setw(width) << max_absolute_diff_elem_spmvm
-                    << std::left << std::setw(width) << max_absolute_diff;
+                    << std::left << std::setw(width) << max_absolute_diff_elem_uspmv
+                    << std::left << std::setw(width) << max_absolute_diff
+                    << std::left  << std::setw(width) << r->euclid_dist;
                          
         if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
         ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){

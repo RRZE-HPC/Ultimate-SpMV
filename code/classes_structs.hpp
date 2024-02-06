@@ -80,12 +80,15 @@ struct Config
     // Selects the default matrix storage format
     std::string kernel_format = "scs"; 
 
+    // TODO: consolidate?
     // filename for single precision results printing
     std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
 
     // filename for double precision results printing
     std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
-    // std::string output_filename_dp = "/home/hpc/ihpc/ihpc062h/HPC_HiWi/fresh_USpMV/Ultimate-SpMV/code/scripts/results/spmv_mkl_compare_dp.txt";
+
+    // filename for mixed precision results printing
+    std::string output_filename_mp = "spmv_mkl_compare_mp.txt";
 
     // filename for benchmark results printing
     std::string output_filename_bench = "spmv_bench.txt";
@@ -1168,19 +1171,20 @@ struct Result
     std::vector<double> perfs_from_procs; // used in Gather
 
     // Used in mp
-    std::vector<int> hp_nnz_per_proc;
-    std::vector<int> lp_nnz_per_proc;
-    std::vector<int> nnz_per_proc;
-
-    int lp_nnz;
-    int hp_nnz;
-    int total_nnz;
-
-    int cumulative_hp_nnz;
-    int cumulative_lp_nnz;
-
+    std::vector<unsigned long> hp_nnz_per_proc;
+    std::vector<unsigned long> lp_nnz_per_proc;
+    std::vector<unsigned long> nnz_per_proc;
+    unsigned long lp_nnz;
+    unsigned long hp_nnz;
+    unsigned long cumulative_hp_nnz;
+    unsigned long cumulative_lp_nnz;
     double total_hp_percent;
     double total_lp_percent;
+
+    unsigned long total_nnz;
+    unsigned long total_rows;
+
+    double euclid_dist;
 
     unsigned int size_value_type{};
     unsigned int size_index_type{};
@@ -1220,7 +1224,7 @@ struct Result
 
     std::vector<VT> y_out;
     std::vector<VT> x_out;
-    std::vector<VT> total_spmvm_result;
+    std::vector<VT> total_uspmv_result;
     std::vector<VT> total_x;
 };
 

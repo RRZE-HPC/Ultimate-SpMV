@@ -69,7 +69,8 @@ spmv_omp_csr_mp(
     for (ST row = 0; row < num_rows; ++row) {
         double hp_sum{};
         // #pragma nounroll
-        #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
+        // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
+        #pragma omp simd reduction(+:hp_sum)
         for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
             hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
@@ -79,7 +80,8 @@ spmv_omp_csr_mp(
 
         float lp_sum{};
         // #pragma nounroll
-        #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+        // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+        #pragma omp simd reduction(+:lp_sum)
         for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
             lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
