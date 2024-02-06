@@ -1167,6 +1167,21 @@ struct Result
     double mem_mb{};
     std::vector<double> perfs_from_procs; // used in Gather
 
+    // Used in mp
+    std::vector<int> hp_nnz_per_proc;
+    std::vector<int> lp_nnz_per_proc;
+    std::vector<int> nnz_per_proc;
+
+    int lp_nnz;
+    int hp_nnz;
+    int total_nnz;
+
+    int cumulative_hp_nnz;
+    int cumulative_lp_nnz;
+
+    double total_hp_percent;
+    double total_lp_percent;
+
     unsigned int size_value_type{};
     unsigned int size_index_type{};
 
@@ -1207,10 +1222,6 @@ struct Result
     std::vector<VT> x_out;
     std::vector<VT> total_spmvm_result;
     std::vector<VT> total_x;
-
-    // Mixed precision specific
-    double hp_nnz_percent;
-    double lp_nnz_percent;
 };
 
 // NOTE: purely for convieience, not entirely necessary

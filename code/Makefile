@@ -1,6 +1,7 @@
 COMPILER = icx
 VECTOR_LENGTH = 4
-DEBUG_MODE = 1
+DEBUG_MODE = 0
+DEBUG_MODE_FINE = 0
 OUTPUT_SPARSITY = 0
 
 # 0/1 library usage
@@ -43,6 +44,10 @@ endif
 
 ifeq ($(DEBUG_MODE),1)
   DEBUGFLAGS += -g -DDEBUG_MODE
+endif
+
+ifeq ($(DEBUG_MODE_FINE),1)
+  DEBUGFLAGS += -g -DDEBUG_MODE -DDEBUG_MODE_FINE
 endif
 
 ifeq ($(OUTPUT_SPARSITY),1)

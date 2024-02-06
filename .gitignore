@@ -1,4 +1,6 @@
 test.cpp
+test_suite/tests
+tests
 verify.sh
 setup.sh
 verify_results.txt

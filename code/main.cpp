@@ -131,26 +131,8 @@ void bench_spmv(
         }
     }
 
-    // if(my_rank == 1){
-    //     std::cout << "two_prec_kernel_args_encoded->hp_local_x" << std::endl;
-    //     for(int i = 0; i < local_x->size(); ++i){
-    //         std::cout << two_prec_kernel_args_encoded->hp_local_x[i] << std::endl;
-    //     }
-    // }
-
     comm_args_encoded->hp_comm_x = &(*hp_local_x)[0];
     comm_args_encoded->lp_comm_x = &(*lp_local_x)[0];
-
-    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->hp_comm_x[0] = " << comm_args_encoded->hp_comm_x[0] << std::endl;
-    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->hp_comm_x[1] = " << comm_args_encoded->hp_comm_x[1] << std::endl;
-    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->hp_comm_x[2] = " << comm_args_encoded->hp_comm_x[2] << std::endl;
-
-    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->lp_comm_x[0] = " << comm_args_encoded->lp_comm_x[0] << std::endl;
-    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->lp_comm_x[1] = " << comm_args_encoded->lp_comm_x[1] << std::endl;
-    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->lp_comm_x[2] = " << comm_args_encoded->lp_comm_x[2] << std::endl;
-
-    // MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 
     // comm_args_encoded->perm = local_scs->race_inv_perm; // <- TODO:
     comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
@@ -333,27 +315,41 @@ void bench_spmv(
 
         for (int i = 0; i < config->n_repetitions; ++i)
         {
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 1){
+                std::cout << "before comm spmv_kernel->hp_local_x" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+                }
+                std::cout << "before comm spmv_kernel->hp_local_y" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+                }
+            }
+#endif
+
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
 
-            // if(my_rank == 1){
-            //     std::cout << "in-loop spmv_kernel->hp_local_x" << std::endl;
-            //     for(int i = 0; i < local_x->size(); ++i){
-            //         std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-            //     }
-            // }
-            
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 1){
+                std::cout << "after comm spmv_kernel->hp_local_x" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+                }
+                std::cout << "after comm spmv_kernel->hp_local_y" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+                }
+            }
+#endif
+
             if(config->value_type == "mp"){ // <- TODO: fix this problem
                 spmv_kernel.distribute_halos();
             }
 
-            // if(my_rank == 1){
-            //     std::cout << "after distribute halos spmv_kernel->hp_local_x" << std::endl;
-            //     for(int i = 0; i < local_x->size(); ++i){
-            //         std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-            //     }
-            // }
-            if(my_rank == 0){
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 1){
                 std::cout << "before_kernel spmv_kernel->hp_local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
@@ -363,29 +359,29 @@ void bench_spmv(
                     std::cout << spmv_kernel.hp_local_y[i] << std::endl;
                 }
             }
+#endif
 
             spmv_kernel.execute_spmv();
 
-            // if(my_rank == 1){
-            //     std::cout << "after_kernel spmv_kernel->hp_local_x" << std::endl;
-            //     for(int i = 0; i < local_x->size(); ++i){
-            //         std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-            //     }
-            // }
-
-            // Manually verify result
-            // if(my_rank == 1){
-            //     for(int i = 0; i < local_y->size(); ++i){
-            //         std::cout << "element[" << i << "] = " << spmv_kernel.hp_local_y[i] << std::endl;
-            //     }
-            // }
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 1){
+                std::cout << "after_kernel spmv_kernel->hp_local_x" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+                }
+                std::cout << "before_kernel spmv_kernel->hp_local_y" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+                }
+            }
+#endif
             if(config->value_type == "mp"){
                 apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
                 apply_permutation<float, IT>(&(sorted_lp_local_y)[0], &(spmv_kernel.lp_local_y)[0], &(lp_local_scs->old_to_new_idx)[0], lp_local_scs->n_rows);
                 // spmv_kernel.swap_with_hp_x(&(sorted_hp_local_y)[0]);
                 // spmv_kernel.swap_with_lp_x(&(sorted_lp_local_y)[0]);
 
-                // TODO: bandaid
+                // TODO: bandaid, apply swapping routine
                 for(int i = 0; i < local_y->size(); ++i){
                     (spmv_kernel.hp_local_x)[i] = sorted_hp_local_y[i];
                 }
@@ -397,12 +393,18 @@ void bench_spmv(
             else{
                 // TODO: bandaid. This is the per-rep row-wise permutation which should not be necessary. But for SCS it might be, for repeated spmvs
                 apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-                spmv_kernel.swap_with_x(&(sorted_local_y)[0]);
+                // spmv_kernel.swap_with_x(&(sorted_local_y)[0]);
+
+                // TODO: bandaid, apply swapping routine
+                for(int i = 0; i < local_y->size(); ++i){
+                    (spmv_kernel.local_x)[i] = sorted_local_y[i];
+                }
             }
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
 
-            if(my_rank == 0){
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 1){
                 std::cout << "after_kernel and swap spmv_kernel->hp_local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
@@ -412,6 +414,7 @@ void bench_spmv(
                     std::cout << spmv_kernel.hp_local_y[i] << std::endl;
                 }
             }
+#endif
         }
 
         // Give sorted results to local_y for Results object gathering and output
@@ -428,7 +431,7 @@ void bench_spmv(
         }
     }
 
-    // Delete the allocated space for each other process
+    // Delete the allocated space for each other process send buffers
     for(int i = 0; i < nz_comms; ++i){
         delete[] to_send_elems[i];
     }
@@ -464,16 +467,9 @@ void bench_spmv(
     r->C               = local_scs->C;
     r->sigma           = local_scs->sigma;
 
-    std::cout << "local_context->total_nnz = " << local_context->total_nnz << std::endl;
-    std::cout << "hp_local_scs->nnz = " << hp_local_scs->nnz << std::endl;
-    std::cout << "lp_local_scs->nnz = " << lp_local_scs->nnz << std::endl;
-
-    if(config->value_type == "mp"){
-        r->hp_nnz_percent = ((double)hp_local_scs->nnz / local_scs->nnz) * 100.0;
-        std::cout << "r->hp_nnz_percent = " << r->hp_nnz_percent << std::endl;
-        r->lp_nnz_percent = ((double)lp_local_scs->nnz / local_scs->nnz) * 100.0;
-        std::cout << "r->lp_nnz_percent = " << r->lp_nnz_percent << std::endl;
-    }
+    // Only relevant for mp
+    r->hp_nnz = hp_local_scs->nnz;
+    r->lp_nnz = lp_local_scs->nnz;
 
     delete[] recv_requests;
     delete[] send_requests;
@@ -504,6 +500,9 @@ void gather_results(
 
     if(config->mode == 'b'){
         double *perfs_from_procs_arr = new double[comm_size];
+        int *hp_nnz_per_procs_arr = new int[comm_size];
+        int *lp_nnz_per_procs_arr = new int[comm_size];
+        int *nnz_per_procs_arr = new int[comm_size];
 
         MPI_Gather(&(r->perf_gflops),
                 1,
@@ -514,10 +513,55 @@ void gather_results(
                 0,
                 MPI_COMM_WORLD);
 
+        MPI_Gather(&(r->hp_nnz),
+                1,
+                MPI_INT,
+                hp_nnz_per_procs_arr,
+                1,
+                MPI_INT,
+                0,
+                MPI_COMM_WORLD);
+
+        MPI_Gather(&(r->lp_nnz),
+                1,
+                MPI_INT,
+                lp_nnz_per_procs_arr,
+                1,
+                MPI_INT,
+                0,
+                MPI_COMM_WORLD);
+
+        MPI_Gather(&(r->nnz),
+                1,
+                MPI_INT,
+                nnz_per_procs_arr,
+                1,
+                MPI_INT,
+                0,
+                MPI_COMM_WORLD);
+                
+
         // NOTE: Garbage values for all but root process
         r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + comm_size);
+        r->hp_nnz_per_proc = std::vector<int>(hp_nnz_per_procs_arr, hp_nnz_per_procs_arr + comm_size);
+        r->lp_nnz_per_proc = std::vector<int>(lp_nnz_per_procs_arr, lp_nnz_per_procs_arr + comm_size);
+        r->nnz_per_proc = std::vector<int>(nnz_per_procs_arr, nnz_per_procs_arr + comm_size);
+
+        r->cumulative_hp_nnz = 0;
+        r->cumulative_lp_nnz = 0;
+
+        for(int i = 0; i < comm_size; ++i){
+            r->cumulative_hp_nnz += r->hp_nnz_per_proc[i];
+            r->cumulative_lp_nnz += r->lp_nnz_per_proc[i];
+        }
+
+        r->total_hp_percent = (r->cumulative_hp_nnz / (double)r->total_nnz) * 100.0;
+        r->total_lp_percent = (r->cumulative_lp_nnz / (double)r->total_nnz) * 100.0;
 
         delete[] perfs_from_procs_arr;
+        delete[] hp_nnz_per_procs_arr;
+        delete[] lp_nnz_per_procs_arr;
+        delete[] nnz_per_procs_arr;
     }
     else if(config->mode == 's'){
         std::vector<VT> sorted_local_y(num_local_rows);
@@ -768,6 +812,7 @@ int main(int argc, char *argv[]){
     if(my_rank == 0){printf("Reading mtx file.\n");}
 #endif
             read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
+            r.total_nnz = total_mtx.nnz;
         }
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
@@ -824,6 +869,7 @@ int main(int argc, char *argv[]){
     if(my_rank == 0){printf("Reading mtx file.\n");}
 #endif
             read_mtx<float, int>(matrix_file_name, config, &total_mtx, my_rank);
+            r.total_nnz = total_mtx.nnz;
         }
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
@@ -882,6 +928,7 @@ int main(int argc, char *argv[]){
     if(my_rank == 0){printf("Reading mtx file.\n");}
 #endif
             read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
+            r.total_nnz = total_mtx.nnz;
         }
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}

@@ -72,10 +72,9 @@ spmv_omp_csr_mp(
         #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
         for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
             hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
-            // Should be not more than 255
-            // if(my_rank == 1){printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);}
-            // std::cout << hp_values[j] << "*" << hp_x[hp_col_idxs[j]] << std::endl;
-            // if(my_rank == 1){printf("first for loop: j = %i\n", j);}
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);}
+#endif
         }
 
         float lp_sum{};
@@ -83,8 +82,9 @@ spmv_omp_csr_mp(
         #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
         for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
             lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
-            // std::cout << lp_values[j] << "*" << lp_x[lp_col_idxs[j]] << std::endl;
-            // if(my_rank == 1){printf("first for loop: j = %i\n", j);}
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){printf("j = %i, lp_col_idxs[j] = %i, lp_x[hp_col_idxs[j]] = %f\n", j ,lp_col_idxs[j], lp_x[lp_col_idxs[j]]);}
+#endif
         }
 
         hp_y[row] = hp_sum + lp_sum;
