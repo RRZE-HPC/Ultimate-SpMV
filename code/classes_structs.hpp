@@ -57,7 +57,7 @@ struct Config
     int comm_halos = 1;
 
     // synchronize with barriers each benchmark loop
-    int ba_synch = 0;
+    int ba_synch = 1; // To eliminate unwanted overlapping benefits. Make 0 if benching mpk.
 
     // Pack contiguous elements for MPI_Isend in parallel
     int par_pack = 0;
@@ -118,7 +118,8 @@ struct CommArgs
 {
     Config *config;
     ContextData<IT> *local_context;
-    std::vector<VT> *local_x;
+    double *hp_comm_x;
+    float *lp_comm_x;
     VT **to_send_elems;
     const IT *work_sharing_arr;
     // const IT *perm; // TODO: perms, i.e. from METIS, need to be included
@@ -132,9 +133,8 @@ struct CommArgs
 };
 
 template <typename VT, typename IT>
-struct KernelArgs
+struct OnePrecKernelArgs
 {
-    Config *config;
     ST C;
     ST n_chunks;
     IT * RESTRICT chunk_ptrs;
@@ -143,29 +143,44 @@ struct KernelArgs
     VT * RESTRICT values;
     VT * RESTRICT local_x;
     VT * RESTRICT local_y;
+};
 
-    // TODO: mixed precision kernel args will be different
-    // const ST,
-    // const ST,
-    // const IT * RESTRICT,
-    // const IT * RESTRICT,
-    // const IT * RESTRICT, 
-    // const double * RESTRICT,
-    // const double * RESTRICT,
-    // double * RESTRICT,
-    // const ST,
-    // const IT * RESTRICT,
-    // const IT * RESTRICT,
-    // const IT * RESTRICT,
-    // const float * RESTRICT,
-    // const float * RESTRICT,
-    // float * RESTRICT
+template <typename IT>
+struct TwoPrecKernelArgs
+{
+    // TwoPrecKernelArgs::TwoPrecKernelArgs();
+
+    ST num_rows; // n_chunks (same for both)
+    ST hp_C; // 1
+    IT * RESTRICT hp_row_ptrs;
+    IT * RESTRICT hp_chunk_lengths;
+    IT * RESTRICT hp_col_idxs;
+    double * RESTRICT hp_values;
+    double * RESTRICT hp_local_x;
+    double * RESTRICT hp_local_y;
+    ST lp_C; // 1
+    IT * RESTRICT lp_row_ptrs; // lp_chunk_ptrs
+    IT * RESTRICT lp_chunk_lengths;
+    IT * RESTRICT lp_col_idxs;
+    float * RESTRICT lp_values;
+    float * RESTRICT lp_local_x;
+    float * RESTRICT lp_local_y;
 };
 
 template <typename VT, typename IT>
 class SpmvKernel {
     private:
-        // TODO: Will need a different typedef for mixed precision
+        // typedef std::function<void(
+        //     const ST, // C
+        //     const ST, // n_chunks
+        //     const IT *, // chunk_ptrs
+        //     const IT *, // chunk_lengths
+        //     const IT *, // col_idxs
+        //     const VT *, // values
+        //     VT *, // x
+        //     VT * //y
+        // )> CommPrecFuncPtr;
+
         typedef std::function<void(
             const ST, // C
             const ST, // n_chunks
@@ -174,32 +189,64 @@ class SpmvKernel {
             const IT *, // col_idxs
             const VT *, // values
             VT *, // x
-            VT * //y
-        )> Func_ptr;
+            VT *, //y
+            int
+        )> OnePrecFuncPtr;
 
-        Func_ptr kernel_func_ptr;
+        typedef std::function<void(
+            const ST, // n_chunks // TODO same, for now.
+            const ST, // hp_C
+            const IT * RESTRICT, // hp_chunk_ptrs
+            const IT * RESTRICT, // hp_chunk_lengths
+            const IT * RESTRICT, // hp_col_idxs
+            const double * RESTRICT, // hp_values
+            double * RESTRICT, // hp_x
+            double * RESTRICT, // hp_y
+            const ST, // lp_C
+            const IT * RESTRICT, // lp_chunk_ptrs
+            const IT * RESTRICT, // lp_chunk_lengths
+            const IT * RESTRICT, // lp_col_idxs
+            const float * RESTRICT, // lp_values
+            float * RESTRICT, // lp_x
+            float * RESTRICT, // lp_y
+            int
+        )> TwoPrecFuncPtr;
+
+        OnePrecFuncPtr one_prec_kernel_func_ptr;
+        TwoPrecFuncPtr two_prec_kernel_func_ptr;
+
 
         void *kernel_args_encoded;
         void *comm_args_encoded;
+        Config *config;
 
-        // Decode kernel args
-        // KernelArgs<VT, IT> *kernel_args_encoded;
-        KernelArgs<VT, IT> *kernel_args_decoded = (KernelArgs<VT, IT>*) kernel_args_encoded;
-        Config *config = kernel_args_decoded->config;
-        const ST C = kernel_args_decoded->C;
-        const ST num_rows = kernel_args_decoded->n_chunks;
-        const IT * RESTRICT row_ptrs = kernel_args_decoded->chunk_ptrs;
-        const IT * RESTRICT chunk_lengths = kernel_args_decoded->chunk_lengths;
-        const IT * RESTRICT col_idxs = kernel_args_decoded->col_idxs;
-        const VT * RESTRICT values = kernel_args_decoded->values;
+        // Decode kernel args. TODO: Can you assign both like this?
+        OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_decoded = (OnePrecKernelArgs<VT, IT>*) kernel_args_encoded;
+        TwoPrecKernelArgs<IT> *two_prec_kernel_args_decoded = (TwoPrecKernelArgs<IT>*) kernel_args_encoded;
+
+        const ST C = one_prec_kernel_args_decoded->C;
+        const ST n_chunks = one_prec_kernel_args_decoded->n_chunks;
+        const IT * RESTRICT chunk_ptrs = one_prec_kernel_args_decoded->chunk_ptrs;
+        const IT * RESTRICT chunk_lengths = one_prec_kernel_args_decoded->chunk_lengths;
+        const IT * RESTRICT col_idxs = one_prec_kernel_args_decoded->col_idxs;
+        const VT * RESTRICT values = one_prec_kernel_args_decoded->values;
+
+        // Just need different names on all of unpacked args
+        const ST num_rows = two_prec_kernel_args_decoded->num_rows; // TODO same, for now.
+        const ST hp_C = two_prec_kernel_args_decoded->hp_C;
+        const IT * RESTRICT hp_row_ptrs = two_prec_kernel_args_decoded->hp_row_ptrs;
+        const IT * RESTRICT hp_chunk_lengths = two_prec_kernel_args_decoded->hp_chunk_lengths;
+        const IT * RESTRICT hp_col_idxs = two_prec_kernel_args_decoded->hp_col_idxs;
+        const double * RESTRICT hp_values = two_prec_kernel_args_decoded->hp_values;
+        const ST lp_C = two_prec_kernel_args_decoded->lp_C;
+        const IT * RESTRICT lp_row_ptrs = two_prec_kernel_args_decoded->lp_row_ptrs;
+        const IT * RESTRICT lp_chunk_lengths = two_prec_kernel_args_decoded->lp_chunk_lengths;
+        const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
+        const float * RESTRICT lp_values = two_prec_kernel_args_decoded->lp_values; 
 
         // Decode comm args
-        // CommArgs<VT, IT> *comm_args_encoded;
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
-        // Config *config = comm_args_decoded->config;
         ContextData<IT> *local_context = comm_args_decoded->local_context;
-        // std::vector<VT> *local_x = comm_args_decoded->local_x;
-        // std::vector<VT> *local_y = comm_args_decoded->local_y;
         VT **to_send_elems = comm_args_decoded->to_send_elems;
         const IT *work_sharing_arr = comm_args_decoded->work_sharing_arr;
         // const IT *perm = comm_args_decoded->perm; // TODO
@@ -212,25 +259,36 @@ class SpmvKernel {
         const IT comm_size = *(comm_args_decoded->comm_size);
 
     public:
-        VT * RESTRICT local_x = kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
-        VT * RESTRICT local_y = kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
+        VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
+        VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
+        double * RESTRICT hp_local_x = two_prec_kernel_args_decoded->hp_local_x;
+        double * RESTRICT hp_local_y = two_prec_kernel_args_decoded->hp_local_y;
+        float * RESTRICT lp_local_x = two_prec_kernel_args_decoded->lp_local_x;
+        float * RESTRICT lp_local_y = two_prec_kernel_args_decoded->lp_local_y;
+        double * RESTRICT hp_comm_x = comm_args_decoded->hp_comm_x;
+        float * RESTRICT lp_comm_x = comm_args_decoded->lp_comm_x;
 
-        SpmvKernel(void *kernel_args_encoded_, void *comm_args_encoded_): kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
-            if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+        SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
+            if(config->value_type == "mp"){
+                if(my_rank == 0)
+                    std::cout << "MP-CRS kernel selected" << std::endl;   
+                two_prec_kernel_func_ptr = spmv_omp_csr_mp<IT>;
+            }
+            else if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                 if(my_rank == 0)
                     std::cout << "CRS kernel selected" << std::endl;
                 // TODO: More performant to just instantiate template here?
-                kernel_func_ptr = spmv_omp_csr<VT, IT>;
+                one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
             }
             else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
                 if(my_rank == 0)
                     std::cout << "ELL_rm kernel selected" << std::endl;
-                kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
+                // one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
             }
             else if (config->kernel_format == "ell" || config->kernel_format == "ell_cm"){
                 if(my_rank == 0)
                     std::cout << "ELL_cm kernel selected" << std::endl;
-                kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
+                // one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
             }
             else if (config->kernel_format == "scs" 
                 && config->chunk_size != 1
@@ -242,13 +300,13 @@ class SpmvKernel {
                 && config->chunk_size != 64){
                 if(my_rank == 0)
                     std::cout << "SCS kernel selected" << std::endl;
-                kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                // one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
             }
             else if (config->kernel_format == "scs"){
                 // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
                 if(my_rank == 0)
                     std::cout << "Advanced SCS kernel selected" << std::endl;
-                kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                // one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
             }
             else {
                 std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
@@ -260,7 +318,7 @@ class SpmvKernel {
             int outgoing_buf_size, incoming_buf_size;
             int receiving_proc, sending_proc;
 
-            // TODO: DRY
+//             // TODO: DRY
             if (typeid(VT) == typeid(float))
             {
                 for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
@@ -272,7 +330,7 @@ class SpmvKernel {
 #endif
 
                     MPI_Irecv(
-                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        &(lp_comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                         incoming_buf_size,
                         MPI_FLOAT,
                         sending_proc,
@@ -297,7 +355,12 @@ class SpmvKernel {
                     #pragma omp parallel for if(config->par_pack)   
                     for(int i = 0; i < outgoing_buf_size; ++i){
                         // (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
-                        (to_send_elems[to_proc_idx])[i] = local_x[local_context->comm_send_idxs[receiving_proc][i]];
+                        // std::cout << "on rank: " << my_rank << ", receiving_proc = " << receiving_proc << std::endl;
+
+                        // std::cout << "on rank: " << my_rank << ", local_context->comm_send_idxs[receiving_proc][i] = " << local_context->comm_send_idxs[receiving_proc][i] << std::endl;
+
+                        // std::cout << "on rank: " << my_rank << ", lp_local_x[local_context->comm_send_idxs[receiving_proc][i]] = " << lp_comm_x[local_context->comm_send_idxs[receiving_proc][i]] << std::endl;
+                        (to_send_elems[to_proc_idx])[i] = lp_comm_x[local_context->comm_send_idxs[receiving_proc][i]];
 
                     }
 #ifdef DEBUG_MODE
@@ -314,7 +377,9 @@ class SpmvKernel {
                     );
                 }
             }
+            // Mixed precision will also enter here
             else if (typeid(VT) == typeid(double)){
+
                 for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
                 {
                     sending_proc = local_context->non_zero_senders[from_proc_idx];
@@ -324,7 +389,7 @@ class SpmvKernel {
                     std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 #endif
                     MPI_Irecv(
-                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        &(hp_comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                         incoming_buf_size,
                         MPI_DOUBLE,
                         sending_proc,
@@ -332,8 +397,6 @@ class SpmvKernel {
                         MPI_COMM_WORLD,
                         &recv_requests[from_proc_idx]
                     );
-
-
                 }
 
                 // TODO: more performant varients?
@@ -354,7 +417,15 @@ class SpmvKernel {
                     // Move non-contiguous data to a contiguous buffer for communication
                     #pragma omp parallel for if(config->par_pack)
                     for(int i = 0; i < outgoing_buf_size; ++i){
-                        (to_send_elems[to_proc_idx])[i] = local_x[local_context->comm_send_idxs[receiving_proc][i]];
+                        if(my_rank == 0){
+                            // std::cout << "on rank: " << my_rank << ", receiving_proc = " << receiving_proc << std::endl;
+                            // std::cout << "on rank: " << my_rank << ", local_context->comm_send_idxs[receiving_proc][i] = " << (local_context->comm_send_idxs[receiving_proc])[i] << std::endl;
+                            // std::cout << "on rank: " << my_rank << ", hp_local_x[local_context->comm_send_idxs[receiving_proc][i]] = " << hp_comm_x[local_context->comm_send_idxs[receiving_proc][i]] << std::endl;
+                        }
+
+                        (to_send_elems[to_proc_idx])[i] = hp_comm_x[local_context->comm_send_idxs[receiving_proc][i]];
+                        // std::cout << "I'm proc: " << my_rank << ", sending the element: " << (to_send_elems[to_proc_idx])[i] << std::endl;
+
                     }
 #ifdef DEBUG_MODE
                     std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
@@ -379,26 +450,70 @@ class SpmvKernel {
         }
 
         inline void execute_spmv(void){
-            // TODO: validate performance
-            kernel_func_ptr(
-                C,
-                num_rows,
-                row_ptrs,
-                chunk_lengths,
-                col_idxs,
-                values,
-                local_x,
-                local_y
-            );
+            // TODO: validate performance, likely bad
+            if(config->value_type == "mp")
+                two_prec_kernel_func_ptr(
+                    num_rows, // n_chunks (same for both)
+                    hp_C, // 1
+                    hp_row_ptrs, // hp_chunk_ptrs
+                    hp_chunk_lengths, // unused
+                    hp_col_idxs,
+                    hp_values,
+                    hp_local_x,
+                    hp_local_y, 
+                    lp_C, // 1
+                    lp_row_ptrs, // lp_chunk_ptrs
+                    lp_chunk_lengths, // unused
+                    lp_col_idxs,
+                    lp_values,
+                    lp_local_x,
+                    lp_local_y, // unused
+                    my_rank
+                );
+            else
+                one_prec_kernel_func_ptr(
+                    C,
+                    n_chunks,
+                    chunk_ptrs,
+                    chunk_lengths,
+                    col_idxs,
+                    values,
+                    local_x,
+                    local_y,
+                    my_rank
+                );
         }
 
+        // TODO: bad. can likely avoid
+        inline void distribute_halos(){
+            // With mp, all communication will happen in double prec. on the hp_comm_x, 
+            // 
+            for(int i = 0; i < num_rows; ++i){
+                hp_local_x[i] = static_cast<double>(hp_comm_x[i]);
+                lp_local_x[i] = static_cast<float>(hp_comm_x[i]);
+            }
+        }
+
+        // TODO: Honestly, just so bad. Template or something...
         inline void swap_with_x(VT * RESTRICT vec_to_swap){
             std::swap(vec_to_swap, local_x);
         }
-
         inline void swap_with_y(VT * RESTRICT vec_to_swap){
             std::swap(vec_to_swap, local_y);
         }
+        inline void swap_with_hp_x(double * RESTRICT vec_to_swap){
+            std::swap(vec_to_swap, hp_local_x);
+        }
+        inline void swap_with_hp_y(double * RESTRICT vec_to_swap){
+            std::swap(vec_to_swap, hp_local_y);
+        }
+        inline void swap_with_lp_x(float * RESTRICT vec_to_swap){
+            std::swap(vec_to_swap, lp_local_x);
+        }
+        inline void swap_with_lp_y(float * RESTRICT vec_to_swap){
+            std::swap(vec_to_swap, lp_local_y);
+        }
+
 };
 
 
@@ -505,6 +620,7 @@ void MtxData<VT, IT>::print(void){
         else
             std::cout << ", ";
     }
+    printf("\n");
 }
 
 // This is only a unit testing convenience
@@ -539,6 +655,10 @@ struct ScsData
     V<IT, IT> old_to_new_idx;
     std::vector<int> new_to_old_idx; //inverse of above
     // TODO: ^ make V object as well?
+
+    // Only used for column compression with mp when n_procs > 1
+    std::vector<int> is_elem_hp;
+    std::vector<int> is_elem_lp;
 
     void permute(IT *_perm_, IT*  _invPerm_);
     void write_to_mtx_file(int my_rank, std::string file_out_name);
@@ -745,6 +865,7 @@ void ScsData<VT, IT>::print(void){
         else
             std::cout << ", ";
     }
+    printf("\n");
 }
 
 // template <typename VT, typename IT>

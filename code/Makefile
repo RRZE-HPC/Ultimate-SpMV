@@ -42,7 +42,7 @@ ifeq ($(COMPILER),icx)
 endif
 
 ifeq ($(DEBUG_MODE),1)
-  CXXFLAGS += -g -DDEBUG_MODE
+  DEBUGFLAGS += -g -DDEBUG_MODE
 endif
 
 ifeq ($(OUTPUT_SPARSITY),1)
@@ -109,27 +109,30 @@ all: omp
 omp: uspmv
 
 uspmv: main.o mmio.o $(REBUILD_DEPS)
-	$(MPICXX) $(CXXFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 main.o: main.cpp $(REBUILD_DEPS)
-	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
 
 mmio.o: mmio.cpp mmio.h
-	$(MPICXX) $(CXXFLAGS) -o $@ -c $<
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
 
 TEST_INC_DIR = $(PWD)
 
-tests: test_suite/catch.o test_suite/tests.o test_suite/test_data.o test_suite/catch.hpp $(REBUILD_DEPS)
-	$(CXX) -I$(TEST_INC_DIR) test_suite/tests.o test_suite/catch.o test_suite/test_data.o -o test_suite/tests
+tests: test_suite/catch.o test_suite/tests.o test_suite/test_data/M0.o test_suite/test_data/M1.o test_suite/catch.hpp $(REBUILD_DEPS)
+	$(CXX) $(DEBUGFLAGS) -I$(TEST_INC_DIR) test_suite/tests.o test_suite/catch.o test_suite/test_data/M0.o test_suite/test_data/M1.o -o test_suite/tests
 
 test_suite/catch.o: test_suite/catch.cpp test_suite/catch.hpp
-	$(CXX) -I$(TEST_INC_DIR) -c test_suite/catch.cpp -o test_suite/catch.o
+	$(CXX) $(DEBUGFLAGS) -I$(TEST_INC_DIR) -c test_suite/catch.cpp -o test_suite/catch.o
 
-test_suite/tests.o: test_suite/tests.cpp test_suite/catch.hpp test_suite/test_data.hpp
-	$(CXX) -I$(TEST_INC_DIR) -c test_suite/tests.cpp -o test_suite/tests.o
+test_suite/tests.o: test_suite/tests.cpp test_suite/catch.hpp test_suite/test_data/test_data.hpp
+	$(CXX) $(DEBUGFLAGS) -I$(TEST_INC_DIR) -c test_suite/tests.cpp -o test_suite/tests.o
 
-test_suite/test_data.o: test_suite/test_data.cpp
-	$(CXX) -I$(TEST_INC_DIR) -c test_suite/test_data.cpp -o test_suite/test_data.o
+test_suite/test_data/M0.o: test_suite/test_data/M0.cpp
+	$(CXX) $(DEBUGFLAGS) -I$(TEST_INC_DIR) -c test_suite/test_data/M0.cpp -o test_suite/test_data/M0.o
+
+test_suite/test_data/M1.o: test_suite/test_data/M1.cpp
+	$(CXX) $(DEBUGFLAGS) -I$(TEST_INC_DIR) -c test_suite/test_data/M1.cpp -o test_suite/test_data/M1.o
 
 .PHONY: clean
 clean:
@@ -137,7 +140,7 @@ clean:
 
 .PHONY: tests_clean
 tests_clean:
-	-rm test_suite/test_data.o test_suite/tests.o
+	-rm test_suite/test_data/M0.o test_suite/test_data/M1.o test_suite/tests.o
 
 .PHONY: rm
 rm:

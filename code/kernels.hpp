@@ -18,7 +18,8 @@ spmv_omp_csr(const ST C, // 1
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
              VT * RESTRICT x,
-             VT * RESTRICT y)
+             VT * RESTRICT y,
+             int my_rank)
 {
     #pragma omp parallel for schedule(static)
     for (ST row = 0; row < num_rows; ++row) {
@@ -26,6 +27,8 @@ spmv_omp_csr(const ST C, // 1
         // #pragma nounroll
         #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
         for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
+            // if(my_rank == 1){printf("j = %i, col_idxs[j] = %i, x[col_idxs[j]] = %f\n", j ,col_idxs[j], x[col_idxs[j]]);}
+
             sum += values[j] * x[col_idxs[j]];
         }
         y[row] = sum;
@@ -36,23 +39,30 @@ spmv_omp_csr(const ST C, // 1
 template <typename IT>
 static void
 spmv_omp_csr_mp(
-             const ST num_rows, // n_chunks (same for both)
-             const ST hp_C, // 1
-             const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
-             const IT * RESTRICT hp_chunk_lengths, // unused
-             const IT * RESTRICT hp_col_idxs,
-             const double * RESTRICT hp_values,
-             const double * RESTRICT hp_x,
-             double * RESTRICT hp_y, 
-             const ST lp_C, // 1
-             const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
-             const IT * RESTRICT lp_chunk_lengths, // unused
-             const IT * RESTRICT lp_col_idxs,
-             const float * RESTRICT lp_values,
-             const float * RESTRICT lp_x,
-             float * RESTRICT lp_y // unused
-             )
+    const ST num_rows, // n_chunks (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank
+    )
 {
+    // if(my_rank == 1){
+    //     std::cout << "in-kernel spmv_kernel->hp_local_x" << std::endl;
+    //     for(int i = 0; i < num_rows; ++i){
+    //         std::cout << hp_x[i] << std::endl;
+    //     }
+    // }
             // Each thread will traverse the hp struct, then the lp struct
         // Load balancing depends on sparsity pattern AND data distribution
     #pragma omp parallel for schedule(static)
@@ -62,6 +72,10 @@ spmv_omp_csr_mp(
         #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
         for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
             hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+            // Should be not more than 255
+            // if(my_rank == 1){printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);}
+            // std::cout << hp_values[j] << "*" << hp_x[hp_col_idxs[j]] << std::endl;
+            // if(my_rank == 1){printf("first for loop: j = %i\n", j);}
         }
 
         float lp_sum{};
@@ -69,6 +83,8 @@ spmv_omp_csr_mp(
         #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
         for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
             lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+            // std::cout << lp_values[j] << "*" << lp_x[lp_col_idxs[j]] << std::endl;
+            // if(my_rank == 1){printf("first for loop: j = %i\n", j);}
         }
 
         hp_y[row] = hp_sum + lp_sum;
@@ -149,9 +165,9 @@ spmv_omp_scs(const ST C,
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
              VT * RESTRICT x,
-             VT * RESTRICT y)
+             VT * RESTRICT y,
+             int my_rank)
 {
-
     #pragma omp parallel for schedule(static)
     for (ST c = 0; c < n_chunks; ++c) {
         VT tmp[C];
@@ -225,7 +241,8 @@ spmv_omp_scs_adv(
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
              VT * RESTRICT x,
-             VT * RESTRICT y)
+             VT * RESTRICT y,
+             int my_rank)
 {
     switch (C)
     {

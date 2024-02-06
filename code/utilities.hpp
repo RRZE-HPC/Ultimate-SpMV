@@ -1244,6 +1244,7 @@ template <typename T> inline void sortPerm(T *arr, int *perm, int range_lo, int 
 */
 template <typename VT, typename IT>
 void convert_to_scs(
+    double bucket_size,
     const MtxData<VT, IT> *local_mtx,
     ST C,
     ST sigma,
@@ -1345,6 +1346,8 @@ void convert_to_scs(
 
     ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
                         + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
+
+    // std::cout << "n_scs_elements = " << n_scs_elements << std::endl;
     scs->chunk_ptrs[scs->n_chunks] = n_scs_elements;
 
     // construct permutation vector
@@ -1418,6 +1421,18 @@ void convert_to_scs(
     // }    
 
     // return true;
+
+    // Collect for column compression with mp when n_procs > 1
+    scs->is_elem_hp = std::vector<int>(n_scs_elements,0);
+    scs->is_elem_lp = std::vector<int>(n_scs_elements,0);
+    for (ST i = 0; i < n_scs_elements; ++i) {
+        if(abs(scs->values[i]) >= bucket_size){
+            scs->is_elem_hp[i] = 1;
+        } 
+        else{
+            scs->is_elem_lp[i] = 1;
+        }
+    }
 }
 
 template<typename IT>

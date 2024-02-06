@@ -168,9 +168,12 @@ void organize_cumsums(
 */
 template <typename VT, typename IT>
 void collect_local_needed_heri(
+    const std::string value_type,
     std::vector<std::vector<IT>> *communication_recv_idxs,
     std::vector<IT> *recv_counts_cumsum,
     ScsData<VT, IT> *local_scs,
+    ScsData<double, IT> *hp_local_scs,
+    ScsData<float, IT> *lp_local_scs,
     const IT *work_sharing_arr,
     int my_rank,
     int comm_size)
@@ -210,6 +213,7 @@ void collect_local_needed_heri(
         if (elem_col < work_sharing_arr[my_rank])
         {
             remote_elem_idxs.push_back(i);
+
             if(remote_elem_col_bk.find(elem_col) == remote_elem_col_bk.end()){
                 // if this column has not yet been seen
                 for (IT j = 0; j < comm_size; ++j) //TODO: change to only go until my_rank
@@ -302,6 +306,8 @@ void collect_local_needed_heri(
                         ++lhs_heri_ctr[j];
                     }
 
+                    // TODO: I believe this should go outside the for loop, and be replaced with a break or something
+                    // come back to later
                     local_scs->col_idxs[remote_elem_idx] = remote_cols[elem_col];
                 }
             }
@@ -322,6 +328,96 @@ void collect_local_needed_heri(
                 }
             }
         }
+    }
+
+    IT hp_elem_cntr = 0;
+    IT lp_elem_cntr = 0;
+    // Copy remote elements from local_scs information already collected
+    if(value_type == "mp"){
+        // Scan all elements again, in order to use "is_elem_xp" arrays without some weird mapping
+        for (IT i = 0; i < local_scs->n_elements; ++i)
+        {
+            elem_col = local_scs->col_idxs[i];
+
+            // TODO: what is happening now, with these "0 element" communicators?
+            // if this column corresponds to a padded element, continue to next nnz
+            // if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
+
+            if (elem_col < work_sharing_arr[my_rank])
+            {
+                if(local_scs->is_elem_hp[i]){
+                    hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
+#ifdef DEBUG_MODE
+                    std::cout << "L Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+#endif
+                    ++hp_elem_cntr;
+                }
+                else if(local_scs->is_elem_lp[i]){
+                    lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
+#ifdef DEBUG_MODE
+                    std::cout << "L Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
+#endif
+                    ++lp_elem_cntr;
+                }
+                else{
+                    printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
+                }
+            }
+            else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
+            { // i.e. if RHS remote element
+                if(local_scs->is_elem_hp[i]){
+                    hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
+#ifdef DEBUG_MODE
+                    std::cout << "R Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+#endif
+                    ++hp_elem_cntr;
+                }
+                else if(local_scs->is_elem_lp[i]){
+                    lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
+#ifdef DEBUG_MODE
+                    std::cout << "R Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
+#endif
+                    ++lp_elem_cntr;
+                }
+                else{
+                    printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
+                }
+            }
+            else{
+                if(local_scs->is_elem_hp[i]){
+                    // hp_max_local_col = elem_col ? elem_col > hp_max_local_col : hp_max_local_col;
+                    hp_local_scs->col_idxs[hp_elem_cntr] -= work_sharing_arr[my_rank];
+#ifdef DEBUG_MODE
+                    std::cout << "Local hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+#endif
+                    ++hp_elem_cntr;
+                }
+                else if(local_scs->is_elem_lp[i]){
+                    // lp_max_local_col = elem_col ? elem_col > lp_max_local_col : lp_max_local_col;
+                    lp_local_scs->col_idxs[lp_elem_cntr] -= work_sharing_arr[my_rank];
+                    // ++lp_local_elem_count; // <- this isnt correct, because you run over remote elements
+#ifdef DEBUG_MODE
+                    std::cout << "Local lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
+#endif
+                    ++lp_elem_cntr;
+                }
+                else{
+                    printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
+                }
+            }
+        }
+        
+        // Sanity check
+        if(hp_elem_cntr != hp_local_scs->n_elements){
+            printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr != hp_local_scs->n_elements.\n", my_rank);exit(1);
+        }
+        if(lp_elem_cntr != lp_local_scs->n_elements){
+            printf("collect_local_needed_heri ERROR: rank %i, lp_elem_cntr != lp_local_scs->n_elements.\n", my_rank);exit(1);
+        }
+        if (hp_elem_cntr + lp_elem_cntr != local_scs->n_elements){
+            printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr + lp_elem_cntr != local_scs->n_elements.\n", my_rank);exit(1);
+        }
+
     }
 
     // Construct recv_counts_cumsum from lhs/rhs_cumsum_heri_counts
@@ -474,9 +570,9 @@ void collect_local_needed_heri(
 */
 template <typename VT, typename IT>
 void seg_work_sharing_arr(
+    Config *config,
     MtxData<VT, IT> *total_mtx,
     IT *work_sharing_arr,
-    const std::string *seg_method,
     const IT comm_size,
     int my_rank,
     int* metis_part = NULL,
@@ -484,6 +580,7 @@ void seg_work_sharing_arr(
     int* metis_inv_perm = NULL)
 {
     work_sharing_arr[0] = 0;
+    const std::string seg_method = config->seg_method;
 
     IT segment;
 
@@ -492,7 +589,7 @@ void seg_work_sharing_arr(
         if(my_rank == 0){printf("seg_work_sharing_arr ERROR: total_mtx->n_rows < comm_size.\n");exit(1);}
     }
 
-    if ("seg-rows" == *seg_method)
+    if (seg_method == "seg-rows")
     {
         IT rowsPerProc;
 
@@ -512,7 +609,7 @@ void seg_work_sharing_arr(
             }
         }
     }
-    else if ("seg-nnz" == *seg_method)
+    else if (seg_method == "seg-nnz")
     {
         IT nnzPerProc; //, remainderNnz;
 
@@ -540,7 +637,7 @@ void seg_work_sharing_arr(
         // (takes care of remainder rows)
         work_sharing_arr[comm_size] = total_mtx->I[total_mtx->nnz - 1] + 1;
     }
-    else if (*seg_method == "seg-metis")
+    else if (seg_method == "seg-metis")
     {
 #ifdef USE_METIS
         // Create global scs format
@@ -549,7 +646,7 @@ void seg_work_sharing_arr(
 #endif
 
         ScsData<VT, IT> global_crs;
-        convert_to_scs(total_mtx, 1, 1, &global_crs);
+        convert_to_scs(config->bucket_size, total_mtx, 1, 1, &global_crs);
 
         //partition using METIS
         int ncon = 1;
@@ -786,11 +883,9 @@ void seperate_lp_from_hp(
     lp_local_mtx->nnz = lp_elem_ctr;
 
     if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
-        if(my_rank == 0){
-            printf("seperate_lp_from_hp ERROR: %i Elements have been lost when separating \
-            into lp and hp structs.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr));
-            exit(1);
-        }
+        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when seperating \
+        into lp and hp structs on rank: %i.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr), my_rank);
+        exit(1);
     }
 }
 
@@ -840,10 +935,10 @@ void mpi_init_local_structs(
         // Segment global row pointers, and place into an array
         if(config->seg_method == "seg-metis"){
             // total_mtx is coming out of this function (symmetrically) permuted
-            seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, &(config->seg_method), comm_size, my_rank, metis_part, metis_perm, metis_inv_perm);
+            seg_work_sharing_arr<VT, IT>(config, total_mtx, work_sharing_arr, comm_size, my_rank, metis_part, metis_perm, metis_inv_perm);
         }
         else{
-            seg_work_sharing_arr<VT, IT>(total_mtx, work_sharing_arr, &(config->seg_method), comm_size, my_rank, NULL, NULL, NULL);
+            seg_work_sharing_arr<VT, IT>(config, total_mtx, work_sharing_arr, comm_size, my_rank, NULL, NULL, NULL);
         }
     }
 
@@ -887,7 +982,7 @@ void mpi_init_local_structs(
             {
                 send_bk = {
                     local_row_cnt,
-                    total_mtx->n_cols, // TODO: Actually constant, do dont need to send to each proc
+                    total_mtx->n_cols, // TODO: Actually constant, so dont need to send to each proc
                     static_cast<long>( local_vals.size() ),
                     static_cast<bool>( config->sort_matrix ),
                     0};
@@ -939,7 +1034,7 @@ void mpi_init_local_structs(
         std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
 
         local_mtx.n_rows = recv_bk.n_rows;
-        local_mtx.n_cols = recv_bk.n_cols;
+        local_mtx.n_cols = recv_bk.n_cols; // TODO: hey, is this where the col_index overflow bug comes from?
         local_mtx.nnz = recv_bk.nnz;
         local_mtx.is_sorted = recv_bk.is_sorted;
         local_mtx.is_symmetric = recv_bk.is_symmetric;
@@ -993,8 +1088,19 @@ void mpi_init_local_structs(
         seperate_lp_from_hp<VT,IT>(config->bucket_size, &local_mtx, &hp_local_mtx, &lp_local_mtx, my_rank);
 
         // Higher and Lower precision scs is only populated if we are computing in mixed precision
-        convert_to_scs<double, IT>(&hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
-        convert_to_scs<float, IT>(&lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);  
+        convert_to_scs<double, IT>(config->bucket_size, &hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
+        convert_to_scs<float, IT>(config->bucket_size, &lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
+        // std::cout << "hp_local_scs->nnz = " << hp_local_scs->nnz << std::endl;
+        // std::cout << "lp_local_scs->nnz = " << lp_local_scs->nnz << std::endl;
+        // ST n_hp_scs_elements = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
+        //                 + hp_local_scs->chunk_lengths[hp_local_scs->n_chunks - 1] * hp_local_scs->C;
+        // if(my_rank == 1){
+        //     for(int i = 0; i < n_hp_scs_elements; ++i){
+        //         std::cout << "hp_local_scs->col_idxs[i] = " << (hp_local_scs->col_idxs).data()[i] << std::endl;
+        //     }
+        // }
+        // MPI_Barrier(MPI_COMM_WORLD);
+        // exit(0);
 
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");
@@ -1007,12 +1113,17 @@ void mpi_init_local_structs(
         exit(0);
 #endif
     }
-    else{
+    // else{
         // NOTE: ALL one-precision kernels pass through here
         // convert local_mtx to local_scs
-        convert_to_scs<VT, IT>(&local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
-        // local_scs->print();
+        // TODO: this is always done, so that I can use the communiation information gathered from it.
+        convert_to_scs<VT, IT>(config->bucket_size, &local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
 
+        ST n_scs_elements = local_scs->chunk_ptrs[local_scs->n_chunks - 1]
+                        + local_scs->chunk_lengths[local_scs->n_chunks - 1] * local_scs->C;
+
+        
+    if (config->value_type != "mp"){
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");
         std::string file_out_name;
@@ -1022,6 +1133,7 @@ void mpi_init_local_structs(
         exit(0);
 #endif
     }
+    // }
 
     // TODO: return to perm/sell-c-sigma today
     // permute columns with additional routine
@@ -1045,7 +1157,28 @@ void mpi_init_local_structs(
     std::vector<IT> recv_counts_cumsum(comm_size + 1, 0);
     std::vector<IT> send_counts_cumsum(comm_size + 1, 0);
 
-    collect_local_needed_heri<VT, IT>(&communication_recv_idxs, &recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
+    std::cout << "hp_local_scs->nnz = " << hp_local_scs->nnz << std::endl;
+    std::cout << "lp_local_scs->nnz = " << lp_local_scs->nnz << std::endl;
+
+    collect_local_needed_heri<VT, IT>(config->value_type, &communication_recv_idxs, &recv_counts_cumsum, local_scs, hp_local_scs, lp_local_scs, work_sharing_arr, my_rank, comm_size);
+
+    // ST n_hp_scs_elements = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
+    //                 + hp_local_scs->chunk_lengths[hp_local_scs->n_chunks - 1] * hp_local_scs->C;
+    // if(my_rank == 1){
+    //     for(int i = 0; i < n_hp_scs_elements; ++i){
+    //         std::cout << "hp_local_scs->col_idxs[i] = " << (hp_local_scs->col_idxs).data()[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
+    // if(my_rank == 1){
+    //     for(int i = 0; i < n_scs_elements; ++i){
+    //         std::cout << "local_scs->col_idxs[i] = " << (local_scs->col_idxs).data()[i] << std::endl;
+    //     }
+    // }
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 
     organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
 
@@ -1058,9 +1191,12 @@ void mpi_init_local_structs(
     std::vector<IT> non_zero_receivers;
     std::vector<IT> non_zero_senders;
 
+    // std::cout << "on rank: " << my_rank << "communication_send_idxs.size() = " << communication_send_idxs.size() << std::endl;
+    // if(my_rank == 0){std::cout << "communication_send_idxs[1][0] = "  << communication_send_idxs[1][0] << std::endl;}
     for(int i = 0; i < communication_send_idxs.size(); ++i){
         if(communication_send_idxs[i].size() > 0){
            non_zero_receivers.push_back(i); 
+            std::cout << "on rank: " << my_rank << "non_zero_receivers pushed back = " << i << std::endl;
         }
     }
     for(int i = 0; i < communication_recv_idxs.size(); ++i){

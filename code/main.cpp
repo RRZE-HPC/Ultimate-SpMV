@@ -77,26 +77,81 @@ void bench_spmv(
     // std::vector<VT> local_x_permuted(local_x->size(), 0);
     // apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
-    // Encode kernel args into struct
-    KernelArgs<VT, IT> *kernel_args_encoded = new KernelArgs<VT, IT>;
-    kernel_args_encoded->config = config;
-    kernel_args_encoded->C = local_scs->C;
-    kernel_args_encoded->n_chunks = local_scs->n_chunks;
-    kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
-    kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
-    kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
-    kernel_args_encoded->values = local_scs->values.data();
-    kernel_args_encoded->local_x = &(*local_x)[0];
-    kernel_args_encoded->local_y = &(*local_y)[0];
-    void *kernel_args_void_ptr = (void*) kernel_args_encoded;
+    void *comm_args_void_ptr;
+    void *kernel_args_void_ptr;
+
+    OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded = new OnePrecKernelArgs<VT, IT>;
+    TwoPrecKernelArgs<IT> *two_prec_kernel_args_encoded = new TwoPrecKernelArgs<IT>;
+
+    if(config->value_type == "mp"){
+        // Encode kernel args into struct
+        two_prec_kernel_args_encoded->num_rows = hp_local_scs->n_chunks; // common (for now)
+
+        two_prec_kernel_args_encoded->hp_C = hp_local_scs->C;
+        two_prec_kernel_args_encoded->hp_row_ptrs = hp_local_scs->chunk_ptrs.data(); // Just calling "row" for now
+        two_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
+        two_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
+        two_prec_kernel_args_encoded->hp_values = hp_local_scs->values.data();
+        two_prec_kernel_args_encoded->hp_local_x = &(*hp_local_x)[0];
+        two_prec_kernel_args_encoded->hp_local_y = &(*hp_local_y)[0];
+        two_prec_kernel_args_encoded->lp_C = lp_local_scs->C;
+        two_prec_kernel_args_encoded->lp_row_ptrs = lp_local_scs->chunk_ptrs.data(); // Just calling "row" for now
+        two_prec_kernel_args_encoded->lp_chunk_lengths = lp_local_scs->chunk_lengths.data();
+        two_prec_kernel_args_encoded->lp_col_idxs = lp_local_scs->col_idxs.data();
+        two_prec_kernel_args_encoded->lp_values = lp_local_scs->values.data();
+        two_prec_kernel_args_encoded->lp_local_x = &(*lp_local_x)[0];
+        two_prec_kernel_args_encoded->lp_local_y = &(*lp_local_y)[0];
+        kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
+
+    }
+    else{   
+        // Encode kernel args into struct
+        one_prec_kernel_args_encoded->C = local_scs->C;
+        one_prec_kernel_args_encoded->n_chunks = local_scs->n_chunks;
+        one_prec_kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
+        one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
+        one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
+        one_prec_kernel_args_encoded->values = local_scs->values.data();
+        one_prec_kernel_args_encoded->local_x = &(*local_x)[0];
+        one_prec_kernel_args_encoded->local_y = &(*local_y)[0];
+        kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
+    }
 
     // Encode comm args into struct
     CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
-    comm_args_encoded->config = config;
     comm_args_encoded->local_context = local_context;
-    comm_args_encoded->local_x = local_x;
     comm_args_encoded->to_send_elems = to_send_elems;
     comm_args_encoded->work_sharing_arr = work_sharing_arr;
+
+    if(config->value_type != "mp"){
+        // Just a convenience for interop with mixed precision. But a bit wasteful.
+        for(int i = 0; i < local_x->size(); ++i){
+            (*hp_local_x)[i] = static_cast<double>((*local_x)[i]);
+            (*lp_local_x)[i] = static_cast<float>((*local_x)[i]);
+        }
+    }
+
+    // if(my_rank == 1){
+    //     std::cout << "two_prec_kernel_args_encoded->hp_local_x" << std::endl;
+    //     for(int i = 0; i < local_x->size(); ++i){
+    //         std::cout << two_prec_kernel_args_encoded->hp_local_x[i] << std::endl;
+    //     }
+    // }
+
+    comm_args_encoded->hp_comm_x = &(*hp_local_x)[0];
+    comm_args_encoded->lp_comm_x = &(*lp_local_x)[0];
+
+    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->hp_comm_x[0] = " << comm_args_encoded->hp_comm_x[0] << std::endl;
+    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->hp_comm_x[1] = " << comm_args_encoded->hp_comm_x[1] << std::endl;
+    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->hp_comm_x[2] = " << comm_args_encoded->hp_comm_x[2] << std::endl;
+
+    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->lp_comm_x[0] = " << comm_args_encoded->lp_comm_x[0] << std::endl;
+    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->lp_comm_x[1] = " << comm_args_encoded->lp_comm_x[1] << std::endl;
+    // std::cout << "on rank: " << my_rank << ", outside scope comm_args_encoded->lp_comm_x[2] = " << comm_args_encoded->lp_comm_x[2] << std::endl;
+
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
+
     // comm_args_encoded->perm = local_scs->race_inv_perm; // <- TODO:
     comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
     comm_args_encoded->nzs_size = &nzs_size;
@@ -105,10 +160,17 @@ void bench_spmv(
     comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
     comm_args_encoded->my_rank = &my_rank;
     comm_args_encoded->comm_size = &comm_size;
-    void *comm_args_void_ptr = (void*) comm_args_encoded;
+    comm_args_void_ptr = (void*) comm_args_encoded;
 
     // Pass args to construct spmv_kernel object
-    SpmvKernel<VT, IT> spmv_kernel(kernel_args_void_ptr, comm_args_void_ptr);
+    SpmvKernel<VT, IT> spmv_kernel(config, kernel_args_void_ptr, comm_args_void_ptr);
+
+    // if(my_rank == 1){
+    //     std::cout << "out of-loop spmv_kernel->hp_local_x" << std::endl;
+    //     for(int i = 0; i < local_x->size(); ++i){
+    //         std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+    //     }
+    // }
 
     // Enter main COMM-SPMVM-SWAP loop, bench mode
     if(config->mode == 'b'){
@@ -264,62 +326,102 @@ void bench_spmv(
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMVM-SWAP loop, solve mode
         std::vector<VT> sorted_local_y(local_y->size(), 0);
-        // std::vector<double> sorted_hp_local_y(local_y->size(), 0);
-        // std::vector<float> sorted_lp_local_y(local_y->size(), 0);
+
+        // Only relevant for mixed precision
+        std::vector<double> sorted_hp_local_y(local_y->size(), 0);
+        std::vector<float> sorted_lp_local_y(local_y->size(), 0);
 
         for (int i = 0; i < config->n_repetitions; ++i)
         {
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
+
+            // if(my_rank == 1){
+            //     std::cout << "in-loop spmv_kernel->hp_local_x" << std::endl;
+            //     for(int i = 0; i < local_x->size(); ++i){
+            //         std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+            //     }
+            // }
+            
+            if(config->value_type == "mp"){ // <- TODO: fix this problem
+                spmv_kernel.distribute_halos();
+            }
+
+            // if(my_rank == 1){
+            //     std::cout << "after distribute halos spmv_kernel->hp_local_x" << std::endl;
+            //     for(int i = 0; i < local_x->size(); ++i){
+            //         std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+            //     }
+            // }
+            if(my_rank == 0){
+                std::cout << "before_kernel spmv_kernel->hp_local_x" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+                }
+                std::cout << "before_kernel spmv_kernel->hp_local_y" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+                }
+            }
+
             spmv_kernel.execute_spmv();
 
-            // TODO: reintroduce mixed precision
-            // else if (config->value_type == "mp"){
-            //     spmv_omp_csr_mp<IT>(
-            //         hp_local_scs->n_chunks, //n rows same for both hp and lp 
-            //         hp_local_scs->C,
-            //         hp_local_scs->chunk_ptrs.data(),
-            //         hp_local_scs->chunk_lengths.data(), 
-            //         hp_local_scs->col_idxs.data(),
-            //         hp_local_scs->values.data(), 
-            //         &(*hp_local_x)[0], 
-            //         &(*hp_local_y)[0], 
-            //         lp_local_scs->C,
-            //         lp_local_scs->chunk_ptrs.data(),
-            //         lp_local_scs->chunk_lengths.data(), 
-            //         lp_local_scs->col_idxs.data(),
-            //         lp_local_scs->values.data(), 
-            //         &(*lp_local_x)[0], 
-            //         &(*lp_local_y)[0]
-            //     );
-                
-            //     // Need to copy data which was accumulated in hp, into lp for swapping with lp_x
-            //     // purely implmenetation dependent, and shouldn't be considered in benchmarking
-
-            //     for(int i = 0; i < hp_local_y->size(); ++i){
-            //         (*lp_local_y)[i] = static_cast<float>((*hp_local_y)[i]);
+            // if(my_rank == 1){
+            //     std::cout << "after_kernel spmv_kernel->hp_local_x" << std::endl;
+            //     for(int i = 0; i < local_x->size(); ++i){
+            //         std::cout << spmv_kernel.hp_local_x[i] << std::endl;
             //     }
+            // }
 
-                // apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(*hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
-            //     apply_permutation<float, IT>(&(sorted_lp_local_y)[0], &(*lp_local_y)[0], &(lp_local_scs->old_to_new_idx)[0], lp_local_scs->n_rows);
+            // Manually verify result
+            // if(my_rank == 1){
+            //     for(int i = 0; i < local_y->size(); ++i){
+            //         std::cout << "element[" << i << "] = " << spmv_kernel.hp_local_y[i] << std::endl;
+            //     }
+            // }
+            if(config->value_type == "mp"){
+                apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
+                apply_permutation<float, IT>(&(sorted_lp_local_y)[0], &(spmv_kernel.lp_local_y)[0], &(lp_local_scs->old_to_new_idx)[0], lp_local_scs->n_rows);
+                // spmv_kernel.swap_with_hp_x(&(sorted_hp_local_y)[0]);
+                // spmv_kernel.swap_with_lp_x(&(sorted_lp_local_y)[0]);
 
-            //     std::swap(*hp_local_x, sorted_hp_local_y);
-            //     std::swap(*lp_local_x, sorted_lp_local_y);
-
-            // TODO: bandaid. This is the per-rep row-wise permutation which should not be necessary. But for SCS it might be, for repeated spmvs
-            apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-            spmv_kernel.swap_with_x(&(sorted_local_y)[0]);
-
+                // TODO: bandaid
+                for(int i = 0; i < local_y->size(); ++i){
+                    (spmv_kernel.hp_local_x)[i] = sorted_hp_local_y[i];
+                }
+                
+                for(int i = 0; i < local_y->size(); ++i){
+                    (spmv_kernel.lp_local_x)[i] = sorted_lp_local_y[i];
+                }
+            }
+            else{
+                // TODO: bandaid. This is the per-rep row-wise permutation which should not be necessary. But for SCS it might be, for repeated spmvs
+                apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+                spmv_kernel.swap_with_x(&(sorted_local_y)[0]);
+            }
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
+
+            if(my_rank == 0){
+                std::cout << "after_kernel and swap spmv_kernel->hp_local_x" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+                }
+                std::cout << "after_kernel and swap spmv_kernel->hp_local_y" << std::endl;
+                for(int i = 0; i < local_x->size(); ++i){
+                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+                }
+            }
         }
 
         // Give sorted results to local_y for Results object gathering and output
+        // TODO: Bandaid, since swapping doesn't work here for some reason
         if(config->value_type == "mp"){
-            ;
+            for(int i = 0; i < local_y->size(); ++i){
+                (*local_y)[i] = (spmv_kernel.hp_local_x)[i];
+            }
         }
         else{
-            // TODO: Bandaid, since swapping doesn't work here for some reason
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = (spmv_kernel.local_x)[i];
             }
@@ -362,15 +464,22 @@ void bench_spmv(
     r->C               = local_scs->C;
     r->sigma           = local_scs->sigma;
 
+    std::cout << "local_context->total_nnz = " << local_context->total_nnz << std::endl;
+    std::cout << "hp_local_scs->nnz = " << hp_local_scs->nnz << std::endl;
+    std::cout << "lp_local_scs->nnz = " << lp_local_scs->nnz << std::endl;
+
     if(config->value_type == "mp"){
-        r->hp_nnz_percent = hp_local_scs->nnz / local_context->total_nnz;
-        r->lp_nnz_percent = lp_local_scs->nnz / local_context->total_nnz;
+        r->hp_nnz_percent = ((double)hp_local_scs->nnz / local_scs->nnz) * 100.0;
+        std::cout << "r->hp_nnz_percent = " << r->hp_nnz_percent << std::endl;
+        r->lp_nnz_percent = ((double)lp_local_scs->nnz / local_scs->nnz) * 100.0;
+        std::cout << "r->lp_nnz_percent = " << r->lp_nnz_percent << std::endl;
     }
 
     delete[] recv_requests;
     delete[] send_requests;
     delete[] comm_args_encoded;
-    delete[] kernel_args_encoded;
+    delete[] one_prec_kernel_args_encoded;
+    delete[] two_prec_kernel_args_encoded;
 }
 
 /**
@@ -554,7 +663,7 @@ void compute_result(
     SimpleDenseMatrix<VT, IT> local_x(&local_context);
 
     // Must be declared, but only used for mixed precision case
-    // TODO: not efficient for storage
+    // TODO: not efficient for storage, but used later for mp interop
     SimpleDenseMatrix<double, IT> hp_local_x(&local_context);
     SimpleDenseMatrix<float, IT> lp_local_x(&local_context);
 
@@ -763,6 +872,7 @@ int main(int argc, char *argv[]){
     }
     else if (config.value_type == "mp")
     // Currently, everything is still read and results are written as doubles.
+    // i.e. VT = double, IT = int.
     {
         MtxData<double, int> total_mtx;
         Result<double, int> r;
