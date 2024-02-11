@@ -121,6 +121,8 @@ struct CommArgs
 {
     Config *config;
     ContextData<IT> *local_context;
+    const IT *perm;
+    VT *comm_x;
     double *hp_comm_x;
     float *lp_comm_x;
     VT **to_send_elems;
@@ -250,6 +252,7 @@ class SpmvKernel {
         // Decode comm args
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
         ContextData<IT> *local_context = comm_args_decoded->local_context;
+        const IT *perm = comm_args_decoded->perm;
         VT **to_send_elems = comm_args_decoded->to_send_elems;
         const IT *work_sharing_arr = comm_args_decoded->work_sharing_arr;
         // const IT *perm = comm_args_decoded->perm; // TODO
@@ -264,12 +267,14 @@ class SpmvKernel {
     public:
         VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
         VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
+        VT * RESTRICT comm_x = comm_args_decoded->comm_x;
         double * RESTRICT hp_local_x = two_prec_kernel_args_decoded->hp_local_x;
         double * RESTRICT hp_local_y = two_prec_kernel_args_decoded->hp_local_y;
+        double * RESTRICT hp_comm_x = comm_args_decoded->hp_comm_x;
         float * RESTRICT lp_local_x = two_prec_kernel_args_decoded->lp_local_x;
         float * RESTRICT lp_local_y = two_prec_kernel_args_decoded->lp_local_y;
-        double * RESTRICT hp_comm_x = comm_args_decoded->hp_comm_x;
         float * RESTRICT lp_comm_x = comm_args_decoded->lp_comm_x;
+        
 
         SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
             if(config->value_type == "mp"){
@@ -321,19 +326,18 @@ class SpmvKernel {
             int outgoing_buf_size, incoming_buf_size;
             int receiving_proc, sending_proc;
 
-//             // TODO: DRY
-            if (typeid(VT) == typeid(float))
+            // First, post receives
+            for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
             {
-                for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
-                {
-                    sending_proc = local_context->non_zero_senders[from_proc_idx];
-                    incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
+                sending_proc = local_context->non_zero_senders[from_proc_idx];
+                incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
 #ifdef DEBUG_MODE
-                    std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 #endif
-
+                if (typeid(VT) == typeid(float))
+                {
                     MPI_Irecv(
-                        &(lp_comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        &(comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                         incoming_buf_size,
                         MPI_FLOAT,
                         sending_proc,
@@ -342,33 +346,42 @@ class SpmvKernel {
                         &recv_requests[from_proc_idx]
                     );
                 }
-                for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
+                else if(typeid(VT) == typeid(double)){
+                    MPI_Irecv(
+                        &(comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        incoming_buf_size,
+                        MPI_DOUBLE,
+                        sending_proc,
+                        (local_context->recv_tags[sending_proc])[my_rank],
+                        MPI_COMM_WORLD,
+                        &recv_requests[from_proc_idx]
+                    );
+                }
+            }
+
+            // Second, fulfill those with sends
+            for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
+            {
+                receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+                outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
+
+#ifdef DEBUG_MODE
+                if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
+                    std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
+                    exit(1);
+                }
+#endif
+
+                // Move non-contiguous data to a contiguous buffer for communication
+                #pragma omp parallel for if(config->par_pack)   
+                for(int i = 0; i < outgoing_buf_size; ++i)
+                    (to_send_elems[to_proc_idx])[i] = comm_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
+                
+#ifdef DEBUG_MODE
+                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
+#endif
+                if (typeid(VT) == typeid(float))
                 {
-                    receiving_proc = local_context->non_zero_receivers[to_proc_idx];
-                    outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
-
-#ifdef DEBUG_MODE
-                    if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
-                        std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
-                        exit(1);
-                    }
-#endif
-
-                    // Move non-contiguous data to a contiguous buffer for communication
-                    #pragma omp parallel for if(config->par_pack)   
-                    for(int i = 0; i < outgoing_buf_size; ++i){
-                        // (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
-                        // std::cout << "on rank: " << my_rank << ", receiving_proc = " << receiving_proc << std::endl;
-
-                        // std::cout << "on rank: " << my_rank << ", local_context->comm_send_idxs[receiving_proc][i] = " << local_context->comm_send_idxs[receiving_proc][i] << std::endl;
-
-                        // std::cout << "on rank: " << my_rank << ", lp_local_x[local_context->comm_send_idxs[receiving_proc][i]] = " << lp_comm_x[local_context->comm_send_idxs[receiving_proc][i]] << std::endl;
-                        (to_send_elems[to_proc_idx])[i] = lp_comm_x[local_context->comm_send_idxs[receiving_proc][i]];
-
-                    }
-#ifdef DEBUG_MODE
-                    std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
-#endif
                     MPI_Isend(
                         &(to_send_elems[to_proc_idx])[0],
                         outgoing_buf_size,
@@ -379,61 +392,7 @@ class SpmvKernel {
                         &send_requests[to_proc_idx]
                     );
                 }
-            }
-            // Mixed precision will also enter here
-            else if (typeid(VT) == typeid(double)){
-
-                for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
-                {
-                    sending_proc = local_context->non_zero_senders[from_proc_idx];
-                    incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
-
-#ifdef DEBUG_MODE
-                    std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-#endif
-                    MPI_Irecv(
-                        &(hp_comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
-                        incoming_buf_size,
-                        MPI_DOUBLE,
-                        sending_proc,
-                        (local_context->recv_tags[sending_proc])[my_rank],
-                        MPI_COMM_WORLD,
-                        &recv_requests[from_proc_idx]
-                    );
-                }
-
-                // TODO: more performant varients?
-                // for (int to_proc = 0; to_proc < comm_size; ++to_proc)
-                // for(auto to_proc : local_context->non_zero_receivers)
-                for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
-                {
-                    receiving_proc = local_context->non_zero_receivers[to_proc_idx];
-                    outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
-
-#ifdef DEBUG_MODE
-                    if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
-                        std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
-                        exit(1);
-                    }
-#endif
-
-                    // Move non-contiguous data to a contiguous buffer for communication
-                    #pragma omp parallel for if(config->par_pack)
-                    for(int i = 0; i < outgoing_buf_size; ++i){
-                        if(my_rank == 0){
-                            // std::cout << "on rank: " << my_rank << ", receiving_proc = " << receiving_proc << std::endl;
-                            // std::cout << "on rank: " << my_rank << ", local_context->comm_send_idxs[receiving_proc][i] = " << (local_context->comm_send_idxs[receiving_proc])[i] << std::endl;
-                            // std::cout << "on rank: " << my_rank << ", hp_local_x[local_context->comm_send_idxs[receiving_proc][i]] = " << hp_comm_x[local_context->comm_send_idxs[receiving_proc][i]] << std::endl;
-                        }
-
-                        (to_send_elems[to_proc_idx])[i] = hp_comm_x[local_context->comm_send_idxs[receiving_proc][i]];
-                        // std::cout << "I'm proc: " << my_rank << ", sending the element: " << (to_send_elems[to_proc_idx])[i] << std::endl;
-
-                    }
-#ifdef DEBUG_MODE
-                    std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
-#endif
-
+                else if(typeid(VT) == typeid(double)){
                     MPI_Isend(
                         &(to_send_elems[to_proc_idx])[0],
                         outgoing_buf_size,
@@ -448,6 +407,75 @@ class SpmvKernel {
         }
 
         inline void finalize_halo_exchange(void){
+            MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
+            MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
+        }
+
+        // TODO: make into two communicators, hp and lp
+        // Still only communicates with hp_x info
+        inline void init_mp_halo_exchange(void){
+            int outgoing_buf_size, incoming_buf_size;
+            int receiving_proc, sending_proc;
+
+            for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
+            {
+                sending_proc = local_context->non_zero_senders[from_proc_idx];
+                incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
+
+#ifdef DEBUG_MODE
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+#endif
+                MPI_Irecv(
+                    &(hp_comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                    incoming_buf_size,
+                    MPI_DOUBLE,
+                    sending_proc,
+                    (local_context->recv_tags[sending_proc])[my_rank],
+                    MPI_COMM_WORLD,
+                    &recv_requests[from_proc_idx]
+                );
+            }
+
+            // TODO: more performant varients?
+            // for (int to_proc = 0; to_proc < comm_size; ++to_proc)
+            // for(auto to_proc : local_context->non_zero_receivers)
+            for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
+            {
+                receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+                outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
+
+#ifdef DEBUG_MODE
+                if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
+                    std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
+                    exit(1);
+                }
+#endif
+
+                // Move non-contiguous data to a contiguous buffer for communication
+                #pragma omp parallel for if(config->par_pack)
+                for(int i = 0; i < outgoing_buf_size; ++i){
+                    (to_send_elems[to_proc_idx])[i] = hp_comm_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
+#ifdef DEBUG_MODE
+                    if(my_rank == 1)
+                        std::cout << "I'm proc: " << my_rank << ", sending the element: " << (to_send_elems[to_proc_idx])[i] << std::endl;
+#endif
+                }
+#ifdef DEBUG_MODE
+                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
+#endif
+                MPI_Isend(
+                    &(to_send_elems[to_proc_idx])[0],
+                    outgoing_buf_size,
+                    MPI_DOUBLE,
+                    receiving_proc,
+                    (local_context->send_tags[my_rank])[receiving_proc],
+                    MPI_COMM_WORLD,
+                    &send_requests[to_proc_idx]
+                );
+            }
+        }
+
+        inline void finalize_mp_halo_exchange(void){
             MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
         }

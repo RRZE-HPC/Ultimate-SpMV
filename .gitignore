@@ -11,6 +11,7 @@ valgrind_output.txt
 spmv_mkl_compare.txt
 log.txt
 code/scripts/results/
+error.log
 
 spmv_mkl_compare_sp.txt
 spmv_mkl_compare_dp.txt

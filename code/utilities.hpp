@@ -1230,6 +1230,38 @@ void apply_permutation(
     // printf("\n");
 }
 
+// TODO: hmm. Don't know if this is right
+template<typename VT, typename IT>
+void permute_scs_cols(
+    ScsData<VT, IT> *scs,
+    MtxData<VT, IT> *local_mtx
+){
+    ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
+                    + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
+
+    // std::vector<IT> col_idx_in_row(scs->n_rows_padded);
+
+    V<IT, IT> col_perm_idxs(n_scs_elements);
+
+    // TODO: parallelize
+
+    for (ST i = 0; i < n_scs_elements; ++i) {
+        if(scs->col_idxs[i] < scs->n_rows){
+            // permuted version:
+            col_perm_idxs[i] =  scs->old_to_new_idx[scs->col_idxs[i]];
+        }
+        else{
+            col_perm_idxs[i] = scs->col_idxs[i];
+        }
+    }
+
+    // TODO (?): make col_perm_idx ptr, allocate on heap: parallelize
+    for (ST i = 0; i < n_scs_elements; ++i) {
+        scs->col_idxs[i] = col_perm_idxs[i];
+    }
+
+}
+
 template <typename T> inline void sortPerm(T *arr, int *perm, int range_lo, int range_hi, bool rev=false)
 {
     if(rev == false) {

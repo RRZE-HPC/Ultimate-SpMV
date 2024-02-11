@@ -74,14 +74,24 @@ void bench_spmv(
     MPI_Request *send_requests = new MPI_Request[local_context->non_zero_receivers.size()];
 
     // TODO: Permute x, since local matrix permuted symmetrically
-    // std::vector<VT> local_x_permuted(local_x->size(), 0);
-    // apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    std::vector<VT> local_x_permuted(local_x->size(), 0);
+    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+
+    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+
+    std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
+    apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+
+    std::vector<float> lp_local_x_permuted(local_x->size(), 0);
+    apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    // ^not to sure about new_to_old, TODO:verify this
 
     void *comm_args_void_ptr;
     void *kernel_args_void_ptr;
 
     OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded = new OnePrecKernelArgs<VT, IT>;
     TwoPrecKernelArgs<IT> *two_prec_kernel_args_encoded = new TwoPrecKernelArgs<IT>;
+    CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
 
     if(config->value_type == "mp"){
         // Encode kernel args into struct
@@ -92,17 +102,21 @@ void bench_spmv(
         two_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
         two_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
         two_prec_kernel_args_encoded->hp_values = hp_local_scs->values.data();
-        two_prec_kernel_args_encoded->hp_local_x = &(*hp_local_x)[0];
+        // two_prec_kernel_args_encoded->hp_local_x = &(*hp_local_x)[0];
+        two_prec_kernel_args_encoded->hp_local_x = &(hp_local_x_permuted)[0];
         two_prec_kernel_args_encoded->hp_local_y = &(*hp_local_y)[0];
         two_prec_kernel_args_encoded->lp_C = lp_local_scs->C;
         two_prec_kernel_args_encoded->lp_row_ptrs = lp_local_scs->chunk_ptrs.data(); // Just calling "row" for now
         two_prec_kernel_args_encoded->lp_chunk_lengths = lp_local_scs->chunk_lengths.data();
         two_prec_kernel_args_encoded->lp_col_idxs = lp_local_scs->col_idxs.data();
         two_prec_kernel_args_encoded->lp_values = lp_local_scs->values.data();
-        two_prec_kernel_args_encoded->lp_local_x = &(*lp_local_x)[0];
+        // two_prec_kernel_args_encoded->lp_local_x = &(*lp_local_x)[0];
+        two_prec_kernel_args_encoded->lp_local_x = &(lp_local_x_permuted)[0];
         two_prec_kernel_args_encoded->lp_local_y = &(*lp_local_y)[0];
         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
 
+        comm_args_encoded->hp_comm_x = two_prec_kernel_args_encoded->hp_local_x;
+        comm_args_encoded->lp_comm_x = two_prec_kernel_args_encoded->lp_local_x;
     }
     else{   
         // Encode kernel args into struct
@@ -112,29 +126,40 @@ void bench_spmv(
         one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
         one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
         one_prec_kernel_args_encoded->values = local_scs->values.data();
-        one_prec_kernel_args_encoded->local_x = &(*local_x)[0];
+        // one_prec_kernel_args_encoded->local_x = &(*local_x)[0];
+        one_prec_kernel_args_encoded->local_x = &(local_x_permuted)[0];
         one_prec_kernel_args_encoded->local_y = &(*local_y)[0];
         kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
+
+        // Assign same local_x pointer to both
+        comm_args_encoded->comm_x = one_prec_kernel_args_encoded->local_x;
     }
 
     // Encode comm args into struct
-    CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
+    
     comm_args_encoded->local_context = local_context;
     comm_args_encoded->to_send_elems = to_send_elems;
     comm_args_encoded->work_sharing_arr = work_sharing_arr;
 
-    if(config->value_type != "mp"){
-        // Just a convenience for interop with mixed precision. But a bit wasteful.
-        for(int i = 0; i < local_x->size(); ++i){
-            (*hp_local_x)[i] = static_cast<double>((*local_x)[i]);
-            (*lp_local_x)[i] = static_cast<float>((*local_x)[i]);
-        }
-    }
 
-    comm_args_encoded->hp_comm_x = &(*hp_local_x)[0];
-    comm_args_encoded->lp_comm_x = &(*lp_local_x)[0];
 
-    // comm_args_encoded->perm = local_scs->race_inv_perm; // <- TODO:
+    // either assign pointers, or rethink
+
+
+
+    // if(config->value_type != "mp"){
+    //     // Just a convenience for interop with mixed precision. But a bit wasteful.
+    //     for(int i = 0; i < local_x->size(); ++i){
+    //         (*hp_local_x)[i] = static_cast<double>((*local_x)[i]);
+    //         (*lp_local_x)[i] = static_cast<float>((*local_x)[i]);
+    //     }
+    // }
+
+    // comm_args_encoded->hp_comm_x = &(*hp_local_x)[0];
+    // comm_args_encoded->lp_comm_x = &(*lp_local_x)[0];
+
+
+    comm_args_encoded->perm = local_scs->old_to_new_idx.data();
     comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
     comm_args_encoded->nzs_size = &nzs_size;
     comm_args_encoded->send_requests = send_requests;
@@ -328,9 +353,15 @@ void bench_spmv(
             }
 #endif
 
-            spmv_kernel.init_halo_exchange();
-            spmv_kernel.finalize_halo_exchange();
-
+            if(config->value_type == "mp"){ // <- TODO: fix this problem
+                spmv_kernel.init_mp_halo_exchange();
+                spmv_kernel.finalize_mp_halo_exchange();
+                spmv_kernel.distribute_halos();
+            }
+            else{
+                spmv_kernel.init_halo_exchange();
+                spmv_kernel.finalize_halo_exchange();
+            }
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 1){
                 std::cout << "after comm spmv_kernel->hp_local_x" << std::endl;
@@ -344,9 +375,6 @@ void bench_spmv(
             }
 #endif
 
-            if(config->value_type == "mp"){ // <- TODO: fix this problem
-                spmv_kernel.distribute_halos();
-            }
 
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 1){
@@ -375,29 +403,18 @@ void bench_spmv(
                 }
             }
 #endif
-            if(config->value_type == "mp"){
-                apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_y)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
-                apply_permutation<float, IT>(&(sorted_lp_local_y)[0], &(spmv_kernel.lp_local_y)[0], &(lp_local_scs->old_to_new_idx)[0], lp_local_scs->n_rows);
-                // spmv_kernel.swap_with_hp_x(&(sorted_hp_local_y)[0]);
-                // spmv_kernel.swap_with_lp_x(&(sorted_lp_local_y)[0]);
-
-                // TODO: bandaid, apply swapping routine
+            // swap x <-> y
+            if(config->value_type == "mp"){    
+                // TODO: Bandaid until I figure out swapping
                 for(int i = 0; i < local_y->size(); ++i){
-                    (spmv_kernel.hp_local_x)[i] = sorted_hp_local_y[i];
-                }
-                
-                for(int i = 0; i < local_y->size(); ++i){
-                    (spmv_kernel.lp_local_x)[i] = sorted_lp_local_y[i];
+                    (spmv_kernel.lp_local_x)[i] = (spmv_kernel.lp_local_y)[i];
+                    (spmv_kernel.hp_local_x)[i] = (spmv_kernel.hp_local_y)[i];
                 }
             }
             else{
-                // TODO: bandaid. This is the per-rep row-wise permutation which should not be necessary. But for SCS it might be, for repeated spmvs
-                apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_y)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-                // spmv_kernel.swap_with_x(&(sorted_local_y)[0]);
-
-                // TODO: bandaid, apply swapping routine
                 for(int i = 0; i < local_y->size(); ++i){
-                    (spmv_kernel.local_x)[i] = sorted_local_y[i];
+
+                    (spmv_kernel.local_x)[i] = (spmv_kernel.local_y)[i];
                 }
             }
             if(config->ba_synch)
@@ -420,14 +437,15 @@ void bench_spmv(
         // Give sorted results to local_y for Results object gathering and output
         // TODO: Bandaid, since swapping doesn't work here for some reason
         if(config->value_type == "mp"){
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = (spmv_kernel.hp_local_x)[i];
-            }
+            apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
         }
         else{
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = (spmv_kernel.local_x)[i];
-            }
+            apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+        }
+
+        // Give result to local_y for results output
+        for(int i = 0; i < local_y->size(); ++i){
+            (*local_y)[i] = (spmv_kernel.local_x)[i];
         }
     }
 
