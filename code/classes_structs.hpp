@@ -291,12 +291,12 @@ class SpmvKernel {
             else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
                 if(my_rank == 0)
                     std::cout << "ELL_rm kernel selected" << std::endl;
-                // one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
+                one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
             }
-            else if (config->kernel_format == "ell" || config->kernel_format == "ell_cm"){
+            else if (config->kernel_format == "ell_cm"){
                 if(my_rank == 0)
                     std::cout << "ELL_cm kernel selected" << std::endl;
-                // one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
+                one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
             }
             else if (config->kernel_format == "scs" 
                 && config->chunk_size != 1
@@ -308,13 +308,13 @@ class SpmvKernel {
                 && config->chunk_size != 64){
                 if(my_rank == 0)
                     std::cout << "SCS kernel selected" << std::endl;
-                // one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
             }
             else if (config->kernel_format == "scs"){
                 // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
                 if(my_rank == 0)
                     std::cout << "Advanced SCS kernel selected" << std::endl;
-                // one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
             }
             else {
                 std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;

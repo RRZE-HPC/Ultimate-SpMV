@@ -107,7 +107,8 @@ spmv_omp_ell_rm(
     const IT * RESTRICT col_idxs,
     const VT * RESTRICT values,
     VT * RESTRICT x,
-    VT * RESTRICT y)
+    VT * RESTRICT y,
+    int my_rank)
 {
     ST nelems_per_row = chunk_lengths[1] - chunk_lengths[0];
     std::cout << nelems_per_row << std::endl;
@@ -138,7 +139,8 @@ spmv_omp_ell_cm(
     const IT * RESTRICT col_idxs,
     const VT * RESTRICT values,
     VT * RESTRICT x,
-    VT * RESTRICT y)
+    VT * RESTRICT y,
+    int my_rank)
 {
     ST nelems_per_row = chunk_lengths[1] - chunk_lengths[0];
     #pragma omp parallel for schedule(static)

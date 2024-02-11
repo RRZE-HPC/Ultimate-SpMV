@@ -73,11 +73,11 @@ void bench_spmv(
     MPI_Request *recv_requests = new MPI_Request[local_context->non_zero_senders.size()];
     MPI_Request *send_requests = new MPI_Request[local_context->non_zero_receivers.size()];
 
-    // TODO: Permute x, since local matrix permuted symmetrically
+    // Permute x, in order to match the permutation which was done to the columns
     std::vector<VT> local_x_permuted(local_x->size(), 0);
-    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    // apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
-    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
     std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
     apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
@@ -353,10 +353,11 @@ void bench_spmv(
             }
 #endif
 
-            if(config->value_type == "mp"){ // <- TODO: fix this problem
+            if(config->value_type == "mp"){ 
                 spmv_kernel.init_mp_halo_exchange();
                 spmv_kernel.finalize_mp_halo_exchange();
                 spmv_kernel.distribute_halos();
+                // TODO: need to fix^, either receive into both buffers, or figure something else out
             }
             else{
                 spmv_kernel.init_halo_exchange();
@@ -434,8 +435,7 @@ void bench_spmv(
 #endif
         }
 
-        // Give sorted results to local_y for Results object gathering and output
-        // TODO: Bandaid, since swapping doesn't work here for some reason
+        // Bring local_x out of permuted space
         if(config->value_type == "mp"){
             apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
         }
@@ -445,7 +445,7 @@ void bench_spmv(
 
         // Give result to local_y for results output
         for(int i = 0; i < local_y->size(); ++i){
-            (*local_y)[i] = (spmv_kernel.local_x)[i];
+            (*local_y)[i] = (sorted_local_y)[i];
         }
     }
 

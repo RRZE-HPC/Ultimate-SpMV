@@ -1233,8 +1233,7 @@ void apply_permutation(
 // TODO: hmm. Don't know if this is right
 template<typename VT, typename IT>
 void permute_scs_cols(
-    ScsData<VT, IT> *scs,
-    MtxData<VT, IT> *local_mtx
+    ScsData<VT, IT> *scs
 ){
     ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
                     + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;

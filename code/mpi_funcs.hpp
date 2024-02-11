@@ -1204,5 +1204,7 @@ void mpi_init_local_structs(
     // std::vector<IT> empty_perm(local_scs->n_rows);
     // std::iota(std::begin(empty_perm), std::end(empty_perm), 0); // Fill with 0, 1, ..., scs->n_rows.
     // local_scs->permute(&(empty_perm)[0], local_scs->old_to_new_idx.data()); // pass and emptry perm vec, since rows already permed
+
+    permute_scs_cols(local_scs);
 }
 #endif
