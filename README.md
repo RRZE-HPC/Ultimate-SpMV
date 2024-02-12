@@ -37,5 +37,8 @@ Notes:
 TODO features:
 - CMake building for automatic file path detection
 - SCAMAC (seq and parallel)
-- kernel picker (with no perf degredation)
 - local copies of structs to avoid data placement problems with large matrices
+- library interface
+- distributed -mp support
+- two structs for overlapping comm/comp
+- VT rank reordering
