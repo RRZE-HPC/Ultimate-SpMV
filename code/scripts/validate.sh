@@ -16,7 +16,7 @@ export I_MPI_PIN_PROCESSOR_LIST="allcores"
 declare -a other_kernel_formats=("crs")
 declare -a seg_types=("-seg_rows") # "-seg_nnz") # TODO: metis?
 
-declare -a Cs=("2" "3" "4" "8" "16" "32" "64" "128")
+declare -a Cs=("1" "2" "3" "4" "8" "16" "32" "64" "128")
 declare -a sigmas=("1" "2" "3" "4" "8" "16" "32" "64" "128")
 
 # # Config 1. Check non-scs kernels are working, MPI off
