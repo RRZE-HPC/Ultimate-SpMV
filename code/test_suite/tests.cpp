@@ -3,9 +3,11 @@
 #include "mpi_funcs.hpp"
 #include "test_data/test_data.hpp"
 
+int test_cntr = 0;
+
 TEST_CASE("Validate COO matrix splitting function 'seperate_lp_from_hp' ", "[require]"){
     SECTION("Test splitting with COO Matrix M1"){
-        std::cout << "Test 1..." << std::endl;
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
 
         // Declare structs to be tested
         MtxData<double, int> M1_hp;
@@ -23,7 +25,7 @@ TEST_CASE("Validate COO matrix splitting function 'seperate_lp_from_hp' ", "[req
 
 TEST_CASE("Validate function 'convert_to_scs' for c = 1 and sigma = 1 fixed", "[require]"){
     SECTION("Test scs conversion with COO Matrix M1, c=1, s=1 (i.e. crs)"){
-        std::cout << "Test 2..." << std::endl;
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
 
         exp_M1_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_scs_1_1);
 
@@ -35,7 +37,7 @@ TEST_CASE("Validate function 'convert_to_scs' for c = 1 and sigma = 1 fixed", "[
         REQUIRE((M1_scs_1_1 == exp_M1_scs_1_1));
     }
     SECTION("Test scs conversion with split COO Matrix exp_M1_hp, c=1, s=1"){
-        std::cout << "Test 3..." << std::endl;
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
 
         exp_M1_hp_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_hp_scs_1_1);
 
@@ -47,7 +49,7 @@ TEST_CASE("Validate function 'convert_to_scs' for c = 1 and sigma = 1 fixed", "[
         REQUIRE((M1_hp_scs_1_1 == exp_M1_hp_scs_1_1));
     }
     SECTION("Test scs conversion with split COO Matrix exp_M1_lp, c=1, s=1"){
-        std::cout << "Test 4..." << std::endl;
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
 
         exp_M1_lp_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_lp_scs_1_1);
 
@@ -58,7 +60,82 @@ TEST_CASE("Validate function 'convert_to_scs' for c = 1 and sigma = 1 fixed", "[
         M1_lp_scs_1_1^exp_M1_lp_scs_1_1;
         REQUIRE((M1_lp_scs_1_1 == exp_M1_lp_scs_1_1));
     }
+    SECTION("Test scs conversion with top empty row, c=1, s=1"){
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
 
+        exp_M1_te_row_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_te_row_scs_1_1);
+
+        ScsData<double, int> M1_te_row_scs_1_1;
+
+        convert_to_scs<double, int>(1.0, &M1_te_row, 1, 1, &M1_te_row_scs_1_1);
+
+        M1_te_row_scs_1_1^exp_M1_te_row_scs_1_1;
+        REQUIRE((M1_te_row_scs_1_1 == exp_M1_te_row_scs_1_1));
+    }
+    SECTION("Test scs conversion with middle empty row, c=1, s=1"){
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
+
+        exp_M1_me_row_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_me_row_scs_1_1);
+
+        ScsData<double, int> M1_me_row_scs_1_1;
+
+        convert_to_scs<double, int>(1.0, &M1_me_row, 1, 1, &M1_me_row_scs_1_1);
+
+        M1_me_row_scs_1_1^exp_M1_me_row_scs_1_1;
+        REQUIRE((M1_me_row_scs_1_1 == exp_M1_me_row_scs_1_1));
+    }
+    SECTION("Test scs conversion with bottom empty row, c=1, s=1"){
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
+
+        exp_M1_be_row_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_be_row_scs_1_1);
+
+        ScsData<double, int> M1_be_row_scs_1_1;
+
+        convert_to_scs<double, int>(1.0, &M1_be_row, 1, 1, &M1_be_row_scs_1_1);
+
+        M1_be_row_scs_1_1^exp_M1_be_row_scs_1_1;
+        REQUIRE((M1_be_row_scs_1_1 == exp_M1_be_row_scs_1_1));
+    }
+
+
+
+
+    SECTION("Test scs conversion with left empty col, c=1, s=1"){
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
+
+        exp_M1_le_col_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_le_col_scs_1_1);
+
+        ScsData<double, int> M1_le_col_scs_1_1;
+
+        convert_to_scs<double, int>(1.0, &M1_le_col, 1, 1, &M1_le_col_scs_1_1);
+
+        M1_le_col_scs_1_1^exp_M1_le_col_scs_1_1;
+        REQUIRE((M1_le_col_scs_1_1 == exp_M1_le_col_scs_1_1));
+    }
+    SECTION("Test scs conversion with middle empty col, c=1, s=1"){
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
+
+        exp_M1_me_col_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_me_col_scs_1_1);
+
+        ScsData<double, int> M1_me_col_scs_1_1;
+
+        convert_to_scs<double, int>(1.0, &M1_me_col, 1, 1, &M1_me_col_scs_1_1);
+
+        M1_me_col_scs_1_1^exp_M1_me_col_scs_1_1;
+        REQUIRE((M1_me_col_scs_1_1 == exp_M1_me_col_scs_1_1));
+    }
+    SECTION("Test scs conversion with bottom empty row and right empty column, c=1, s=1"){
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
+
+        exp_M1_be_row_re_col_scs_1_1.assign_explicit_test_data(&explicit_exp_M1_be_row_re_col_scs_1_1);
+
+        ScsData<double, int> M1_be_row_re_col_scs_1_1;
+
+        convert_to_scs<double, int>(1.0, &M1_be_row_re_col, 1, 1, &M1_be_row_re_col_scs_1_1);
+
+        M1_be_row_re_col_scs_1_1^exp_M1_be_row_re_col_scs_1_1;
+        REQUIRE((M1_be_row_re_col_scs_1_1 == exp_M1_be_row_re_col_scs_1_1));
+    }
 }
 // TEST_CASE("Validate function 'convert_to_scs' for c > 1 and sigma = 1 fixed", "[require]"){
 //     SECTION("Test scs conversion with COO Matrix M1, c=1, s=1 (i.e. crs)"){
@@ -78,7 +155,7 @@ TEST_CASE("Validate function 'convert_to_scs' for c = 1 and sigma = 1 fixed", "[
 TEST_CASE("Validate function 'collect_local_needed_heri' for c = 1 and sigma = 1 fixed", "[require]"){
     SECTION("Test column compression with SCS Matrices M1_scs, M1_hp_scs and M1_lp_scs, c=1, s=1 (i.e. crs), \
     assuming 2 MPI procs"){
-        std::cout << "Test 5..." << std::endl;
+        std::cout << "Test " << ++test_cntr << "..." << std::endl;
         const std::string value_type = "mp";
 
         // Artificially separate work over two processes
@@ -233,3 +310,4 @@ TEST_CASE("Validate function 'collect_local_needed_heri' for c = 1 and sigma = 1
         REQUIRE((p1_lp_M1_scs_1_1 == exp_p1_lp_M1_scs_1_1));
     }
 }
+

@@ -865,6 +865,10 @@ void seperate_lp_from_hp(
     lp_local_mtx->values = lp_local_vals;
 
     // Scan local_mtx
+    // TODO: If this is a bottleneck:
+    // 1. Scan in parallel 
+    // 2. Allocate space
+    // 3. Assign in parallel
     for(int i = 0; i < local_mtx->nnz; ++i){
         // If element value below threshold, place in hp_local_mtx
         if(abs(local_mtx->values[i]) >= threshold){   
@@ -1093,6 +1097,12 @@ void mpi_init_local_structs(
         convert_to_scs<double, IT>(config->bucket_size, &hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
         convert_to_scs<float, IT>(config->bucket_size, &lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
 
+        // std::cout << "hp_Beta = " << ((double)hp_local_scs->nnz / hp_local_scs->n_elements) * 100.0 << std::endl;
+        // std::cout << "lp_Beta = " << ((double)lp_local_scs->nnz / lp_local_scs->n_elements) * 100.0 << std::endl;
+        // std::cout << "hp_Nnzr = " << (double)hp_local_scs->nnz / hp_local_scs->n_rows  << std::endl;
+        // std::cout << "lp_Nnzr = " << (double)lp_local_scs->nnz / lp_local_scs->n_rows<< std::endl;
+        // exit(0);
+
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");
         std::string file_out_name;
@@ -1106,6 +1116,11 @@ void mpi_init_local_structs(
     }
 
     convert_to_scs<VT, IT>(config->bucket_size, &local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+
+    // std::cout << "Beta = " << ((double)local_scs->nnz / local_scs->n_elements) * 100.0 << std::endl;
+    // std::cout << "Nnzr = " << (double)local_scs->nnz / local_scs->n_rows << std::endl;
+
+    // exit(0);
 
         
     if (config->value_type != "mp"){
@@ -1198,12 +1213,6 @@ void mpi_init_local_structs(
 //     }
         
 // #endif
-
-    // TODO: which instances does it make sense to symmetrically permute the local matrix?
-    // TODO: only single precision for now
-    // std::vector<IT> empty_perm(local_scs->n_rows);
-    // std::iota(std::begin(empty_perm), std::end(empty_perm), 0); // Fill with 0, 1, ..., scs->n_rows.
-    // local_scs->permute(&(empty_perm)[0], local_scs->old_to_new_idx.data()); // pass and emptry perm vec, since rows already permed
 
     permute_scs_cols(local_scs);
 }

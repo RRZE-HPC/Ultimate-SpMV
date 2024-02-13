@@ -12,6 +12,238 @@ MtxData<double, int> M1 {
     std::vector<double> {1.5,0.5,0.25,-0.1,1.0,1.1,-1.0,0.999999999999,10101.1} // values
 };
 
+//////////////////////////// M1 test data, empty row ////////////////////////////
+MtxData<double, int> M1_te_row {
+    3, // n_rows
+    3, // n_cols
+    6, // nnz
+    true, // is_sorted
+    false, // is_symmetric
+    std::vector<int> {1,1,1,2,2,2}, // I
+    std::vector<int> {0,1,2,0,1,2}, // J
+    std::vector<double> {-0.1,1.0,1.1,-1.0,0.999999999999,10101.1} // values
+};
+
+ScsData<double, int> exp_M1_te_row_scs_1_1 {
+    1, // C
+    1, // sigma
+    3, // n_rows
+    3, // n_cols
+    3, // n_rows_padded
+    3, // n_chunks
+    6, // n_elements
+    6, // nnz
+
+    V<int, int>(4), // chunk_ptrs
+    V<int, int>(3), // chunk_lengths
+    V<int, int>(6), // col_idxs
+    V<double, int>(6), // values
+    V<int, int>(3), // old_to_new_idx
+    std::vector<int> (3) // new_to_old_idx 
+};
+
+ScsExplicitData<double, int> explicit_exp_M1_te_row_scs_1_1 {
+    std::vector<int> {0,0,3,6}, //explicit_chunk_ptrs
+    std::vector<int> {0,3,3}, //explicit_chunk_lengths
+    std::vector<int> {0,1,2,0,1,2}, //explicit_col_idxs
+    std::vector<double> {-0.1,1.0,1.1,-1.0,0.999999999999,10101.1}, //explicit_values
+    std::vector<int> {0,1,2}, //explicit_old_to_new_idx
+    std::vector<int> {0,1,2} //explicit_new_to_old_idx
+};
+
+MtxData<double, int> M1_me_row {
+    3, // n_rows
+    3, // n_cols
+    6, // nnz
+    true, // is_sorted
+    false, // is_symmetric
+    std::vector<int> {0,0,0,2,2,2}, // I
+    std::vector<int> {0,1,2,0,1,2}, // J
+    std::vector<double> {1.5,0.5,0.25,-1.0,0.999999999999,10101.1} // values
+};
+
+ScsData<double, int> exp_M1_me_row_scs_1_1 {
+    1, // C
+    1, // sigma
+    3, // n_rows
+    3, // n_cols
+    3, // n_rows_padded
+    3, // n_chunks
+    6, // n_elements
+    6, // nnz
+
+    V<int, int>(4), // chunk_ptrs
+    V<int, int>(3), // chunk_lengths
+    V<int, int>(6), // col_idxs
+    V<double, int>(6), // values
+    V<int, int>(3), // old_to_new_idx
+    std::vector<int> (3) // new_to_old_idx 
+};
+
+ScsExplicitData<double, int> explicit_exp_M1_me_row_scs_1_1 {
+    std::vector<int> {0,3,3,6}, //explicit_chunk_ptrs
+    std::vector<int> {3,0,3}, //explicit_chunk_lengths
+    std::vector<int> {0,1,2,0,1,2}, //explicit_col_idxs
+    std::vector<double> {1.5,0.5,0.25,-1.0,0.999999999999,10101.1}, //explicit_values
+    std::vector<int> {0,1,2}, //explicit_old_to_new_idx
+    std::vector<int> {0,1,2} //explicit_new_to_old_idx
+};
+
+MtxData<double, int> M1_be_row {
+    3, // n_rows
+    3, // n_cols
+    6, // nnz
+    true, // is_sorted
+    false, // is_symmetric
+    std::vector<int> {0,0,0,1,1,1}, // I
+    std::vector<int> {0,1,2,0,1,2}, // J
+    std::vector<double> {1.5,0.5,0.25,-0.1,1.0} // values
+};
+
+ScsData<double, int> exp_M1_be_row_scs_1_1 {
+    1, // C
+    1, // sigma
+    3, // n_rows
+    3, // n_cols
+    3, // n_rows_padded
+    3, // n_chunks
+    6, // n_elements
+    6, // nnz
+
+    V<int, int>(4), // chunk_ptrs
+    V<int, int>(3), // chunk_lengths
+    V<int, int>(6), // col_idxs
+    V<double, int>(6), // values
+    V<int, int>(3), // old_to_new_idx
+    std::vector<int> (3) // new_to_old_idx 
+};
+
+ScsExplicitData<double, int> explicit_exp_M1_be_row_scs_1_1 {
+    std::vector<int> {0,3,6,6}, //explicit_chunk_ptrs
+    std::vector<int> {3,3,0}, //explicit_chunk_lengths
+    std::vector<int> {0,1,2,0,1,2}, //explicit_col_idxs
+    std::vector<double> {1.5,0.5,0.25,-0.1,1.0}, //explicit_values
+    std::vector<int> {0,1,2}, //explicit_old_to_new_idx
+    std::vector<int> {0,1,2} //explicit_new_to_old_idx
+};
+
+//////////////////////////// M1 test data, left empty col ////////////////////////////
+MtxData<double, int> M1_le_col {
+    3, // n_rows
+    3, // n_cols
+    6, // nnz
+    true, // is_sorted
+    false, // is_symmetric
+    std::vector<int> {0,0,1,1,2,2}, // I
+    std::vector<int> {1,2,1,2,1,2}, // J
+    std::vector<double> {0.5,0.25,1.0,1.1,0.999999999999,10101.1} // values
+};
+
+ScsData<double, int> exp_M1_le_col_scs_1_1 {
+    1, // C
+    1, // sigma
+    3, // n_rows
+    3, // n_cols
+    3, // n_rows_padded
+    3, // n_chunks
+    6, // n_elements
+    6, // nnz
+
+    V<int, int>(4), // chunk_ptrs
+    V<int, int>(3), // chunk_lengths
+    V<int, int>(6), // col_idxs
+    V<double, int>(6), // values
+    V<int, int>(3), // old_to_new_idx
+    std::vector<int> (3) // new_to_old_idx 
+};
+
+ScsExplicitData<double, int> explicit_exp_M1_le_col_scs_1_1 {
+    std::vector<int> {0,2,4,6}, //explicit_chunk_ptrs
+    std::vector<int> {2,2,2}, //explicit_chunk_lengths
+    std::vector<int> {1,2,1,2,1,2}, //explicit_col_idxs
+    std::vector<double> {0.5,0.25,1.0,1.1,0.999999999999,10101.1}, //explicit_values
+    std::vector<int> {0,1,2}, //explicit_old_to_new_idx
+    std::vector<int> {0,1,2} //explicit_new_to_old_idx
+};
+
+//////////////////////////// M1 test data, middle empty col ////////////////////////////
+MtxData<double, int> M1_me_col {
+    3, // n_rows
+    3, // n_cols
+    6, // nnz
+    true, // is_sorted
+    false, // is_symmetric
+    std::vector<int> {0,0,1,1,2,2}, // I
+    std::vector<int> {0,2,0,2,0,2}, // J
+    std::vector<double> {1.5,0.25,-0.1,1.1,-1.0,10101.1} // values
+};
+
+ScsData<double, int> exp_M1_me_col_scs_1_1 {
+    1, // C
+    1, // sigma
+    3, // n_rows
+    3, // n_cols
+    3, // n_rows_padded
+    3, // n_chunks
+    6, // n_elements
+    6, // nnz
+
+    V<int, int>(4), // chunk_ptrs
+    V<int, int>(3), // chunk_lengths
+    V<int, int>(6), // col_idxs
+    V<double, int>(6), // values
+    V<int, int>(3), // old_to_new_idx
+    std::vector<int> (3) // new_to_old_idx 
+};
+
+ScsExplicitData<double, int> explicit_exp_M1_me_col_scs_1_1 {
+    std::vector<int> {0,2,4,6}, //explicit_chunk_ptrs
+    std::vector<int> {2,2,2}, //explicit_chunk_lengths
+    std::vector<int> {0,2,0,2,0,2}, //explicit_col_idxs
+    std::vector<double> {1.5,0.25,-0.1,1.1,-1.0,10101.1}, //explicit_values
+    std::vector<int> {0,1,2}, //explicit_old_to_new_idx
+    std::vector<int> {0,1,2} //explicit_new_to_old_idx
+};
+
+// //////////////////////////// M1 test data, empty row+col ////////////////////////////
+MtxData<double, int> M1_be_row_re_col {
+    3, // n_rows
+    3, // n_cols
+    4, // nnz
+    true, // is_sorted
+    false, // is_symmetric
+    std::vector<int> {0,0,1,1}, // I
+    std::vector<int> {0,1,0,1}, // J
+    std::vector<double> {1.5,0.5,-0.1,1.0} // values
+};
+
+ScsData<double, int> exp_M1_be_row_re_col_scs_1_1 {
+    1, // C
+    1, // sigma
+    3, // n_rows
+    3, // n_cols
+    3, // n_rows_padded
+    3, // n_chunks ??
+    4, // n_elements
+    4, // nnz
+
+    V<int, int>(4), // chunk_ptrs
+    V<int, int>(3), // chunk_lengths
+    V<int, int>(6), // col_idxs
+    V<double, int>(4), // values
+    V<int, int>(3), // old_to_new_idx
+    std::vector<int> (3) // new_to_old_idx 
+};
+
+ScsExplicitData<double, int> explicit_exp_M1_be_row_re_col_scs_1_1 {
+    std::vector<int> {0,2,4,4}, //explicit_chunk_ptrs
+    std::vector<int> {2,2,0}, //explicit_chunk_lengths
+    std::vector<int> {0,1,0,1}, //explicit_col_idxs
+    std::vector<double> {1.5,0.5,-0.1,1.0}, //explicit_values
+    std::vector<int> {0,1,2}, //explicit_old_to_new_idx
+    std::vector<int> {0,1,2} //explicit_new_to_old_idx
+};
+
 
 //////////////////////////// M1-p0 test data ////////////////////////////
 MtxData<double, int> p0_M1 {

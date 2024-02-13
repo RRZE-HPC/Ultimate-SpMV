@@ -22,6 +22,10 @@
 #include <omp.h>
 #endif
 
+#ifdef USE_LIKWID
+#include <likwid-marker.h>
+#endif
+
 /**
     @brief Perform SPMV kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
@@ -179,311 +183,331 @@ void bench_spmv(
     //     }
     // }
 
-    // Enter main COMM-SPMV-SWAP loop, bench mode
-    if(config->mode == 'b'){
-        std::vector<VT> dummy_x(local_x->size(), 1.0);
-        std::vector<VT> dummy_y(local_y->size(), 0.0);
+//     // Enter main COMM-SPMV-SWAP loop, bench mode
+//     if(config->mode == 'b'){
+//         std::vector<VT> dummy_x(local_x->size(), 1.0);
+//         std::vector<VT> dummy_y(local_y->size(), 0.0);
 
-        MPI_Barrier(MPI_COMM_WORLD);
-        // Warm-up
-        double begin_warm_up_loop_time, end_warm_up_loop_time;
-        begin_warm_up_loop_time = MPI_Wtime();
+//         MPI_Barrier(MPI_COMM_WORLD);
+//         // Warm-up
+//         double begin_warm_up_loop_time, end_warm_up_loop_time;
+//         begin_warm_up_loop_time = MPI_Wtime();
 
-        if(config->comm_halos){
-            for(int k = 0; k < WARM_UP_REPS; ++k){
-                spmv_kernel.init_halo_exchange();
-                spmv_kernel.finalize_halo_exchange();
-                spmv_kernel.execute_spmv();
+//         if(config->comm_halos){
+//             for(int k = 0; k < WARM_UP_REPS; ++k){
+//                 spmv_kernel.init_halo_exchange();
+//                 spmv_kernel.finalize_halo_exchange();
+//                 spmv_kernel.execute_spmv();
 
-                    std::swap(dummy_x, dummy_y);
+//                     std::swap(dummy_x, dummy_y);
 
-                if(config->ba_synch)
-                    MPI_Barrier(MPI_COMM_WORLD);
-            }
-        }
-        else if(!config->comm_halos){
-            for(int k = 0; k < WARM_UP_REPS; ++k){
+//                 if(config->ba_synch)
+//                     MPI_Barrier(MPI_COMM_WORLD);
+//             }
+//         }
+//         else if(!config->comm_halos){
+//             for(int k = 0; k < WARM_UP_REPS; ++k){
 
-                spmv_kernel.execute_spmv();
-                std::swap(dummy_x, dummy_y);
+//                 spmv_kernel.execute_spmv();
+//                 std::swap(dummy_x, dummy_y);
 
-                if(config->ba_synch)
-                    MPI_Barrier(MPI_COMM_WORLD);
-            }
-        }
+//                 if(config->ba_synch)
+//                     MPI_Barrier(MPI_COMM_WORLD);
+//             }
+//         }
 
 
-        end_warm_up_loop_time = MPI_Wtime();
+//         end_warm_up_loop_time = MPI_Wtime();
 
-        double begin_bench_loop_time, end_bench_loop_time;
+//         double begin_bench_loop_time, end_bench_loop_time;
 
-        if (config->bench_time <= 0.0){
-            // Use warm-up to calculate n_iter for real benchmark
-            int n_iter = 10; // NOTE: is it correct for the root process' iteration count to be what is used?
-            if(my_rank == 0){
-                // Guards against REALLY bad load balancing 
-                int num_reps_warm = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
-                if (num_reps_warm > 1)
-                    n_iter = num_reps_warm;
-            }
+//         if (config->bench_time <= 0.0){
+//             // Use warm-up to calculate n_iter for real benchmark
+//             int n_iter = 10; // NOTE: is it correct for the root process' iteration count to be what is used?
+//             if(my_rank == 0){
+//                 // Guards against REALLY bad load balancing 
+//                 int num_reps_warm = static_cast<int>((double)WARM_UP_REPS / (end_warm_up_loop_time - begin_warm_up_loop_time));
+//                 if (num_reps_warm > 1)
+//                     n_iter = num_reps_warm;
+//             }
 
-            MPI_Bcast(
-                &n_iter,
-                1,
-                MPI_INT,
-                0,
-                MPI_COMM_WORLD
-            );
+//             MPI_Bcast(
+//                 &n_iter,
+//                 1,
+//                 MPI_INT,
+//                 0,
+//                 MPI_COMM_WORLD
+//             );
 
-            MPI_Barrier(MPI_COMM_WORLD);
-            begin_bench_loop_time = MPI_Wtime();
+//             MPI_Barrier(MPI_COMM_WORLD);
+//             begin_bench_loop_time = MPI_Wtime();
             
-            if(config->comm_halos){
-                for(int k = 0; k < n_iter; ++k){
+//             if(config->comm_halos){
+//                 for(int k = 0; k < n_iter; ++k){
 
-                    spmv_kernel.init_halo_exchange();
-                    spmv_kernel.finalize_halo_exchange();
-                    spmv_kernel.execute_spmv();
+//                     spmv_kernel.init_halo_exchange();
+//                     spmv_kernel.finalize_halo_exchange();
+//                     spmv_kernel.execute_spmv();
 
-                    std::swap(dummy_x, dummy_y);
+//                     std::swap(dummy_x, dummy_y);
 
-                    if(config->ba_synch)
-                        MPI_Barrier(MPI_COMM_WORLD);
-                }
-            }
-            else if (!config->comm_halos){
-                for(int k = 0; k < n_iter; ++k){
+//                     if(config->ba_synch)
+//                         MPI_Barrier(MPI_COMM_WORLD);
+//                 }
+//             }
+//             else if (!config->comm_halos){
+//                 for(int k = 0; k < n_iter; ++k){
 
-                    spmv_kernel.execute_spmv();
+//                     spmv_kernel.execute_spmv();
                 
-                std::swap(dummy_x, dummy_y);
+//                 std::swap(dummy_x, dummy_y);
 
-                if(config->ba_synch)
-                    MPI_Barrier(MPI_COMM_WORLD);
-                }
-            }
+//                 if(config->ba_synch)
+//                     MPI_Barrier(MPI_COMM_WORLD);
+//                 }
+//             }
 
-            MPI_Barrier(MPI_COMM_WORLD);
-            end_bench_loop_time = MPI_Wtime();
+//             MPI_Barrier(MPI_COMM_WORLD);
+//             end_bench_loop_time = MPI_Wtime();
 
-            r->n_calls = n_iter;
-            r->duration_total_s = end_bench_loop_time - begin_bench_loop_time;
-            r->duration_kernel_s = r->duration_total_s/ r->n_calls;
-            r->perf_gflops = (double)local_context->total_nnz * 2.0
-                                / r->duration_kernel_s
-                                / 1e9;                   // Only count usefull flops
-        }
-        else{            
-            // Use user-defined time limit to calculate n_iter
-            double runtime = 0.0;
-            int n_iter = 1;
-            int all_procs_finished = 0;
-            // begin_bench_loop_time = MPI_Wtime();
-            // MPI_Barrier(MPI_COMM_WORLD);
-            if(config->comm_halos){
+//             r->n_calls = n_iter;
+//             r->duration_total_s = end_bench_loop_time - begin_bench_loop_time;
+//             r->duration_kernel_s = r->duration_total_s/ r->n_calls;
+//             r->perf_gflops = (double)local_context->total_nnz * 2.0
+//                                 / r->duration_kernel_s
+//                                 / 1e9;                   // Only count usefull flops
+//         }
+//         else{            
+//             // Use user-defined time limit to calculate n_iter
+//             double runtime = 0.0;
+//             int n_iter = 1;
+//             int all_procs_finished = 0;
+//             // begin_bench_loop_time = MPI_Wtime();
+//             // MPI_Barrier(MPI_COMM_WORLD);
+//             if(config->comm_halos){
+// #ifdef USE_LIKWID
+// #pragma omp parallel
+// {
+//     // LIKWID_MARKER_REGISTER("timed_benchmark_with_comm");
+//     LIKWID_MARKER_START("timed_benchmark_with_comm");
+// }
+// #endif
+//                 do{
+//                     MPI_Barrier(MPI_COMM_WORLD);
+//                     begin_bench_loop_time = MPI_Wtime();
+//                     for(int k=0; k<n_iter; ++k) {
 
-                do{
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    begin_bench_loop_time = MPI_Wtime();
+//                         spmv_kernel.init_halo_exchange();
+//                         spmv_kernel.finalize_halo_exchange();
+//                         spmv_kernel.execute_spmv();
 
-                    for(int k=0; k<n_iter; ++k) {
+//                         std::swap(dummy_x, dummy_y);
 
-                        spmv_kernel.init_halo_exchange();
-                        spmv_kernel.finalize_halo_exchange();
-                        spmv_kernel.execute_spmv();
+//                         if(config->ba_synch)
+//                             MPI_Barrier(MPI_COMM_WORLD);
+//                     }
+//                     MPI_Barrier(MPI_COMM_WORLD);
+//                     n_iter = n_iter*2;
+//                     runtime = MPI_Wtime() - begin_bench_loop_time;
+//                 } while (runtime < config->bench_time);
+                
+// #ifdef USE_LIKWID
+// LIKWID_MARKER_STOP("timed_benchmark_with_comm");
+// #endif
+//                 n_iter = n_iter/2;
+//             }
+//             else if(!config->comm_halos){
+// #ifdef USE_LIKWID
+// #pragma omp parallel
+// {
+//     LIKWID_MARKER_REGISTER("timed_benchmark_no_comm");
+// }
+// #endif
+// #ifdef USE_LIKWID
+// LIKWID_MARKER_START("timed_benchmark_no_comm");
+// #endif
+//                 do{
+//                     MPI_Barrier(MPI_COMM_WORLD);
+//                     begin_bench_loop_time = MPI_Wtime();
+//                     for(int k=0; k<n_iter; ++k) {
 
-                        std::swap(dummy_x, dummy_y);
+//                         spmv_kernel.execute_spmv();
+//                         std::swap(dummy_x, dummy_y);
 
-                        if(config->ba_synch)
-                            MPI_Barrier(MPI_COMM_WORLD);
-                    }
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    n_iter = n_iter*2;
-                    runtime = MPI_Wtime() - begin_bench_loop_time;
-                } while (runtime < config->bench_time);
-                n_iter = n_iter/2;
-            }
-            else if(!config->comm_halos){
+//                         if(config->ba_synch)
+//                             MPI_Barrier(MPI_COMM_WORLD);
+//                     }
+//                     MPI_Barrier(MPI_COMM_WORLD);
+//                     n_iter = n_iter*2;
+//                     runtime = MPI_Wtime() - begin_bench_loop_time;
+//                 } while (runtime < config->bench_time);
 
-                do{
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    begin_bench_loop_time = MPI_Wtime();
+// #ifdef USE_LIKWID
+// LIKWID_MARKER_STOP("timed_benchmark_no_comm");
+// #endif
+//                 n_iter = n_iter/2;
+//             }
+//             r->n_calls = n_iter;
+//             r->duration_total_s = runtime;
+//             r->duration_kernel_s = r->duration_total_s/ r->n_calls;
+//             r->perf_gflops = (double)local_context->total_nnz * 2.0
+//                                 / r->duration_kernel_s
+//                                 / 1e9;                   // Only count usefull flops
+//         }
+//     }
+//     else if(config->mode == 's'){ // Enter main COMM-SPMV-SWAP loop, solve mode
+//         std::vector<VT> sorted_local_y(local_y->size(), 0);
 
-                    for(int k=0; k<n_iter; ++k) {
+//         // Only relevant for mixed precision
+//         std::vector<double> sorted_hp_local_y(local_y->size(), 0);
+//         std::vector<float> sorted_lp_local_y(local_y->size(), 0);
 
-                        spmv_kernel.execute_spmv();
-                        std::swap(dummy_x, dummy_y);
+//         for (int i = 0; i < config->n_repetitions; ++i)
+//         {
+// #ifdef DEBUG_MODE_FINE
+//             if(my_rank == 1){
+//                 std::cout << "before comm spmv_kernel->hp_local_x" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+//                 }
+//                 std::cout << "before comm spmv_kernel->hp_local_y" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+//                 }
+//             }
+// #endif
 
-                        if(config->ba_synch)
-                            MPI_Barrier(MPI_COMM_WORLD);
-                    }
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    n_iter = n_iter*2;
-                    runtime = MPI_Wtime() - begin_bench_loop_time;
-                } while (runtime < config->bench_time);
-                n_iter = n_iter/2;
-            }
-            r->n_calls = n_iter;
-            r->duration_total_s = runtime;
-            r->duration_kernel_s = r->duration_total_s/ r->n_calls;
-            r->perf_gflops = (double)local_context->total_nnz * 2.0
-                                / r->duration_kernel_s
-                                / 1e9;                   // Only count usefull flops
-        }
-    }
-    else if(config->mode == 's'){ // Enter main COMM-SPMV-SWAP loop, solve mode
-        std::vector<VT> sorted_local_y(local_y->size(), 0);
-
-        // Only relevant for mixed precision
-        std::vector<double> sorted_hp_local_y(local_y->size(), 0);
-        std::vector<float> sorted_lp_local_y(local_y->size(), 0);
-
-        for (int i = 0; i < config->n_repetitions; ++i)
-        {
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
-                std::cout << "before comm spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "before comm spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
-
-            if(config->value_type == "mp"){ 
-                spmv_kernel.init_mp_halo_exchange();
-                spmv_kernel.finalize_mp_halo_exchange();
-                spmv_kernel.distribute_halos();
-                // TODO: need to fix^, either receive into both buffers, or figure something else out
-            }
-            else{
-                spmv_kernel.init_halo_exchange();
-                spmv_kernel.finalize_halo_exchange();
-            }
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
-                std::cout << "after comm spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "after comm spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
+//             if(config->value_type == "mp"){ 
+//                 spmv_kernel.init_mp_halo_exchange();
+//                 spmv_kernel.finalize_mp_halo_exchange();
+//                 spmv_kernel.distribute_halos();
+//                 // TODO: need to fix^, either receive into both buffers, or figure something else out
+//             }
+//             else{
+//                 spmv_kernel.init_halo_exchange();
+//                 spmv_kernel.finalize_halo_exchange();
+//             }
+// #ifdef DEBUG_MODE_FINE
+//             if(my_rank == 1){
+//                 std::cout << "after comm spmv_kernel->hp_local_x" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+//                 }
+//                 std::cout << "after comm spmv_kernel->hp_local_y" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+//                 }
+//             }
+// #endif
 
 
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
-                std::cout << "before_kernel spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "before_kernel spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
+// #ifdef DEBUG_MODE_FINE
+//             if(my_rank == 1){
+//                 std::cout << "before_kernel spmv_kernel->hp_local_x" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+//                 }
+//                 std::cout << "before_kernel spmv_kernel->hp_local_y" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+//                 }
+//             }
+// #endif
 
-            spmv_kernel.execute_spmv();
+//             spmv_kernel.execute_spmv();
 
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
-                std::cout << "after_kernel spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "before_kernel spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
-            // swap x <-> y
-            if(config->value_type == "mp"){    
-                // TODO: Bandaid until I figure out swapping
-                for(int i = 0; i < local_y->size(); ++i){
-                    (spmv_kernel.lp_local_x)[i] = (spmv_kernel.lp_local_y)[i];
-                    (spmv_kernel.hp_local_x)[i] = (spmv_kernel.hp_local_y)[i];
-                }
-            }
-            else{
-                for(int i = 0; i < local_y->size(); ++i){
+// #ifdef DEBUG_MODE_FINE
+//             if(my_rank == 1){
+//                 std::cout << "after_kernel spmv_kernel->hp_local_x" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+//                 }
+//                 std::cout << "before_kernel spmv_kernel->hp_local_y" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+//                 }
+//             }
+// #endif
+//             // swap x <-> y
+//             if(config->value_type == "mp"){    
+//                 // TODO: Bandaid until I figure out swapping
+//                 for(int i = 0; i < local_y->size(); ++i){
+//                     (spmv_kernel.lp_local_x)[i] = (spmv_kernel.lp_local_y)[i];
+//                     (spmv_kernel.hp_local_x)[i] = (spmv_kernel.hp_local_y)[i];
+//                 }
+//             }
+//             else{
+//                 for(int i = 0; i < local_y->size(); ++i){
 
-                    (spmv_kernel.local_x)[i] = (spmv_kernel.local_y)[i];
-                }
-            }
-            if(config->ba_synch)
-                MPI_Barrier(MPI_COMM_WORLD);
+//                     (spmv_kernel.local_x)[i] = (spmv_kernel.local_y)[i];
+//                 }
+//             }
+//             if(config->ba_synch)
+//                 MPI_Barrier(MPI_COMM_WORLD);
 
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
-                std::cout << "after_kernel and swap spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "after_kernel and swap spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
-        }
+// #ifdef DEBUG_MODE_FINE
+//             if(my_rank == 1){
+//                 std::cout << "after_kernel and swap spmv_kernel->hp_local_x" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
+//                 }
+//                 std::cout << "after_kernel and swap spmv_kernel->hp_local_y" << std::endl;
+//                 for(int i = 0; i < local_x->size(); ++i){
+//                     std::cout << spmv_kernel.hp_local_y[i] << std::endl;
+//                 }
+//             }
+// #endif
+//         }
 
-        // Bring local_x out of permuted space
-        if(config->value_type == "mp"){
-            apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
-        }
-        else{
-            apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-        }
+//         // Bring local_x out of permuted space
+//         if(config->value_type == "mp"){
+//             apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
+//         }
+//         else{
+//             apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+//         }
 
-        // Give result to local_y for results output
-        for(int i = 0; i < local_y->size(); ++i){
-            (*local_y)[i] = (sorted_local_y)[i];
-        }
-    }
+//         // Give result to local_y for results output
+//         for(int i = 0; i < local_y->size(); ++i){
+//             (*local_y)[i] = (sorted_local_y)[i];
+//         }
+//     }
 
-    // Delete the allocated space for each other process send buffers
-    for(int i = 0; i < nz_comms; ++i){
-        delete[] to_send_elems[i];
-    }
+//     // Delete the allocated space for each other process send buffers
+//     for(int i = 0; i < nz_comms; ++i){
+//         delete[] to_send_elems[i];
+//     }
 
-    double mem_matrix_b =
-            (double)sizeof(VT) * local_scs->n_elements     // values
-        + (double)sizeof(IT) * local_scs->n_chunks       // chunk_ptrs
-        + (double)sizeof(IT) * local_scs->n_chunks       // chunk_lengths
-        + (double)sizeof(IT) * local_scs->n_elements;    // col_idxs
+//     double mem_matrix_b =
+//             (double)sizeof(VT) * local_scs->n_elements     // values
+//         + (double)sizeof(IT) * local_scs->n_chunks       // chunk_ptrs
+//         + (double)sizeof(IT) * local_scs->n_chunks       // chunk_lengths
+//         + (double)sizeof(IT) * local_scs->n_elements;    // col_idxs
 
-    double mem_x_b = (double)sizeof(VT) * local_scs->n_cols;
-    double mem_y_b = (double)sizeof(VT) * local_scs->n_rows_padded;
-    double mem_b   = mem_matrix_b + mem_x_b + mem_y_b;
+//     double mem_x_b = (double)sizeof(VT) * local_scs->n_cols;
+//     double mem_y_b = (double)sizeof(VT) * local_scs->n_rows_padded;
+//     double mem_b   = mem_matrix_b + mem_x_b + mem_y_b;
 
-    r->mem_mb   = mem_b / 1e6;
-    r->mem_m_mb = mem_matrix_b / 1e6;
-    r->mem_x_mb  = mem_x_b / 1e6;
-    r->mem_y_mb  = mem_y_b / 1e6;
+//     r->mem_mb   = mem_b / 1e6;
+//     r->mem_m_mb = mem_matrix_b / 1e6;
+//     r->mem_x_mb  = mem_x_b / 1e6;
+//     r->mem_y_mb  = mem_y_b / 1e6;
 
-    r->n_rows = local_scs->n_rows;
-    r->n_cols = local_scs->n_cols;
-    r->nnz    = local_scs->nnz;
+//     r->n_rows = local_scs->n_rows;
+//     r->n_cols = local_scs->n_cols;
+//     r->nnz    = local_scs->nnz;
 
-    r->value_type_str = typeid(VT).name();
-    r->index_type_str = typeid(IT).name();
-    r->value_type_size = sizeof(VT);
-    r->index_type_size = sizeof(IT);
+//     r->value_type_str = typeid(VT).name();
+//     r->index_type_str = typeid(IT).name();
+//     r->value_type_size = sizeof(VT);
+//     r->index_type_size = sizeof(IT);
 
-    // r->was_matrix_sorted = local_scs->is_sorted;
-    r->was_matrix_sorted = 1;
+//     // r->was_matrix_sorted = local_scs->is_sorted;
+//     r->was_matrix_sorted = 1;
 
-    r->fill_in_percent = ((double)local_scs->n_elements / local_scs->nnz - 1.0) * 100.0;
-    r->C               = local_scs->C;
-    r->sigma           = local_scs->sigma;
+//     r->fill_in_percent = ((double)local_scs->n_elements / local_scs->nnz - 1.0) * 100.0;
+//     r->C               = local_scs->C;
+//     r->sigma           = local_scs->sigma;
 
     // Only relevant for mp
     r->hp_nnz = hp_local_scs->nnz;
@@ -799,6 +823,10 @@ int main(int argc, char *argv[]){
     if(my_rank == 0){printf("Beginning of USpMV main execution.\n");}
 #endif
 
+#ifdef USE_LIKWID
+    LIKWID_MARKER_INIT;
+#endif
+
     double begin_main_time = MPI_Wtime();
 
     Config config;
@@ -999,6 +1027,10 @@ int main(int argc, char *argv[]){
 
 
     MPI_Finalize();
+
+#ifdef USE_LIKWID
+    LIKWID_MARKER_CLOSE;
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("End of USpMV main execution.\n");}

@@ -79,7 +79,7 @@ ifeq ($(USE_LIKWID),1)
   ifeq ($(LIKWID_LIB),)
     $(error USE_LIKWID selected, but no library path given in LIKWID_LIB)
   endif
-  CXXFLAGS  += -DUSE_LIKWID $(LIKWID_INC) $(LIKWID_LIB) -llikwid
+  CXXFLAGS  += -DUSE_LIKWID -DLIKWID_PERFMON $(LIKWID_INC) $(LIKWID_LIB) -llikwid
 endif
 
 # ifeq ($(USE_SPMP),1)

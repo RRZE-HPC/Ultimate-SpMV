@@ -30,6 +30,36 @@ extern ScsExplicitData<float, int> explicit_exp_p1_lp_M1_scs_1_1;
 extern ScsData<double, int> exp_M1_scs_1_1;
 extern ScsExplicitData<double, int> explicit_exp_M1_scs_1_1;
 
+//////////////////////////// M1_scs_te_row test data ////////////////////////////
+extern MtxData<double, int> M1_te_row;
+extern ScsData<double, int> exp_M1_te_row_scs_1_1;
+extern ScsExplicitData<double, int> explicit_exp_M1_te_row_scs_1_1;
+
+//////////////////////////// M1_scs_me_row test data ////////////////////////////
+extern MtxData<double, int> M1_me_row;
+extern ScsData<double, int> exp_M1_me_row_scs_1_1;
+extern ScsExplicitData<double, int> explicit_exp_M1_me_row_scs_1_1;
+
+//////////////////////////// M1_scs_be_row test data ////////////////////////////
+extern MtxData<double, int> M1_be_row;
+extern ScsData<double, int> exp_M1_be_row_scs_1_1;
+extern ScsExplicitData<double, int> explicit_exp_M1_be_row_scs_1_1;
+
+//////////////////////////// M1_scs_le_col test data ////////////////////////////
+extern MtxData<double, int> M1_le_col;
+extern ScsData<double, int> exp_M1_le_col_scs_1_1;
+extern ScsExplicitData<double, int> explicit_exp_M1_le_col_scs_1_1;
+
+//////////////////////////// M1_scs_me_col test data ////////////////////////////
+extern MtxData<double, int> M1_me_col;
+extern ScsData<double, int> exp_M1_me_col_scs_1_1;
+extern ScsExplicitData<double, int> explicit_exp_M1_me_col_scs_1_1;
+
+//////////////////////////// M1_scs_be_row_re_col test data ////////////////////////////
+extern MtxData<double, int> M1_be_row_re_col;
+extern ScsData<double, int> exp_M1_be_row_re_col_scs_1_1;
+extern ScsExplicitData<double, int> explicit_exp_M1_be_row_re_col_scs_1_1;
+
 //////////////////////////// M1-hp test data ////////////////////////////
 extern MtxData<double, int> exp_M1_hp;
 extern ScsData<double, int> exp_M1_hp_scs_1_1;

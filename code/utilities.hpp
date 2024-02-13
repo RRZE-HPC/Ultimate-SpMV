@@ -1200,7 +1200,8 @@ void parse_cli_inputs(
     }
 
     if((*value_type == "mp" && *kernel_format != "crs") || (*value_type == "mp" && *kernel_format != "crs")){
-        if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
+        // NOTE: temporary, just to get betas
+        // if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
     }
 }
 

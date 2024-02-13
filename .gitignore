@@ -3,6 +3,7 @@ test_suite/tests
 tests
 verify.sh
 setup.sh
+scripts/*.txt
 verify_results.txt
 uspmv
 uspmv_validate*
