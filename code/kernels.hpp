@@ -14,7 +14,7 @@ static void
 spmv_omp_csr(const ST C, // 1
              const ST num_rows, // n_chunks
              const IT * RESTRICT row_ptrs, // chunk_ptrs
-             const IT * RESTRICT chunk_lengths, // unused
+             const IT * RESTRICT row_lengths, // unused
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
              VT * RESTRICT x,
@@ -35,21 +35,21 @@ spmv_omp_csr(const ST C, // 1
     }
 }
 
-// TODO: I don't yet know how to set-up the signature to enable kernel picker
 template <typename IT>
 static void
-spmv_omp_csr_mp(
-    const ST num_rows, // n_chunks (same for both)
+spmv_omp_csr_mp_1(
+    const ST hp_n_rows, // TODO: (same for both)
     const ST hp_C, // 1
     const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
-    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_row_lengths, // unused
     const IT * RESTRICT hp_col_idxs,
     const double * RESTRICT hp_values,
     double * RESTRICT hp_x,
     double * RESTRICT hp_y, 
+    const ST lp_n_rows, // TODO: (same for both)
     const ST lp_C, // 1
     const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
-    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_row_lengths, // unused
     const IT * RESTRICT lp_col_idxs,
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
@@ -66,7 +66,7 @@ spmv_omp_csr_mp(
             // Each thread will traverse the hp struct, then the lp struct
         // Load balancing depends on sparsity pattern AND data distribution
     #pragma omp parallel for schedule(static)
-    for (ST row = 0; row < num_rows; ++row) {
+    for (ST row = 0; row < hp_n_rows; ++row) {
         double hp_sum{};
         // #pragma nounroll
         // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
@@ -74,7 +74,10 @@ spmv_omp_csr_mp(
         for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
             hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 0){printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);}
+            if(my_rank == 1){
+                printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);
+                printf("hp_sum += %f * %f\n", hp_values[j], hp_x[hp_col_idxs[j]]);
+            }
 #endif
         }
 
@@ -85,11 +88,209 @@ spmv_omp_csr_mp(
         for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
             lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 0){printf("j = %i, lp_col_idxs[j] = %i, lp_x[hp_col_idxs[j]] = %f\n", j ,lp_col_idxs[j], lp_x[lp_col_idxs[j]]);}
+            if(my_rank == 1){
+                printf("j = %i, lp_col_idxs[j] = %i, lp_x[lp_col_idxs[j]] = %f\n", j, lp_col_idxs[j], lp_x[lp_col_idxs[j]]);
+                printf("lp_sum += %f * %f\n", lp_values[j], lp_x[lp_col_idxs[j]]);
+
+            }
 #endif
         }
 
         hp_y[row] = hp_sum + lp_sum;
+    }
+}
+
+template <typename IT>
+static void
+spmv_omp_csr_mp_2(
+    const ST hp_n_rows, // TODO: (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_n_rows, // TODO: (same for both)
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_row_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank
+    )
+{
+
+    #pragma omp parallel for schedule(static)
+    for (ST row = 0; row < hp_n_rows; ++row) {
+
+        double hp_sum{};
+        float lp_sum{};
+
+        IT hp_rs = hp_row_ptrs[row];
+        IT lp_rs = lp_row_ptrs[row];
+
+        // Should have stored beforehand?
+        IT hp_row_length = hp_row_ptrs[row+1] - hp_row_ptrs[row];
+        IT lp_row_length = lp_row_ptrs[row+1] - lp_row_ptrs[row];
+
+        IT combined_row = hp_row_length + lp_row_length;
+
+        #pragma omp simd reduction(+:hp_sum,lp_sum)
+        for (IT j = 0; j < combined_row; ++j) {
+            if(j < hp_row_length){
+                hp_sum += hp_values[hp_rs + j] * hp_x[hp_col_idxs[hp_rs + j]];
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){
+                printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);
+                printf("hp_sum += %f * %f\n", hp_values[j], hp_x[hp_col_idxs[j]]);
+            }
+#endif
+            }
+            else{
+                IT lp_shift_j = j - hp_row_length;
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){
+                printf("lp_rs + lp_shift_j = %i\n", lp_rs + lp_shift_j);
+                printf("lp_col_idxs[lp_rs + lp_shift_j] = %i\n", lp_col_idxs[lp_rs + lp_shift_j]);
+                printf("lp_x[lp_col_idxs[lp_rs + lp_shift_j]] = %f\n", lp_x[lp_col_idxs[lp_rs + lp_shift_j]]);
+                printf("lp_values[lp_rs + lp_shift_j] = %f\n", lp_values[lp_rs + lp_shift_j]);
+            }
+#endif
+                lp_sum += lp_values[lp_rs + lp_shift_j] * lp_x[lp_col_idxs[lp_rs + lp_shift_j]];
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){
+                printf("lp_rs + lp_shift_j = %i, lp_col_idxs[lp_rs + lp_shift_j] = %i, lp_x[lp_col_idxs[lp_rs + lp_shift_j]] = %f\n", lp_rs + lp_shift_j, lp_col_idxs[lp_rs + lp_shift_j], lp_x[lp_col_idxs[lp_rs + lp_shift_j]]);
+                printf("lp_sum += %f * %f\n", lp_values[lp_rs + lp_shift_j], lp_x[lp_col_idxs[lp_rs + lp_shift_j]]);
+
+            }
+#endif
+            }
+        }
+        // ^ at this point, it's basically just SCS, C=1...
+
+        hp_y[row] = hp_sum + lp_sum;
+    }
+}
+
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+template <typename IT>
+static void
+spmv_omp_scs_mp_1(
+    const ST hp_n_chunks, // n_chunks (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_n_chunks, // n_chunks (same for both)
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank
+)
+{
+    #pragma omp parallel for schedule(static)
+    for (ST c = 0; c < hp_n_chunks; ++c) {
+        double hp_tmp[hp_C];
+        float lp_tmp[hp_C];
+
+        for (ST i = 0; i < hp_C; ++i) {
+            hp_tmp[i] = 0.0;
+        }
+        for (ST i = 0; i < hp_C; ++i) {
+            lp_tmp[i] = 0.0f;
+        }
+
+        IT hp_cs = hp_chunk_ptrs[c];
+        IT lp_cs = lp_chunk_ptrs[c];
+
+        for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
+            for (IT i = 0; i < hp_C; ++i) {
+                hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
+            }
+        }
+        for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
+            for (IT i = 0; i < hp_C; ++i) {
+                lp_tmp[i] += lp_values[lp_cs + j * hp_C + i] * lp_x[lp_col_idxs[lp_cs + j * hp_C + i]];
+            }
+        }
+
+        for (ST i = 0; i < hp_C; ++i) {
+            hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
+        }
+    }
+}
+
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+template <typename IT>
+static void
+spmv_omp_scs_mp_2(
+    const ST hp_n_chunks, // n_chunks (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_n_chunks, // n_chunks (same for both)
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank
+)
+{
+    #pragma omp parallel for schedule(static)
+    for (ST c = 0; c < hp_n_chunks; ++c) {
+        double hp_tmp[hp_C];
+        float lp_tmp[hp_C];
+
+        for (ST i = 0; i < hp_C; ++i) {
+            hp_tmp[i] = 0.0;
+        }
+        for (ST i = 0; i < hp_C; ++i) {
+            lp_tmp[i] = 0.0f;
+        }
+
+        IT hp_cs = hp_chunk_ptrs[c];
+        IT lp_cs = lp_chunk_ptrs[c];
+
+        IT combined_chunk = hp_chunk_lengths[c]+lp_chunk_lengths[c];
+
+        for (IT j = 0; j < combined_chunk; ++j) {
+            if(j < hp_chunk_lengths[c]){
+                for (IT i = 0; i < hp_C; ++i) {
+                    hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
+                }  
+            }
+            else{
+                IT lp_shift_j = j - hp_chunk_lengths[c];
+                for (IT i = 0; i < hp_C; ++i) {
+                    lp_tmp[i] += lp_values[lp_cs + lp_shift_j * hp_C + i] * lp_x[lp_col_idxs[lp_cs + lp_shift_j * hp_C + i]];
+                }
+            }
+        }
+
+        for (ST i = 0; i < hp_C; ++i) {
+            hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
+        }
     }
 }
 

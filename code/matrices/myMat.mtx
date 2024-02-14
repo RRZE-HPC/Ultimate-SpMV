@@ -1,10 +1,10 @@
-%%MatrixMarket matrix coordinate integer general
+%%MatrixMarket matrix coordinate real general
 5 5 9
-1 1  11
+1 1  .11
 1 4  14
 1 5  15
 2 2  22
-3 1  31
+3 1  .31
 3 2  32
 3 3  33
 4 4  44

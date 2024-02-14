@@ -155,16 +155,16 @@ struct TwoPrecKernelArgs
 {
     // TwoPrecKernelArgs::TwoPrecKernelArgs();
 
-    ST num_rows; // n_chunks (same for both)
-    ST hp_C; // 1
-    IT * RESTRICT hp_row_ptrs;
+    ST n_chunks; // (same for both)
+    ST hp_C;
+    IT * RESTRICT hp_chunk_ptrs;
     IT * RESTRICT hp_chunk_lengths;
     IT * RESTRICT hp_col_idxs;
     double * RESTRICT hp_values;
     double * RESTRICT hp_local_x;
     double * RESTRICT hp_local_y;
-    ST lp_C; // 1
-    IT * RESTRICT lp_row_ptrs; // lp_chunk_ptrs
+    ST lp_C;
+    IT * RESTRICT lp_chunk_ptrs;
     IT * RESTRICT lp_chunk_lengths;
     IT * RESTRICT lp_col_idxs;
     float * RESTRICT lp_values;
@@ -175,17 +175,6 @@ struct TwoPrecKernelArgs
 template <typename VT, typename IT>
 class SpmvKernel {
     private:
-        // typedef std::function<void(
-        //     const ST, // C
-        //     const ST, // n_chunks
-        //     const IT *, // chunk_ptrs
-        //     const IT *, // chunk_lengths
-        //     const IT *, // col_idxs
-        //     const VT *, // values
-        //     VT *, // x
-        //     VT * //y
-        // )> CommPrecFuncPtr;
-
         typedef std::function<void(
             const ST, // C
             const ST, // n_chunks
@@ -199,7 +188,7 @@ class SpmvKernel {
         )> OnePrecFuncPtr;
 
         typedef std::function<void(
-            const ST, // n_chunks // TODO same, for now.
+            const ST, // hp_n_chunks // TODO same, for now.
             const ST, // hp_C
             const IT * RESTRICT, // hp_chunk_ptrs
             const IT * RESTRICT, // hp_chunk_lengths
@@ -207,6 +196,7 @@ class SpmvKernel {
             const double * RESTRICT, // hp_values
             double * RESTRICT, // hp_x
             double * RESTRICT, // hp_y
+            const ST, // lp_n_chunks // TODO same, for now.
             const ST, // lp_C
             const IT * RESTRICT, // lp_chunk_ptrs
             const IT * RESTRICT, // lp_chunk_lengths
@@ -237,14 +227,15 @@ class SpmvKernel {
         const VT * RESTRICT values = one_prec_kernel_args_decoded->values;
 
         // Just need different names on all of unpacked args
-        const ST num_rows = two_prec_kernel_args_decoded->num_rows; // TODO same, for now.
+        const ST hp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
         const ST hp_C = two_prec_kernel_args_decoded->hp_C;
-        const IT * RESTRICT hp_row_ptrs = two_prec_kernel_args_decoded->hp_row_ptrs;
+        const IT * RESTRICT hp_chunk_ptrs = two_prec_kernel_args_decoded->hp_chunk_ptrs;
         const IT * RESTRICT hp_chunk_lengths = two_prec_kernel_args_decoded->hp_chunk_lengths;
         const IT * RESTRICT hp_col_idxs = two_prec_kernel_args_decoded->hp_col_idxs;
         const double * RESTRICT hp_values = two_prec_kernel_args_decoded->hp_values;
+        const ST lp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
         const ST lp_C = two_prec_kernel_args_decoded->lp_C;
-        const IT * RESTRICT lp_row_ptrs = two_prec_kernel_args_decoded->lp_row_ptrs;
+        const IT * RESTRICT lp_chunk_ptrs = two_prec_kernel_args_decoded->lp_chunk_ptrs;
         const IT * RESTRICT lp_chunk_lengths = two_prec_kernel_args_decoded->lp_chunk_lengths;
         const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
         const float * RESTRICT lp_values = two_prec_kernel_args_decoded->lp_values; 
@@ -278,47 +269,62 @@ class SpmvKernel {
 
         SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
             if(config->value_type == "mp"){
-                if(my_rank == 0)
-                    std::cout << "MP-CRS kernel selected" << std::endl;   
-                two_prec_kernel_func_ptr = spmv_omp_csr_mp<IT>;
+                if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+                    if(my_rank == 0)
+                        std::cout << "MP-CRS kernel selected" << std::endl;   
+                    two_prec_kernel_func_ptr = spmv_omp_csr_mp_1<IT>;
+                    // two_prec_kernel_func_ptr = spmv_omp_csr_mp_2<IT>;
+                }
+                else if(config->kernel_format == "scs"){
+                    if(my_rank == 0)
+                        std::cout << "MP-SCS kernel selected" << std::endl;   
+                    two_prec_kernel_func_ptr = spmv_omp_scs_mp_1<IT>;
+                    // two_prec_kernel_func_ptr = spmv_omp_scs_mp_2<IT>;
+                }
+                else {
+                    std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
+                    exit(1);
+                }
             }
-            else if (config->kernel_format == "crs" || config->kernel_format == "csr"){
-                if(my_rank == 0)
-                    std::cout << "CRS kernel selected" << std::endl;
-                // TODO: More performant to just instantiate template here?
-                one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
-            }
-            else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
-                if(my_rank == 0)
-                    std::cout << "ELL_rm kernel selected" << std::endl;
-                one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
-            }
-            else if (config->kernel_format == "ell_cm"){
-                if(my_rank == 0)
-                    std::cout << "ELL_cm kernel selected" << std::endl;
-                one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
-            }
-            else if (config->kernel_format == "scs" 
-                && config->chunk_size != 1
-                && config->chunk_size != 2 
-                && config->chunk_size != 4
-                && config->chunk_size != 8
-                && config->chunk_size != 16
-                && config->chunk_size != 32
-                && config->chunk_size != 64){
-                if(my_rank == 0)
-                    std::cout << "SCS kernel selected" << std::endl;
-                one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
-            }
-            else if (config->kernel_format == "scs"){
-                // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
-                if(my_rank == 0)
-                    std::cout << "Advanced SCS kernel selected" << std::endl;
-                one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
-            }
-            else {
-                std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
-                exit(1);
+            else if(config->value_type != "mp"){
+                if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+                    if(my_rank == 0)
+                        std::cout << "CRS kernel selected" << std::endl;
+                    // TODO: More performant to just instantiate template here?
+                    one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
+                }
+                else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
+                    if(my_rank == 0)
+                        std::cout << "ELL_rm kernel selected" << std::endl;
+                    one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
+                }
+                else if (config->kernel_format == "ell_cm"){
+                    if(my_rank == 0)
+                        std::cout << "ELL_cm kernel selected" << std::endl;
+                    one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
+                }
+                else if (config->kernel_format == "scs"){
+                    // && config->chunk_size != 1
+                    // && config->chunk_size != 2 
+                    // && config->chunk_size != 4
+                    // && config->chunk_size != 8
+                    // && config->chunk_size != 16
+                    // && config->chunk_size != 32
+                    // && config->chunk_size != 64){
+                    if(my_rank == 0)
+                        std::cout << "SCS kernel selected" << std::endl;
+                    one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                }
+                // else if (config->kernel_format == "scs"){
+                //     // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
+                //     if(my_rank == 0)
+                //         std::cout << "Advanced SCS kernel selected" << std::endl;
+                //     one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                // }
+                else {
+                    std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
+                    exit(1);
+                }
             }
         }
 
@@ -481,47 +487,48 @@ class SpmvKernel {
         }
 
         inline void execute_spmv(void){
-            // TODO: validate performance, likely bad
-            if(config->value_type == "mp")
+            one_prec_kernel_func_ptr(
+                C,
+                n_chunks,
+                chunk_ptrs,
+                chunk_lengths,
+                col_idxs,
+                values,
+                local_x,
+                local_y,
+                my_rank
+            );
+        }
+
+        inline void execute_mp_spmv(void){
                 two_prec_kernel_func_ptr(
-                    num_rows, // n_chunks (same for both)
-                    hp_C, // 1
-                    hp_row_ptrs, // hp_chunk_ptrs
-                    hp_chunk_lengths, // unused
+                    hp_n_chunks,
+                    hp_C,
+                    hp_chunk_ptrs,
+                    hp_chunk_lengths,
                     hp_col_idxs,
                     hp_values,
                     hp_local_x,
                     hp_local_y, 
-                    lp_C, // 1
-                    lp_row_ptrs, // lp_chunk_ptrs
-                    lp_chunk_lengths, // unused
+                    lp_n_chunks,
+                    lp_C,
+                    lp_chunk_ptrs,
+                    lp_chunk_lengths,
                     lp_col_idxs,
                     lp_values,
                     lp_local_x,
-                    lp_local_y, // unused
-                    my_rank
-                );
-            else
-                one_prec_kernel_func_ptr(
-                    C,
-                    n_chunks,
-                    chunk_ptrs,
-                    chunk_lengths,
-                    col_idxs,
-                    values,
-                    local_x,
-                    local_y,
+                    lp_local_y,
                     my_rank
                 );
         }
 
         // TODO: bad. can likely avoid
-        inline void distribute_halos(){
+        inline void distribute_mp_halos(){
             // With mp, all communication will happen in double prec. on the hp_comm_x, 
-            // 
-            for(int i = 0; i < num_rows; ++i){
-                hp_local_x[i] = static_cast<double>(hp_comm_x[i]);
-                lp_local_x[i] = static_cast<float>(hp_comm_x[i]);
+            // distributes only the halo elements to lp_local_x
+            int halo_elements = local_context->recv_counts_cumsum.back();
+            for(int i = 0; i < halo_elements; ++i){
+                lp_local_x[hp_n_chunks + i] = static_cast<float>(hp_comm_x[hp_n_chunks + i]);
             }
         }
 
