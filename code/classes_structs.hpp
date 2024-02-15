@@ -66,7 +66,7 @@ struct Config
     char mode = 'b'; 
 
     // Runs benchmark for a specified number of seconds
-    double bench_time = 0.0;
+    double bench_time = 10.0;
 
     // Mixed Precision bucket size, used for partitioning matrix
     double bucket_size = 1.0;
@@ -122,9 +122,6 @@ struct CommArgs
     Config *config;
     ContextData<IT> *local_context;
     const IT *perm;
-    VT *comm_x;
-    double *hp_comm_x;
-    float *lp_comm_x;
     VT **to_send_elems;
     const IT *work_sharing_arr;
     // const IT *perm; // TODO: perms, i.e. from METIS, need to be included
@@ -246,7 +243,6 @@ class SpmvKernel {
         const IT *perm = comm_args_decoded->perm;
         VT **to_send_elems = comm_args_decoded->to_send_elems;
         const IT *work_sharing_arr = comm_args_decoded->work_sharing_arr;
-        // const IT *perm = comm_args_decoded->perm; // TODO
         MPI_Request *recv_requests = comm_args_decoded->recv_requests;
         const IT nzs_size = *(comm_args_decoded->nzs_size);
         MPI_Request *send_requests = comm_args_decoded->send_requests;
@@ -258,13 +254,10 @@ class SpmvKernel {
     public:
         VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
         VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
-        VT * RESTRICT comm_x = comm_args_decoded->comm_x;
         double * RESTRICT hp_local_x = two_prec_kernel_args_decoded->hp_local_x;
         double * RESTRICT hp_local_y = two_prec_kernel_args_decoded->hp_local_y;
-        double * RESTRICT hp_comm_x = comm_args_decoded->hp_comm_x;
         float * RESTRICT lp_local_x = two_prec_kernel_args_decoded->lp_local_x;
         float * RESTRICT lp_local_y = two_prec_kernel_args_decoded->lp_local_y;
-        float * RESTRICT lp_comm_x = comm_args_decoded->lp_comm_x;
         
 
         SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
@@ -343,7 +336,7 @@ class SpmvKernel {
                 if (typeid(VT) == typeid(float))
                 {
                     MPI_Irecv(
-                        &(comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                         incoming_buf_size,
                         MPI_FLOAT,
                         sending_proc,
@@ -354,7 +347,7 @@ class SpmvKernel {
                 }
                 else if(typeid(VT) == typeid(double)){
                     MPI_Irecv(
-                        &(comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                         incoming_buf_size,
                         MPI_DOUBLE,
                         sending_proc,
@@ -381,7 +374,7 @@ class SpmvKernel {
                 // Move non-contiguous data to a contiguous buffer for communication
                 #pragma omp parallel for if(config->par_pack)   
                 for(int i = 0; i < outgoing_buf_size; ++i)
-                    (to_send_elems[to_proc_idx])[i] = comm_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
+                    (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
                 
 #ifdef DEBUG_MODE
                 std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
@@ -432,7 +425,7 @@ class SpmvKernel {
                 std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 #endif
                 MPI_Irecv(
-                    &(hp_comm_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                    &(hp_local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
                     incoming_buf_size,
                     MPI_DOUBLE,
                     sending_proc,
@@ -460,7 +453,7 @@ class SpmvKernel {
                 // Move non-contiguous data to a contiguous buffer for communication
                 #pragma omp parallel for if(config->par_pack)
                 for(int i = 0; i < outgoing_buf_size; ++i){
-                    (to_send_elems[to_proc_idx])[i] = hp_comm_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
+                    (to_send_elems[to_proc_idx])[i] = hp_local_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
 #ifdef DEBUG_MODE
                     if(my_rank == 1)
                         std::cout << "I'm proc: " << my_rank << ", sending the element: " << (to_send_elems[to_proc_idx])[i] << std::endl;
@@ -523,35 +516,29 @@ class SpmvKernel {
         }
 
         // TODO: bad. can likely avoid
-        inline void distribute_mp_halos(){
-            // With mp, all communication will happen in double prec. on the hp_comm_x, 
+        inline void copy_hp_halos_to_lp(){
+            // With mp, all communication will happen in double prec. on the hp_local_x, 
             // distributes only the halo elements to lp_local_x
             int halo_elements = local_context->recv_counts_cumsum.back();
             for(int i = 0; i < halo_elements; ++i){
-                lp_local_x[hp_n_chunks + i] = static_cast<float>(hp_comm_x[hp_n_chunks + i]);
+                lp_local_x[hp_n_chunks + i] = static_cast<float>(hp_local_x[hp_n_chunks + i]);
             }
         }
 
-        // TODO: Honestly, just so bad. Template or something...
-        inline void swap_with_x(VT * RESTRICT vec_to_swap){
-            std::swap(vec_to_swap, local_x);
-        }
-        inline void swap_with_y(VT * RESTRICT vec_to_swap){
-            std::swap(vec_to_swap, local_y);
-        }
-        inline void swap_with_hp_x(double * RESTRICT vec_to_swap){
-            std::swap(vec_to_swap, hp_local_x);
-        }
-        inline void swap_with_hp_y(double * RESTRICT vec_to_swap){
-            std::swap(vec_to_swap, hp_local_y);
-        }
-        inline void swap_with_lp_x(float * RESTRICT vec_to_swap){
-            std::swap(vec_to_swap, lp_local_x);
-        }
-        inline void swap_with_lp_y(float * RESTRICT vec_to_swap){
-            std::swap(vec_to_swap, lp_local_y);
+        inline void copy_hp_results_to_lp(){
+            for(int i = 0; i < local_context->num_local_rows; ++i){
+                lp_local_y[i] = static_cast<float>(hp_local_y[i]);
+            }
         }
 
+        inline void swap_local_vectors(){
+            std::swap(local_x, local_y);
+        }
+
+        inline void swap_local_mp_vectors(){
+            std::swap(lp_local_x, lp_local_y);
+            std::swap(hp_local_x, hp_local_y);
+        }
 };
 
 

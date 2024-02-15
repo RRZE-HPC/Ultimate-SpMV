@@ -1,6 +1,10 @@
 #ifndef KERNELS
 #define KERNELS
 
+#ifdef USE_LIKWID
+#include <likwid-marker.h>
+#endif
+
 #define RESTRICT				__restrict__
 
 // SpMV kernels for computing  y = A * x, where A is a sparse matrix
@@ -21,17 +25,27 @@ spmv_omp_csr(const ST C, // 1
              VT * RESTRICT y,
              int my_rank)
 {
-    #pragma omp parallel for schedule(static)
-    for (ST row = 0; row < num_rows; ++row) {
-        VT sum{};
-        // #pragma nounroll
-        #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
-        for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
-            // if(my_rank == 1){printf("j = %i, col_idxs[j] = %i, x[col_idxs[j]] = %f\n", j ,col_idxs[j], x[col_idxs[j]]);}
+    #pragma omp parallel 
+    {   
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("spmv_benchmark");
+#endif
+        #pragma omp for nowait schedule(static)
+        for (ST row = 0; row < num_rows; ++row) {
+            VT sum{};
+            // #pragma nounroll
+            // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
+            #pragma omp simd reduction(+:sum)
+            for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
+                // if(my_rank == 1){printf("j = %i, col_idxs[j] = %i, x[col_idxs[j]] = %f\n", j ,col_idxs[j], x[col_idxs[j]]);}
 
-            sum += values[j] * x[col_idxs[j]];
+                sum += values[j] * x[col_idxs[j]];
+            }
+            y[row] = sum;
         }
-        y[row] = sum;
+#ifdef USE_LIKWID
+    LIKWID_MARKER_STOP("spmv_benchmark");
+#endif
     }
 }
 
@@ -65,38 +79,52 @@ spmv_omp_csr_mp_1(
     // }
             // Each thread will traverse the hp struct, then the lp struct
         // Load balancing depends on sparsity pattern AND data distribution
-    #pragma omp parallel for schedule(static)
-    for (ST row = 0; row < hp_n_rows; ++row) {
-        double hp_sum{};
-        // #pragma nounroll
-        // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
-        #pragma omp simd reduction(+:hp_sum)
-        for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
-            hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("spmv_benchmark");
+#endif
+        #pragma omp for schedule(static)
+        for (ST row = 0; row < hp_n_rows; ++row) {
+            double hp_sum{};
+            // #pragma nounroll
+            // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
+            // #pragma omp simd reduction(+:hp_sum)
+            // #pragma omp simd nowait
+            #pragma omp simd reduction(+:hp_sum)
+            for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+                hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
+            if(my_rank == 0){
                 printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);
                 printf("hp_sum += %f * %f\n", hp_values[j], hp_x[hp_col_idxs[j]]);
             }
 #endif
-        }
+            }
 
-        float lp_sum{};
-        // #pragma nounroll
-        // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
-        #pragma omp simd reduction(+:lp_sum)
-        for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
-            lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+            float lp_sum{};
+            // #pragma nounroll
+            // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+            // #pragma omp simd reduction(+:lp_sum)
+            // #pragma omp simd nowait
+
+            #pragma omp simd reduction(+:lp_sum)
+            for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
+                lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
+            if(my_rank == 0){
                 printf("j = %i, lp_col_idxs[j] = %i, lp_x[lp_col_idxs[j]] = %f\n", j, lp_col_idxs[j], lp_x[lp_col_idxs[j]]);
                 printf("lp_sum += %f * %f\n", lp_values[j], lp_x[lp_col_idxs[j]]);
 
             }
 #endif
-        }
+            }
 
-        hp_y[row] = hp_sum + lp_sum;
+            hp_y[row] = hp_sum + lp_sum;
+        }
+#ifdef USE_LIKWID
+    LIKWID_MARKER_STOP("spmv_benchmark");
+#endif
     }
 }
 

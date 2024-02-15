@@ -1,13 +1,13 @@
 COMPILER = icx
 VECTOR_LENGTH = 2
 DEBUG_MODE = 0
-DEBUG_MODE_FINE = 0
+DEBUG_MODE_FINE = 1
 OUTPUT_SPARSITY = 0
 
 # 0/1 library usage
 USE_METIS = 1
 # USE_SPMP = 0
-USE_LIKWID = 0
+USE_LIKWID = 1
 
 # compiler options
 ifeq ($(COMPILER),gcc)
