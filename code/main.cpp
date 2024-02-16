@@ -177,7 +177,6 @@ void bench_spmv(
                 spmv_kernel.finalize_mp_halo_exchange();
                 spmv_kernel.copy_hp_halos_to_lp();
                 spmv_kernel.execute_mp_spmv();
-                spmv_kernel.copy_hp_results_to_lp();
                 spmv_kernel.swap_local_mp_vectors();
 
                 if(config->ba_synch)
@@ -232,7 +231,6 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                         spmv_kernel.finalize_mp_halo_exchange();
                         spmv_kernel.copy_hp_halos_to_lp();
                         spmv_kernel.execute_mp_spmv();
-                        spmv_kernel.copy_hp_results_to_lp();
                         spmv_kernel.swap_local_mp_vectors();
 
                         if(config->ba_synch)
@@ -253,7 +251,6 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                     for(int k=0; k<n_iter; ++k) {
 
                         spmv_kernel.execute_spmv();
-
                         spmv_kernel.swap_local_vectors();
 
                         if(config->ba_synch)
@@ -272,7 +269,6 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                     for(int k=0; k<n_iter; ++k) {
                         
                         spmv_kernel.execute_mp_spmv();
-                        spmv_kernel.copy_hp_results_to_lp();
                         spmv_kernel.swap_local_mp_vectors();
 
                         if(config->ba_synch)
@@ -479,9 +475,9 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
 
     delete[] recv_requests;
     delete[] send_requests;
-    delete[] comm_args_encoded;
-    delete[] one_prec_kernel_args_encoded;
-    delete[] two_prec_kernel_args_encoded;
+    delete comm_args_encoded;
+    delete one_prec_kernel_args_encoded;
+    delete two_prec_kernel_args_encoded;
 }
 
 /**

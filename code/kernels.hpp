@@ -30,7 +30,7 @@ spmv_omp_csr(const ST C, // 1
 #ifdef USE_LIKWID
         LIKWID_MARKER_START("spmv_benchmark");
 #endif
-        #pragma omp for nowait schedule(static)
+        #pragma omp for schedule(static)
         for (ST row = 0; row < num_rows; ++row) {
             VT sum{};
             // #pragma nounroll
@@ -79,20 +79,19 @@ spmv_omp_csr_mp_1(
     // }
             // Each thread will traverse the hp struct, then the lp struct
         // Load balancing depends on sparsity pattern AND data distribution
-    #pragma omp parallel
-    {
-#ifdef USE_LIKWID
-        LIKWID_MARKER_START("spmv_benchmark");
-#endif
-        #pragma omp for schedule(static)
+//     #pragma omp parallel
+//     {
+// #ifdef USE_LIKWID
+//         LIKWID_MARKER_START("spmv_benchmark");
+// #endif
+        #pragma omp parallel for schedule(static)
         for (ST row = 0; row < hp_n_rows; ++row) {
             double hp_sum{};
             // #pragma nounroll
             // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
-            // #pragma omp simd reduction(+:hp_sum)
-            // #pragma omp simd nowait
+
             #pragma omp simd reduction(+:hp_sum)
-            for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+            for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row+1]; ++j) {
                 hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
@@ -101,13 +100,13 @@ spmv_omp_csr_mp_1(
             }
 #endif
             }
+            
 
             float lp_sum{};
-            // #pragma nounroll
-            // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
-            // #pragma omp simd reduction(+:lp_sum)
-            // #pragma omp simd nowait
-
+//             // #pragma nounroll
+//             // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+//             // #pragma omp simd reduction(+:lp_sum)
+//             // #pragma omp simd nowait
             #pragma omp simd reduction(+:lp_sum)
             for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
                 lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
@@ -120,12 +119,16 @@ spmv_omp_csr_mp_1(
 #endif
             }
 
-            hp_y[row] = hp_sum + lp_sum;
+            hp_y[row] = hp_sum + lp_sum; // implicit conversion to double
+            lp_y[row] = hp_sum + lp_sum; // implicit conversion to float. 
+            // ^ Required when performing multiple SpMVs 
+            // Assumes hp_sum + lp_sum is in the range of numbers representable by float
         }
-#ifdef USE_LIKWID
-    LIKWID_MARKER_STOP("spmv_benchmark");
-#endif
-    }
+
+// #ifdef USE_LIKWID
+//     LIKWID_MARKER_STOP("spmv_benchmark");
+// #endif
+//     }
 }
 
 template <typename IT>
