@@ -4,6 +4,7 @@
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "write_results.hpp"
+#include "timing.h"
 
 #include <cinttypes>
 #include <cstring>
@@ -15,6 +16,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+
 
 #define WARM_UP_REPS 100
 
@@ -60,6 +62,8 @@ void bench_spmv(
     int my_rank,
     int comm_size)
 {
+
+#ifdef USE_MPI
     // Allocate a send buffer for each process we're sending a message to
     int nz_comms = local_context->non_zero_receivers.size();
     int nz_recver;
@@ -76,19 +80,19 @@ void bench_spmv(
     // Delare MPI requests for non-blocking communication
     MPI_Request *recv_requests = new MPI_Request[local_context->non_zero_senders.size()];
     MPI_Request *send_requests = new MPI_Request[local_context->non_zero_receivers.size()];
+#endif
 
     // Permute x, in order to match the permutation which was done to the columns
     std::vector<VT> local_x_permuted(local_x->size(), 0);
-    // apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
+    std::vector<float> lp_local_x_permuted(local_x->size(), 0);
 
     apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
-    std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
-    apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
-
-    std::vector<float> lp_local_x_permuted(local_x->size(), 0);
-    apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
-    // ^not to sure about new_to_old, TODO:verify this
+    if(config->value_type == "mp"){
+        apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+        apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(lp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    }
 
     void *comm_args_void_ptr;
     void *kernel_args_void_ptr;
@@ -117,6 +121,12 @@ void bench_spmv(
         // two_prec_kernel_args_encoded->lp_local_x = &(*lp_local_x)[0];
         two_prec_kernel_args_encoded->lp_local_x = &(lp_local_x_permuted)[0];
         two_prec_kernel_args_encoded->lp_local_y = &(*lp_local_y)[0];
+
+        two_prec_kernel_args_encoded->lp_perm = &(lp_local_scs->old_to_new_idx)[0];
+        two_prec_kernel_args_encoded->hp_perm = &(hp_local_scs->old_to_new_idx)[0];
+        two_prec_kernel_args_encoded->lp_inv_perm = &(lp_local_scs->new_to_old_idx)[0];
+        two_prec_kernel_args_encoded->hp_inv_perm = &(hp_local_scs->new_to_old_idx)[0];
+
         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
     }
     else{   
@@ -133,6 +143,7 @@ void bench_spmv(
         kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
     }
 
+#ifdef USE_MPI
     // Encode comm args into struct
     comm_args_encoded->local_context = local_context;
     comm_args_encoded->to_send_elems = to_send_elems;
@@ -143,6 +154,8 @@ void bench_spmv(
     comm_args_encoded->send_requests = send_requests;
     comm_args_encoded->nzr_size = &nzr_size;
     comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
+#endif
+
     comm_args_encoded->my_rank = &my_rank;
     comm_args_encoded->comm_size = &comm_size;
     comm_args_void_ptr = (void*) comm_args_encoded;
@@ -152,93 +165,131 @@ void bench_spmv(
 
     // Enter main COMM-SPMV-SWAP loop, bench mode
     if(config->mode == 'b'){
+#ifdef USE_MPI
         MPI_Barrier(MPI_COMM_WORLD);
+#endif
 
         // Warm-up
         double begin_warm_up_loop_time, end_warm_up_loop_time;
+#ifdef USE_MPI
         begin_warm_up_loop_time = MPI_Wtime();
+#else
+        begin_warm_up_loop_time = getTimeStamp();
+#endif
 
         if(config->value_type != "mp"){
             for(int k = 0; k < WARM_UP_REPS; ++k){
-
+#ifdef USE_MPI
                 spmv_kernel.init_halo_exchange();
                 spmv_kernel.finalize_halo_exchange();
+#endif
                 spmv_kernel.execute_spmv();
                 spmv_kernel.swap_local_vectors();
-
+#ifdef USE_MPI
                 if(config->ba_synch)
                     MPI_Barrier(MPI_COMM_WORLD);
+#endif
             }
         }
         else if(config->value_type == "mp"){
             for(int k = 0; k < WARM_UP_REPS; ++k){
-
+#ifdef USE_MPI
                 spmv_kernel.init_mp_halo_exchange();
                 spmv_kernel.finalize_mp_halo_exchange();
                 spmv_kernel.copy_hp_halos_to_lp();
+#endif
                 spmv_kernel.execute_mp_spmv();
                 spmv_kernel.swap_local_mp_vectors();
-
+#ifdef USE_MPI
                 if(config->ba_synch)
                     MPI_Barrier(MPI_COMM_WORLD);
+#endif
             }
         }
 
+#ifdef USE_MPI
         end_warm_up_loop_time = MPI_Wtime();
+#else
+        end_warm_up_loop_time = getTimeStamp();
+#endif
 
-        double begin_bench_loop_time, end_bench_loop_time;
+        double begin_bench_loop_time, end_bench_loop_time = 0.0;
 
         // Use user-defined time limit to calculate n_iter
-        double runtime = 0.0;
+        double runtime;
         int n_iter = 1;
         int all_procs_finished = 0;
-        // begin_bench_loop_time = MPI_Wtime();
-        // MPI_Barrier(MPI_COMM_WORLD);
+
 #ifdef USE_LIKWID
 #pragma omp parallel
 {
 LIKWID_MARKER_REGISTER("spmv_benchmark");
 }
 #endif
+
         if(config->comm_halos){
             if(config->value_type != "mp"){
                 do{
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
                     begin_bench_loop_time = MPI_Wtime();
+#else
+                    begin_bench_loop_time = getTimeStamp();
+#endif
                     for(int k=0; k<n_iter; ++k) {
-
+#ifdef USE_MPI
                         spmv_kernel.init_halo_exchange();
                         spmv_kernel.finalize_halo_exchange();
+#endif
                         spmv_kernel.execute_spmv();
                         spmv_kernel.swap_local_vectors();
-
+#ifdef USE_MPI
                         if(config->ba_synch)
                             MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     }
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     n_iter = n_iter*2;
+#ifdef USE_MPI
                     runtime = MPI_Wtime() - begin_bench_loop_time;
+#else
+                    runtime = getTimeStamp() - begin_bench_loop_time;
+#endif
                 } while (runtime < config->bench_time);
                 n_iter = n_iter/2;
             }
             else if(config->value_type == "mp"){
                 do{
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
                     begin_bench_loop_time = MPI_Wtime();
+#else
+                    begin_bench_loop_time = getTimeStamp();
+#endif
                     for(int k=0; k<n_iter; ++k) {
-
+#ifdef USE_MPI
                         spmv_kernel.init_mp_halo_exchange();
                         spmv_kernel.finalize_mp_halo_exchange();
                         spmv_kernel.copy_hp_halos_to_lp();
+#endif
                         spmv_kernel.execute_mp_spmv();
                         spmv_kernel.swap_local_mp_vectors();
-
+#ifdef USE_MPI
                         if(config->ba_synch)
                             MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     }
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     n_iter = n_iter*2;
+#ifdef USE_MPI
                     runtime = MPI_Wtime() - begin_bench_loop_time;
+#else
+                    runtime = getTimeStamp() - begin_bench_loop_time;
+#endif
                 } while (runtime < config->bench_time);
                 n_iter = n_iter/2;
             }
@@ -246,37 +297,59 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
         else if(!config->comm_halos){
             if(config->value_type != "mp"){
                 do{
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
                     begin_bench_loop_time = MPI_Wtime();
+#else
+                    begin_bench_loop_time = getTimeStamp();
+#endif
                     for(int k=0; k<n_iter; ++k) {
 
                         spmv_kernel.execute_spmv();
                         spmv_kernel.swap_local_vectors();
-
+#ifdef USE_MPI
                         if(config->ba_synch)
                             MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     }
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     n_iter = n_iter*2;
+#ifdef USE_MPI
                     runtime = MPI_Wtime() - begin_bench_loop_time;
+#else
+                    runtime = getTimeStamp() - begin_bench_loop_time;
+#endif
                 } while (runtime < config->bench_time);
                 n_iter = n_iter/2;
             }
             else if(config->value_type == "mp"){
                 do{
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
                     begin_bench_loop_time = MPI_Wtime();
+#else
+                    begin_bench_loop_time = getTimeStamp();
+#endif
                     for(int k=0; k<n_iter; ++k) {
                         
                         spmv_kernel.execute_mp_spmv();
                         spmv_kernel.swap_local_mp_vectors();
-
+#ifdef USE_MPI
                         if(config->ba_synch)
                             MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     }
+#ifdef USE_MPI
                     MPI_Barrier(MPI_COMM_WORLD);
+#endif
                     n_iter = n_iter*2;
+#ifdef USE_MPI
                     runtime = MPI_Wtime() - begin_bench_loop_time;
+#else
+                    runtime = getTimeStamp() - begin_bench_loop_time;
+#endif
                 } while (runtime < config->bench_time);
                 n_iter = n_iter/2;
             }
@@ -295,7 +368,7 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
         for (int i = 0; i < config->n_repetitions; ++i)
         {
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
+            if(my_rank == 0){
                 std::cout << "before comm spmv_kernel->local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.local_x[i] << std::endl;
@@ -308,10 +381,12 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
 #endif
 
             if(config->value_type == "mp"){
+#ifdef USE_MPI
                 spmv_kernel.init_mp_halo_exchange();
                 spmv_kernel.finalize_mp_halo_exchange();
+
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
+            if(my_rank == 0){
                 std::cout << "after comm spmv_kernel->hp_local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
@@ -323,9 +398,10 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
             }
 #endif
                 spmv_kernel.copy_hp_halos_to_lp(); // mp Overhead 1. Can just receive into both buffers as well
+#endif
                 spmv_kernel.execute_mp_spmv();
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
+            if(my_rank == 0){
                 std::cout << "after_kernel spmv_kernel->hp_local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
@@ -336,9 +412,10 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                 }
             }
 #endif
-                spmv_kernel.copy_hp_results_to_lp(); // mp Overhead 2
+
             }
             else{
+#ifdef USE_MPI
                 spmv_kernel.init_halo_exchange();
                 spmv_kernel.finalize_halo_exchange();
 #ifdef DEBUG_MODE_FINE
@@ -352,6 +429,7 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                     std::cout << spmv_kernel.local_y[i] << std::endl;
                 }
             }
+#endif
 #endif
                 spmv_kernel.execute_spmv();
 #ifdef DEBUG_MODE_FINE
@@ -371,13 +449,13 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
             // swap x <-> y
             if(config->value_type == "mp"){    
                 // TODO: Bandaid until I figure out swapping
-                for(int i = 0; i < local_y->size(); ++i){
-                    (spmv_kernel.lp_local_x)[i] = (spmv_kernel.lp_local_y)[i];
-                    (spmv_kernel.hp_local_x)[i] = (spmv_kernel.hp_local_y)[i];
-                }
-                // spmv_kernel.swap_local_mp_vectors();
+                // for(int i = 0; i < local_y->size(); ++i){
+                //     (spmv_kernel.lp_local_x)[i] = (spmv_kernel.lp_local_y)[i];
+                //     (spmv_kernel.hp_local_x)[i] = (spmv_kernel.hp_local_y)[i];
+                // }
+                spmv_kernel.swap_local_mp_vectors();
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
+            if(my_rank == 0){
                 std::cout << "after_kernel and swap spmv_kernel->hp_local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.hp_local_x[i] << std::endl;
@@ -390,7 +468,6 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
 #endif
             }
             else{
-
                 spmv_kernel.swap_local_vectors();
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 1){
@@ -405,8 +482,10 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
             }
 #endif
             }
+#ifdef USE_MPI
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
+#endif
         }
 
         // Bring local_x out of permuted space
@@ -414,10 +493,15 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
         if(config->value_type == "mp"){
             apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
         
-            // Give result to local_y for results output
+            // // Give result to local_y for results output
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = (sorted_hp_local_y)[i];
             }
+        
+            // Give result to local_y for results output
+            // for(int i = 0; i < local_y->size(); ++i){
+            //     (*local_y)[i] = (spmv_kernel.hp_local_x)[i];
+            // }
         }
         else{
             apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
@@ -427,16 +511,14 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                 (*local_y)[i] = (sorted_local_y)[i];
             }
         }
-
-
-
-
     }
 
     // Delete the allocated space for each other process send buffers
+#ifdef USE_MPI
     for(int i = 0; i < nz_comms; ++i){
         delete[] to_send_elems[i];
     }
+#endif
 
     double mem_matrix_b =
             (double)sizeof(VT) * local_scs->n_elements     // values
@@ -473,8 +555,11 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
     r->hp_nnz = hp_local_scs->nnz;
     r->lp_nnz = lp_local_scs->nnz;
 
+#ifdef USE_MPI
     delete[] recv_requests;
     delete[] send_requests;
+#endif
+
     delete comm_args_encoded;
     delete one_prec_kernel_args_encoded;
     delete two_prec_kernel_args_encoded;
@@ -493,18 +578,26 @@ void gather_results(
     Config *config,
     Result<VT, IT> *r,
     IT *work_sharing_arr,
-    std::vector<VT> local_x_copy,
-    std::vector<VT> local_y,
+    std::vector<VT> *local_x_copy,
+    std::vector<VT> *local_y,
     int my_rank,
     int comm_size
 ){
-    IT num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+    IT num_local_rows = 0;
+
+#ifdef USE_MPI
+    num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+#else
+    num_local_rows = local_y->size();
+#endif
 
     if(config->mode == 'b'){
+#ifdef USE_MPI
         double *perfs_from_procs_arr = new double[comm_size];
         unsigned long *hp_nnz_per_procs_arr = new unsigned long[comm_size];
         unsigned long *lp_nnz_per_procs_arr = new unsigned long[comm_size];
         unsigned long *nnz_per_procs_arr = new unsigned long[comm_size];
+
 
         MPI_Gather(&(r->perf_gflops),
                 1,
@@ -541,7 +634,6 @@ void gather_results(
                 MPI_UNSIGNED_LONG,
                 0,
                 MPI_COMM_WORLD);
-                
 
         // NOTE: Garbage values for all but root process
         r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + comm_size);
@@ -564,14 +656,22 @@ void gather_results(
         delete[] hp_nnz_per_procs_arr;
         delete[] lp_nnz_per_procs_arr;
         delete[] nnz_per_procs_arr;
+#else
+        r->cumulative_hp_nnz = r->hp_nnz;
+        r->cumulative_lp_nnz = r->lp_nnz;
+
+        r->total_hp_percent = (r->cumulative_hp_nnz / (double)r->total_nnz) * 100.0;
+        r->total_lp_percent = (r->cumulative_lp_nnz / (double)r->total_nnz) * 100.0;
+#endif
     }
     else if(config->mode == 's'){
         std::vector<VT> sorted_local_y(num_local_rows);
-        r->x_out = local_x_copy;
-        r->y_out = local_y;
+        r->x_out = (*local_x_copy);
+        r->y_out = (*local_y);
 
         if (config->validate_result)
         {
+#ifdef USE_MPI
             // TODO: is the size correct here?
             std::vector<VT> total_uspmv_result(work_sharing_arr[comm_size], 0);
             std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
@@ -601,7 +701,7 @@ void gather_results(
                             0,
                             MPI_COMM_WORLD);
                 // Gather all x_vector copies to root for mkl validation
-                MPI_Gatherv(&local_x_copy[0],
+                MPI_Gatherv(local_x_copy[0],
                             num_local_rows,
                             MPI_DOUBLE,
                             &total_x[0],
@@ -622,7 +722,7 @@ void gather_results(
                             0,
                             MPI_COMM_WORLD);
 
-                MPI_Gatherv(&local_x_copy[0],
+                MPI_Gatherv(local_x_copy[0],
                             num_local_rows,
                             MPI_FLOAT,
                             &total_x[0],
@@ -637,6 +737,10 @@ void gather_results(
             // NOTE: Garbage values for all but root process
             r->total_x = total_x;
             r->total_uspmv_result = total_uspmv_result;
+#else
+            r->total_x = (*local_x_copy);
+            r->total_uspmv_result = r->y_out;
+#endif
         }
     }
 }
@@ -678,6 +782,8 @@ void compute_result(
     int *metis_part = NULL;
     int *metis_perm = NULL;
     int *metis_inv_perm = NULL;
+
+#ifdef USE_MPI
     if(config->seg_method == "seg-metis"){
         metis_part = new int[total_mtx->n_rows];
         metis_perm = new int[total_mtx->n_rows];
@@ -686,11 +792,13 @@ void compute_result(
         }
         metis_inv_perm = new int[total_mtx->n_rows];
     }
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Init local structures.\n");}
 #endif
-    mpi_init_local_structs<VT, IT>(
+
+    init_local_structs<VT, IT>(
         &local_scs,
         &hp_local_scs,
         &lp_local_scs,
@@ -724,7 +832,6 @@ void compute_result(
     local_x.init(config);
     local_y.init(config);
 
-
     // TODO: wrap in method or something
     if(config->value_type == "mp"){
         for(int i = 0; i < (local_x.vec).size(); ++i){
@@ -756,7 +863,10 @@ void compute_result(
         my_rank,
         comm_size
     );
+
+#ifdef USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete bench_spmv.\n");}
@@ -765,21 +875,28 @@ void compute_result(
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Gather results to root process.\n");}
 #endif
-    gather_results(config, r, work_sharing_arr, local_x_copy, local_y.vec, my_rank, comm_size);
+    gather_results(config, r, work_sharing_arr, &local_x_copy, &(local_y.vec), my_rank, comm_size);
 
+#ifdef USE_MPI
     // Delete allocated permutation vectors, if metis used
     if(config->seg_method == "seg-metis"){
         delete[] metis_part;
         delete[] metis_perm;
         delete[] metis_inv_perm;
     }
+#endif
 }
 
 int main(int argc, char *argv[]){
+
+// Initialize just out of convenience
+int my_rank = 0, comm_size = 1;
+
+#ifdef USE_MPI
     MPI_Init(&argc, &argv);
-    int my_rank, comm_size;
     MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Beginning of USpMV main execution.\n");}
@@ -789,7 +906,13 @@ int main(int argc, char *argv[]){
     LIKWID_MARKER_INIT;
 #endif
 
-    double begin_main_time = MPI_Wtime();
+    double begin_main_time;
+
+#ifdef USE_MPI
+    begin_main_time = MPI_Wtime();
+#else
+    begin_main_time = getTimeStamp();
+#endif
 
     Config config;
     std::string matrix_file_name{};
@@ -830,19 +953,6 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
-        double time_per_proc = MPI_Wtime() - begin_main_time;
-
-        // Gather all times for printing of results
-        MPI_Gather(
-            &time_per_proc,
-            1,
-            MPI_DOUBLE,
-            total_walltimes,
-            1,
-            MPI_DOUBLE,
-            0,
-            MPI_COMM_WORLD
-        );
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -888,19 +998,6 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
-        double time_per_proc = MPI_Wtime() - begin_main_time;
-
-        // Gather all times for printing of results
-        MPI_Gather(
-            &time_per_proc,
-            1,
-            MPI_DOUBLE,
-            total_walltimes,
-            1,
-            MPI_DOUBLE,
-            0,
-            MPI_COMM_WORLD
-        );
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -948,18 +1045,6 @@ int main(int argc, char *argv[]){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
-        double time_per_proc = MPI_Wtime() - begin_main_time;
-        // Gather all times for printing of results
-        MPI_Gather(
-            &time_per_proc,
-            1,
-            MPI_DOUBLE,
-            total_walltimes,
-            1,
-            MPI_DOUBLE,
-            0,
-            MPI_COMM_WORLD
-        );
 
         if(my_rank == 0){
             if(config.mode == 's'){
@@ -987,8 +1072,9 @@ int main(int argc, char *argv[]){
         }
     }
 
-
+#ifdef USE_MPI
     MPI_Finalize();
+#endif
 
 #ifdef USE_LIKWID
     LIKWID_MARKER_CLOSE;

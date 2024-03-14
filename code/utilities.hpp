@@ -3,7 +3,10 @@
 
 #include "classes_structs.hpp"
 
+#ifdef USE_MPI
 #include <mpi.h>
+#endif
+
 #include <cstdarg>
 #include <random>
 #include <iomanip>
@@ -843,9 +846,14 @@ template <typename VT>
 void random_init(VT *begin, VT *end)
 {
     int my_rank;
+
+#ifdef USE_MPI
     MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
     srand(time(NULL) + my_rank);
+#else
+    srand(time(NULL));
+#endif
 
     // std::mt19937 engine;
 
@@ -1234,7 +1242,8 @@ void apply_permutation(
 // TODO: hmm. Don't know if this is right
 template<typename VT, typename IT>
 void permute_scs_cols(
-    ScsData<VT, IT> *scs
+    ScsData<VT, IT> *scs,
+    IT *perm
 ){
     ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
                     + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
@@ -1248,7 +1257,7 @@ void permute_scs_cols(
     for (ST i = 0; i < n_scs_elements; ++i) {
         if(scs->col_idxs[i] < scs->n_rows){
             // permuted version:
-            col_perm_idxs[i] =  scs->old_to_new_idx[scs->col_idxs[i]];
+            col_perm_idxs[i] =  perm[scs->col_idxs[i]];
         }
         else{
             col_perm_idxs[i] = scs->col_idxs[i];
@@ -1461,6 +1470,9 @@ void convert_to_scs(
     // Collect for column compression with mp when n_procs > 1
     scs->is_elem_hp = std::vector<int>(n_scs_elements,0);
     scs->is_elem_lp = std::vector<int>(n_scs_elements,0);
+    scs->hp_to_original_mapping = std::vector<int>(n_scs_elements,0);
+    scs->lp_to_original_mapping = std::vector<int>(n_scs_elements,0); // TODO: pretty wasteful, should only be as long as the xp_struct??
+   
     for (ST i = 0; i < n_scs_elements; ++i) {
         if(abs(scs->values[i]) >= bucket_size){
             scs->is_elem_hp[i] = 1;
@@ -1692,8 +1704,14 @@ class SimpleDenseMatrix {
 
         SimpleDenseMatrix(const ContextData<IT> *local_context){
             // TODO: not too sure about this
+            IT needed_padding;
+
+#ifdef USE_MPI
             IT padding_from_heri = (local_context->recv_counts_cumsum).back();
-            IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+            needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+#else
+            needed_padding = 0;
+#endif
 
             vec.resize(needed_padding + local_context->num_local_rows, 0);
         }

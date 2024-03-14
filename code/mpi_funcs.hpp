@@ -16,6 +16,7 @@
     #include "SpMP/CSR.hpp"
 #endif
 
+#ifdef USE_MPI
 /**
     @brief Generate unique tags for communication, based on the cantor pairing function. 
     @param *send_tags : tags used in the main communication loop for Isend
@@ -54,8 +55,10 @@ void collect_comm_idxs(
     int incoming_buf_size, outgoing_buf_size;
     int tag_send, tag_recv;
 
+
     MPI_Request recv_requests[comm_size];
     MPI_Request send_requests[comm_size];
+
 
     // TODO: avoid unnecessary comm
     for (int from_proc = 0; from_proc < comm_size; ++from_proc)
@@ -330,96 +333,277 @@ void collect_local_needed_heri(
         }
     }
 
+    // TODO: clean up. Really a headache
+    if(value_type == "mp"){
+    // for (IT i = 0; i < local_scs->n_elements; ++i)
+    // {
+    //     if(abs(scs->values[i]) >= bucket_size){
+    //         scs->is_elem_hp[i] = 1;
+    //     } 
+    //     else{
+    //         scs->is_elem_lp[i] = 1;
+    //     }
+    // }
+
+    // printf("is_hp = [");
+    // for (IT i = 0; i < local_scs->n_elements; ++i)
+    // {
+    //     printf("%i, ", local_scs->is_elem_hp[i]);
+    // }
+    // printf("]\n");
+
+    // printf("is_lp = [");
+    // for (IT i = 0; i < local_scs->n_elements; ++i)
+    // {
+    //     printf("%i, ", local_scs->is_elem_lp[i]);
+    // }
+    // printf("]\n");
+
+    // Shouldn't matter because values stay the same, only col_idx changes
+    // printf("is_hp_after_comp = [");
+    // for (IT i = 0; i < local_scs->n_elements; ++i)
+    // {
+    //     printf("%i, ", is_elem_hp_after_compression[i]);
+    // }
+    // printf("]\n");
+
+    // printf("is_hp_after_comp = [");
+    // for (IT i = 0; i < local_scs->n_elements; ++i)
+    // {
+    //     printf("%i, ", is_elem_hp_after_compression[i]);
+    // }
+    // printf("]\n");
+
     IT hp_elem_cntr = 0;
     IT lp_elem_cntr = 0;
-    // Copy remote elements from local_scs information already collected
-    if(value_type == "mp"){
-        // Scan all elements again, in order to use "is_elem_xp" arrays without some weird mapping
-        for (IT i = 0; i < local_scs->n_elements; ++i)
-        {
-            elem_col = local_scs->col_idxs[i];
 
-            // TODO: what is happening now, with these "0 element" communicators?
-            // if this column corresponds to a padded element, continue to next nnz
-            // if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
+    // Make mapping from xp_struct back to local_scs
+    // NOTE: padding elements from local_scs are ignored
+    for (IT i = 0; i < local_scs->n_elements; ++i)
+    {
+        elem_col = original_col_idxs[i];
 
-            if (elem_col < work_sharing_arr[my_rank])
-            {
-                if(local_scs->is_elem_hp[i]){
-                    hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
+        // Ignore padding elements from local_scs, since they differ
+        // from padding elements in xp_local_scs
+        // NOTE: this info is collected BEFORE column compression
+        if (elem_col == 0 && local_scs->values[i] == 0) {
 #ifdef DEBUG_MODE_FINE
-                    std::cout << "L Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+            std::cout << "Padding element at index: " << i << " detected" << std::endl;
 #endif
-                    ++hp_elem_cntr;
-                }
-                else if(local_scs->is_elem_lp[i]){
-                    lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
-#ifdef DEBUG_MODE_FINE
-                    std::cout << "L Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
-#endif
-                    ++lp_elem_cntr;
-                }
-                else{
-                    printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
-                }
-            }
-            else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
-            { // i.e. if RHS remote element
-                if(local_scs->is_elem_hp[i]){
-                    hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
-#ifdef DEBUG_MODE_FINE
-                    std::cout << "R Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
-#endif
-                    ++hp_elem_cntr;
-                }
-                else if(local_scs->is_elem_lp[i]){
-                    lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
-#ifdef DEBUG_MODE_FINE
-                    std::cout << "R Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
-#endif
-                    ++lp_elem_cntr;
-                }
-                else{
-                    printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
-                }
-            }
-            else{
-                if(local_scs->is_elem_hp[i]){
-                    // hp_max_local_col = elem_col ? elem_col > hp_max_local_col : hp_max_local_col;
-#ifdef DEBUG_MODE_FINE
-                    std::cout << "Local hp: before_adjustment hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
-#endif
-                    hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
-#ifdef DEBUG_MODE_FINE
-                    std::cout << "Local hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
-#endif
-                    ++hp_elem_cntr;
-                }
-                else if(local_scs->is_elem_lp[i]){
-                    // lp_max_local_col = elem_col ? elem_col > lp_max_local_col : lp_max_local_col;
-                    lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
-                    // ++lp_local_elem_count; // <- this isnt correct, because you run over remote elements
-#ifdef DEBUG_MODE_FINE
-                    std::cout << "Local lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
-#endif
-                    ++lp_elem_cntr;
-                }
-                else{
-                    printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
-                }
-            }
+            continue;
         }
+        if(local_scs->is_elem_hp[i]){
+            hp_local_scs->hp_to_original_mapping[hp_elem_cntr] = i;
+            ++hp_elem_cntr;
+        }
+        if(local_scs->is_elem_lp[i]){
+            lp_local_scs->lp_to_original_mapping[lp_elem_cntr] = i;
+            ++lp_elem_cntr;
+        }
+        // if(is_elem_hp_after_compression[i]){
+        //     hp_local_scs->hp_to_original_mapping[hp_elem_cntr] = i;
+        //     ++hp_elem_cntr;
+        // }
+        // if(is_elem_lp_after_compression[i]){
+        //     lp_local_scs->lp_to_original_mapping[lp_elem_cntr] = i;
+        //     ++lp_elem_cntr;
+        // }
+    }
+    // This gives us
+
+    // Sanity check
+    // if(hp_elem_cntr != hp_local_scs->n_elements){
+    //     printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr != hp_local_scs->n_elements.\n", my_rank);
+    //     printf("hp_elem_cntr = %i\n", hp_elem_cntr);
+    //     printf("hp_local_scs->n_elements = %i\n", hp_local_scs->n_elements);
+    //     exit(1);
+    // }
+
+    // printf("hp_to_original_mapping = [");
+    // for (IT i = 0; i < hp_elem_cntr; ++i)
+    // {
+    //     printf("%i, ", hp_local_scs->hp_to_original_mapping[i]);
+    // }
+    // printf("]\n");
+
+    // printf("lp_to_original_mapping = [");
+    // for (IT i = 0; i < lp_elem_cntr; ++i)
+    // {
+    //     printf("%i, ", lp_local_scs->lp_to_original_mapping[i]);
+    // }
+    // printf("]\n");
+
+    int hp_padding_elems = 0;
+    hp_elem_cntr = 0;
+    lp_elem_cntr = 0;
+    // local_scs padding is ignored
+    for (IT i = 0; i < hp_local_scs->n_elements; ++i)
+    {
+        int hp_elem_col = hp_local_scs->col_idxs[i];
+
+        // Collect padding elements
+        if(hp_elem_col == 0 && hp_local_scs->values[i] == 0) {
+            ++hp_padding_elems;
+        }
+
+        // Remember, just want to copy the right column index from local_scs
+        else if (hp_elem_col < work_sharing_arr[my_rank] || hp_elem_col > work_sharing_arr[my_rank + 1] - 1)
+        {
+#ifdef DEBUG_MODE
+            std::cout << "hp Remote element!" << std::endl;
+            if (hp_elem_col < work_sharing_arr[my_rank]){
+                std::cout << "hp_elem_col: " << hp_elem_col << " < " <<  "work_sharing_arr[" << my_rank << "] : " <<  work_sharing_arr[my_rank] << std::endl;
+            }
+            else if( hp_elem_col > work_sharing_arr[my_rank + 1] - 1){
+                std::cout << "hp_elem_col: " << hp_elem_col << " > " << "work_sharing_arr[" << my_rank + 1 << "] - 1: " << work_sharing_arr[my_rank + 1] - 1 << std::endl;
+            }
+#endif
+            // i.e. if LHS remote element
+                hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[hp_local_scs->hp_to_original_mapping[i-hp_padding_elems]];
+        }
+        else{
+            // local elements and padding elements
+            hp_local_scs->col_idxs[hp_elem_cntr] -= work_sharing_arr[my_rank];
+        }
+        ++hp_elem_cntr;
+    }
+    // You want to copy the column indices from local_scs AFTER it has already been compressed!! 
+    // Actually doesn't matter
+
+    // hp_local_scs->print();
+
+    int lp_padding_elems = 0;
+    // local_scs padding is ignored
+    for (IT i = 0; i < lp_local_scs->n_elements; ++i)
+    {
+        int lp_elem_col = lp_local_scs->col_idxs[i];
+
+        // Collect padding elements
+        if(lp_elem_col == 0 && lp_local_scs->values[i] == 0) {
+            ++lp_padding_elems;
+        }
+
+        // Remember, just want to copy the right column index from local_scs
+        else if (lp_elem_col < work_sharing_arr[my_rank] || lp_elem_col > work_sharing_arr[my_rank + 1] - 1)
+        {
+#ifdef DEBUG_MODE
+            std::cout << "lp Remote element!" << std::endl;
+            if (lp_elem_col < work_sharing_arr[my_rank]){
+                std::cout << "lp_elem_col: " << lp_elem_col << " < " <<  "work_sharing_arr[" << my_rank << "] : " <<  work_sharing_arr[my_rank] << std::endl;
+            }
+            else if( lp_elem_col > work_sharing_arr[my_rank + 1] - 1){
+                std::cout << "lp_elem_col: " << lp_elem_col << " > " << "work_sharing_arr[" << my_rank + 1 << "] - 1: " << work_sharing_arr[my_rank + 1] - 1 << std::endl;
+            }
+#endif
+            // i.e. if LHS remote element
+                lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[lp_local_scs->lp_to_original_mapping[i-lp_padding_elems]];
+        }
+        else{
+            // local elements and padding elements
+            lp_local_scs->col_idxs[lp_elem_cntr] -= work_sharing_arr[my_rank];
+        }
+        ++lp_elem_cntr;
+    }
+    
+
+    // lp_local_scs->print();
+    // exit(0);
+
+    // Copy remote elements from local_scs information already collected
+//     if(value_type == "mp"){
+//         // Scan all elements again, in order to use "is_elem_xp" arrays without some weird mapping
+//         for (IT i = 0; i < local_scs->n_elements; ++i)
+//         {
+//             elem_col = local_scs->col_idxs[i];
+
+//             // TODO: what is happening now, with these "0 element" communicators?
+//             // if this column corresponds to a padded element, continue to next nnz
+//             // if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
+
+//             if (elem_col < work_sharing_arr[my_rank])
+//             {
+//                 if(local_scs->is_elem_hp[i]){
+//                     hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
+// #ifdef DEBUG_MODE_FINE
+//                     std::cout << "L Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+// #endif
+//                     ++hp_elem_cntr;
+//                 }
+//                 else if(local_scs->is_elem_lp[i]){
+//                     lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
+// #ifdef DEBUG_MODE_FINE
+//                     std::cout << "L Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
+// #endif
+//                     ++lp_elem_cntr;
+//                 }
+//                 else{
+//                     printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
+//                 }
+//             }
+//             else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
+//             { // i.e. if RHS remote element
+//                 if(local_scs->is_elem_hp[i]){
+//                     hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
+// #ifdef DEBUG_MODE_FINE
+//                     std::cout << "R Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+// #endif
+//                     ++hp_elem_cntr;
+//                 }
+//                 else if(local_scs->is_elem_lp[i]){
+//                     lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
+// #ifdef DEBUG_MODE_FINE
+//                     std::cout << "R Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
+// #endif
+//                     ++lp_elem_cntr;
+//                 }
+//                 else{
+//                     printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
+//                 }
+//             }
+//             else{
+//                 if(local_scs->is_elem_hp[i]){
+//                     // hp_max_local_col = elem_col ? elem_col > hp_max_local_col : hp_max_local_col;
+// #ifdef DEBUG_MODE_FINE
+//                     std::cout << "Local hp: before_adjustment hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+// #endif
+//                     hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
+// #ifdef DEBUG_MODE_FINE
+//                     std::cout << "Local hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
+// #endif
+//                     ++hp_elem_cntr;
+//                 }
+//                 else if(local_scs->is_elem_lp[i]){
+//                     // lp_max_local_col = elem_col ? elem_col > lp_max_local_col : lp_max_local_col;
+//                     lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
+//                     // ++lp_local_elem_count; // <- this isnt correct, because you run over remote elements
+// #ifdef DEBUG_MODE_FINE
+//                     std::cout << "Local lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
+// #endif
+//                     ++lp_elem_cntr;
+//                 }
+//                 else{
+//                     printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
+//                 }
+//             }
+//         }
 
         // Sanity check
         if(hp_elem_cntr != hp_local_scs->n_elements){
-            printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr != hp_local_scs->n_elements.\n", my_rank);exit(1);
+            printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr != hp_local_scs->n_elements.\n", my_rank);
+            printf("hp_elem_cntr = %i\n", hp_elem_cntr);
+            printf("hp_local_scs->n_elements = %i\n", hp_local_scs->n_elements);
+            exit(1);
         }
         if(lp_elem_cntr != lp_local_scs->n_elements){
-            printf("collect_local_needed_heri ERROR: rank %i, lp_elem_cntr != lp_local_scs->n_elements.\n", my_rank);exit(1);
+            printf("collect_local_needed_heri ERROR: rank %i, lp_elem_cntr != lp_local_scs->n_elements.\n", my_rank);
+            printf("lp_elem_cntr = %i\n", lp_elem_cntr);
+            printf("lp_local_scs->n_elements = %i\n", lp_local_scs->n_elements);
+            exit(1);
         }
-        if (hp_elem_cntr + lp_elem_cntr != local_scs->n_elements){
-            printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr + lp_elem_cntr != local_scs->n_elements.\n", my_rank);exit(1);
-        }
+        // Not true in general!
+        // if (hp_elem_cntr + lp_elem_cntr != local_scs->n_elements){
+        //     printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr + lp_elem_cntr != local_scs->n_elements.\n", my_rank);exit(1);
+        // }
 
     }
 
@@ -427,142 +611,15 @@ void collect_local_needed_heri(
     for(int i = 0; i < my_rank; ++i){
         (*recv_counts_cumsum)[i] = lhs_cumsum_heri_counts[i];
     }
-    for(int i = 0; i < comm_size - my_rank + 1; ++i){
+
+    // TODO: this is fishy. Shouldn't be necessary if things are set up right.
+    int loop_limit = (comm_size == 1) ? comm_size - (my_rank + 1) : comm_size - my_rank + 1;
+
+    for(int i = 0; i < loop_limit; ++i){
         (*recv_counts_cumsum)[my_rank + i] = lhs_cumsum_heri_counts[my_rank] + rhs_cumsum_heri_counts[my_rank + i];
         // i.e. dont take the leading zero from the rhs_cumsum
     }
 }
-
-// NOTE: old, moved to SpmvKernel class
-// /**
-//     Halo element communication scheme, in which values needed by local_x in order to have a valid SPMVM are sent to this process by other processes.
-//         In other words, we allow each process to exchange it's proc-local "remote elements" with the other respective processes.
-//         The current implementation first posts all non-blocking recieve calls, then the Isends are posted afterwards.
-//         Since this function is in the benchmark loop, need to do as little work possible, ideally.
-
-//     @brief Communicate the halo elements to and from the local x-vectors
-//     @param *local_context : struct containing local_scs + communication information
-//     @param *local_x : the x vector corresponding to this process before the halo elements are communicated to it.
-//     @param *work_sharing_arr : the array describing the partitioning of the rows
-// */
-// template <typename VT, typename IT>
-// void communicate_halo_elements(
-//     ContextData<IT> *local_context,
-//     Config *config, // shouldn't this be const?
-//     std::vector<VT> *local_x,
-//     VT *to_send_elems[],
-//     const IT *work_sharing_arr,
-//     MPI_Request *recv_requests,
-//     const int nzs_size,
-//     MPI_Request *send_requests,
-//     const int nzr_size,
-//     const int num_local_elems,
-//     const int my_rank,
-//     const int comm_size)
-// {
-//     int outgoing_buf_size, incoming_buf_size;
-//     int receiving_proc, sending_proc;
-
-//     // TODO: DRY
-//     if (typeid(VT) == typeid(float))
-//     {
-//         for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
-//         {
-//             sending_proc = local_context->non_zero_senders[from_proc_idx];
-//             incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
-
-//             MPI_Irecv(
-//                 &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
-//                 incoming_buf_size,
-//                 MPI_FLOAT,
-//                 sending_proc,
-//                 (local_context->recv_tags[sending_proc])[my_rank],
-//                 MPI_COMM_WORLD,
-//                 &recv_requests[from_proc_idx]
-//             );
-//         }
-//         for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
-//         {
-//             receiving_proc = local_context->non_zero_receivers[to_proc_idx];
-//             outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
-
-//             // for sanity
-//             // if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
-//             //     std::cout << "Mismatched buffer lengths in communication" << std::endl;
-//             //     exit(1);
-//             // }
-
-//             // Move non-contiguous data to a contiguous buffer for communication
-//             #pragma omp parallel for if(config->par_pack)   
-//             for(int i = 0; i < outgoing_buf_size; ++i){
-//                 // (to_send_elems[to_proc_idx])[i] = (*local_x)[  local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]]  ];
-//                 (to_send_elems[to_proc_idx])[i] = (*local_x)[local_context->comm_send_idxs[receiving_proc][i]];
-
-//             }
-
-//             MPI_Isend(
-//                 &(to_send_elems[to_proc_idx])[0],
-//                 outgoing_buf_size,
-//                 MPI_FLOAT,
-//                 receiving_proc,
-//                 (local_context->send_tags[my_rank])[receiving_proc],
-//                 MPI_COMM_WORLD,
-//                 &send_requests[to_proc_idx]
-//             );
-//         }
-//     }
-//     else if (typeid(VT) == typeid(double)){
-//         for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
-//         {
-//             sending_proc = local_context->non_zero_senders[from_proc_idx];
-//             incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
-
-//             MPI_Irecv(
-//                 &(*local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
-//                 incoming_buf_size,
-//                 MPI_DOUBLE,
-//                 sending_proc,
-//                 (local_context->recv_tags[sending_proc])[my_rank],
-//                 MPI_COMM_WORLD,
-//                 &recv_requests[from_proc_idx]
-//             );
-//         }
-
-//         // for (int to_proc = 0; to_proc < comm_size; ++to_proc)
-//         // for(auto to_proc : local_context->non_zero_receivers)
-//         for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
-//         {
-//             receiving_proc = local_context->non_zero_receivers[to_proc_idx];
-//             outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
-
-//             // for sanity
-//             // if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
-//             //     std::cout << "Mismatched buffer lengths in communication" << std::endl;
-//             //     exit(1);
-//             // }
-
-//             // Move non-contiguous data to a contiguous buffer for communication
-//             #pragma omp parallel for if(config->par_pack)
-//             for(int i = 0; i < outgoing_buf_size; ++i){
-//                 (to_send_elems[to_proc_idx])[i] = (*local_x)[local_context->comm_send_idxs[receiving_proc][i]];
-//             }
-
-//             MPI_Isend(
-//                 &(to_send_elems[to_proc_idx])[0],
-//                 outgoing_buf_size,
-//                 MPI_DOUBLE,
-//                 receiving_proc,
-//                 (local_context->send_tags[my_rank])[receiving_proc],
-//                 MPI_COMM_WORLD,
-//                 &send_requests[to_proc_idx]
-//             );
-//         }
-//     }
-
-//     // TODO: try single waitall for sends and recieves
-//     MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
-//     MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
-// }
 
 /**
     @brief Partition the rows of the mtx structure, so that work is disributed (somewhat) evenly. The two options "seg-rows"
@@ -582,6 +639,7 @@ void seg_work_sharing_arr(
     int* metis_perm = NULL,
     int* metis_inv_perm = NULL)
 {
+#ifdef USE_MPI
     work_sharing_arr[0] = 0;
     const std::string seg_method = config->seg_method;
 
@@ -742,7 +800,7 @@ void seg_work_sharing_arr(
             if(my_rank == 0){printf("seg_work_sharing_arr ERROR: flaw in work_sharing_arr, work_sharing_arr[i] < work_sharing_arr[i-1].\n");exit(1);}
         }
     }
-
+#endif
 }
 
 /**
@@ -766,6 +824,7 @@ void seg_mtx_struct(
     const IT *work_sharing_arr,
     const IT loop_rank)
 {
+#ifdef USE_MPI
     IT start_idx, run_idx, finish_idx;
     IT next_row;
 
@@ -793,6 +852,7 @@ void seg_mtx_struct(
         local_vals->push_back(total_mtx->values[run_idx]);
         ++run_idx;
     } while (run_idx != finish_idx);
+#endif
 }
 
 /**
@@ -800,11 +860,13 @@ void seg_mtx_struct(
     @param *send_bk : an instance of bk_type, for the data sent from root to other processes
     @param *bk_type : a constructed datatype for mpi to keep track of bookkeeping data for the local mtx structure
 */
+
 template <typename IT>
 void define_bookkeeping_type(
     MtxDataBookkeeping<ST> *send_bk,
     MPI_Datatype *bk_type)
 {
+
     // Declare and define MPI Datatype
     IT block_length_arr[2];
     MPI_Aint displ_arr_bk[2], first_address, second_address;
@@ -821,7 +883,9 @@ void define_bookkeeping_type(
     displ_arr_bk[1] = MPI_Aint_diff(second_address, first_address);
     MPI_Type_create_struct(2, block_length_arr, displ_arr_bk, type_arr, bk_type);
     MPI_Type_commit(bk_type);
+
 }
+#endif
 
 /**
     @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into hp and lp sub-structs
@@ -908,7 +972,7 @@ void seperate_lp_from_hp(
     @param *work_sharing_arr : the array describing the partitioning of the rows
 */
 template<typename VT, typename IT>
-void mpi_init_local_structs(
+void init_local_structs(
     ScsData<VT, IT> *local_scs,
     ScsData<double, IT> *hp_local_scs,
     ScsData<float, IT> *lp_local_scs,
@@ -922,8 +986,10 @@ void mpi_init_local_structs(
     int* metis_perm = NULL,
     int* metis_inv_perm = NULL)
 {
-    MtxData<VT, IT> local_mtx;
 
+    MtxData<VT, IT> *local_mtx = new MtxData<VT, IT>;
+
+#ifdef USE_MPI
     MPI_Status status_bk, status_cols, status_rows, status_vals;
 
     MtxDataBookkeeping<ST> send_bk, recv_bk;
@@ -1079,24 +1145,28 @@ void mpi_init_local_structs(
               MPI_INT,
               0,
               MPI_COMM_WORLD);
+#else
+    // TODO: validate how this works with the no-mpi case
+    local_mtx = total_mtx;
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Converting COO matrix to SELL-C-SIG and permuting locally (NOTE: rows only, i.e. nonsymetrically).\n");}
 #endif
     // convert local_mtx to local_scs and permute rows (if applicable)
+    convert_to_scs<VT, IT>(config->bucket_size, local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
 
     // Only used for mixed precision
-    MtxData<double, int> hp_local_mtx;
-    MtxData<float, int> lp_local_mtx;
+    MtxData<double, int> *hp_local_mtx = new MtxData<double, int>;
+    MtxData<float, int> *lp_local_mtx = new MtxData<float, int>;
 
     if (config->value_type == "mp"){
-        // Keeping COO format, partition local_mtx into high and low precision structs, based on
-        seperate_lp_from_hp<VT,IT>(config->bucket_size, &local_mtx, &hp_local_mtx, &lp_local_mtx, my_rank);
+        // Higher and Lower precision scs is only populated if we are computing in mixed pre
+        // Keeping COO format, partition local_mtx into high and low precision structs, based on value
+        seperate_lp_from_hp<VT,IT>(config->bucket_size, local_mtx, hp_local_mtx, lp_local_mtx, my_rank);
 
-        // Higher and Lower precision scs is only populated if we are computing in mixed precision
-        convert_to_scs<double, IT>(config->bucket_size, &hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
-        convert_to_scs<float, IT>(config->bucket_size, &lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
-
+        convert_to_scs<double, IT>(config->bucket_size, hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
+        convert_to_scs<float, IT>(config->bucket_size, lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
         // std::cout << "hp_Beta = " << ((double)hp_local_scs->nnz / hp_local_scs->n_elements) * 100.0 << std::endl;
         // std::cout << "lp_Beta = " << ((double)lp_local_scs->nnz / lp_local_scs->n_elements) * 100.0 << std::endl;
         // std::cout << "hp_Nnzr = " << (double)hp_local_scs->nnz / hp_local_scs->n_rows  << std::endl;
@@ -1110,12 +1180,13 @@ void mpi_init_local_structs(
         hp_local_scs->write_to_mtx_file(my_rank, file_out_name);
         file_out_name = "lp_local_scs";
         lp_local_scs->write_to_mtx_file(my_rank, file_out_name);
+#ifdef USE_MPI
         MPI_Barrier(MPI_COMM_WORLD);
+#endif
         exit(0);
 #endif
     }
 
-    convert_to_scs<VT, IT>(config->bucket_size, &local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
 
     // std::cout << "Beta = " << ((double)local_scs->nnz / local_scs->n_elements) * 100.0 << std::endl;
     // std::cout << "Nnzr = " << (double)local_scs->nnz / local_scs->n_rows << std::endl;
@@ -1129,19 +1200,16 @@ void mpi_init_local_structs(
         std::string file_out_name;
         file_out_name = "local_scs";
         local_scs->write_to_mtx_file(my_rank, file_out_name);
+#ifdef USE_MPI
         MPI_Barrier(MPI_COMM_WORLD);
+#endif
         exit(0);
 #endif
     }
-    // }
 
-    // TODO: return to perm/sell-c-sigma today
-    // permute columns with additional routine
-    // std::vector<int> non_perm(local_scs->n_rows);
-    // std::iota(std::begin(non_perm), std::end(non_perm), 0); // Fill with 0, 1, ..., scs->n_rows.
-    // local_scs->permute(&(local_scs->old_to_new_idx)[0], &(local_scs->new_to_old_idx)[0]);
-
+#ifdef USE_MPI
     MPI_Type_free(&bk_type);
+
 
     // TODO: is an array of vectors better?
     // Vector of vecs, Keep track of which remote columns come from which processes
@@ -1192,7 +1260,9 @@ void mpi_init_local_structs(
 
     gen_unique_comm_tags<VT, IT>(&send_tags, &recv_tags, my_rank, comm_size);
 
+
     // Collect all our hard work to single structure for convenience
+    // NOTE: not used at all in the no-mpi case
     local_context->comm_send_idxs = communication_send_idxs;
     local_context->comm_recv_idxs = communication_recv_idxs;
     local_context->non_zero_receivers = non_zero_receivers;
@@ -1201,8 +1271,12 @@ void mpi_init_local_structs(
     local_context->recv_tags = recv_tags;
     local_context->recv_counts_cumsum = recv_counts_cumsum;
     local_context->send_counts_cumsum = send_counts_cumsum;
-    local_context->num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
     local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
+    local_context->num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+#else
+    local_context->num_local_rows = local_scs->n_rows;
+#endif
+    
 
     // Should this be the place where you do local RCM? Try it
 // #ifdef USE_SPMP
@@ -1214,6 +1288,34 @@ void mpi_init_local_structs(
         
 // #endif
 
-    permute_scs_cols(local_scs);
+    permute_scs_cols(local_scs, &(local_scs->old_to_new_idx)[0]);
+
+    if (config->value_type == "mp"){
+        // Permute column indices the same as the original scs struct
+        // But rows are permuted differently (i.e. within the convert_to_scs routine)
+        // permute_scs_cols(hp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
+        // permute_scs_cols(lp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
+        for(int i = 0; i < hp_local_scs->n_elements; ++i){
+            std::cout << "hp_local_scs->col_idxs[" << i << "] = " << hp_local_scs->col_idxs[i] << std::endl;
+        }
+        for(int i = 0; i < lp_local_scs->n_elements; ++i){
+            std::cout << "lp_local_scs->col_idxs[" << i << "] = " << lp_local_scs->col_idxs[i] << std::endl;
+        }
+
+        permute_scs_cols(hp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
+        permute_scs_cols(lp_local_scs, &(lp_local_scs->old_to_new_idx)[0]);
+
+        for(int i = 0; i < hp_local_scs->n_elements; ++i){
+            std::cout << "hp_local_scs->col_idxs[" << i << "] = " << hp_local_scs->col_idxs[i] << std::endl;
+        }
+        for(int i = 0; i < lp_local_scs->n_elements; ++i){
+            std::cout << "lp_local_scs->col_idxs[" << i << "] = " << lp_local_scs->col_idxs[i] << std::endl;
+        }
+    }
+
+    // delete local_mtx;
+    // delete hp_local_mtx;
+    // delete lp_local_mtx;
+
 }
 #endif

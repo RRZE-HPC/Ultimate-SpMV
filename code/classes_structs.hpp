@@ -6,13 +6,17 @@
 #include "kernels.hpp"
 #include <functional> 
 #include <ctime>
+
+#ifdef USE_MPI
 #include <mpi.h>
+#endif
 
 #ifdef USE_METIS
-    #include <metis.h>
+#include <metis.h>
 #endif
+
 #ifdef USE_SPMP
-    #include "SpMP/CSR.hpp"
+#include "SpMP/CSR.hpp"
 #endif
 
 template <typename VT, typename IT>
@@ -119,6 +123,7 @@ struct ContextData
 template <typename VT, typename IT>
 struct CommArgs
 {
+#ifdef USE_MPI
     Config *config;
     ContextData<IT> *local_context;
     const IT *perm;
@@ -130,8 +135,10 @@ struct CommArgs
     MPI_Request *send_requests;
     const IT *nzr_size;
     const IT *num_local_elems;
+#endif
     const IT *my_rank;
     const IT* comm_size;
+
 };
 
 template <typename VT, typename IT>
@@ -167,6 +174,10 @@ struct TwoPrecKernelArgs
     float * RESTRICT lp_values;
     float * RESTRICT lp_local_x;
     float * RESTRICT lp_local_y;
+    IT * lp_perm;
+    IT * hp_perm;
+    IT * lp_inv_perm;
+    IT * hp_inv_perm;
 };
 
 template <typename VT, typename IT>
@@ -201,7 +212,11 @@ class SpmvKernel {
             const float * RESTRICT, // lp_values
             float * RESTRICT, // lp_x
             float * RESTRICT, // lp_y
-            int
+            int,
+            IT *,
+            IT *,
+            IT *,
+            IT *
         )> TwoPrecFuncPtr;
 
         OnePrecFuncPtr one_prec_kernel_func_ptr;
@@ -237,8 +252,14 @@ class SpmvKernel {
         const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
         const float * RESTRICT lp_values = two_prec_kernel_args_decoded->lp_values; 
 
+        IT* lp_perm = two_prec_kernel_args_decoded->lp_perm;
+        IT* hp_perm = two_prec_kernel_args_decoded->hp_perm;
+        IT* lp_inv_perm = two_prec_kernel_args_decoded->lp_inv_perm;
+        IT* hp_inv_perm = two_prec_kernel_args_decoded->hp_inv_perm;
+
         // Decode comm args
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
+#ifdef USE_MPI
         ContextData<IT> *local_context = comm_args_decoded->local_context;
         const IT *perm = comm_args_decoded->perm;
         VT **to_send_elems = comm_args_decoded->to_send_elems;
@@ -248,8 +269,10 @@ class SpmvKernel {
         MPI_Request *send_requests = comm_args_decoded->send_requests;
         const IT nzr_size = *(comm_args_decoded->nzr_size);
         const IT num_local_elems = *(comm_args_decoded->num_local_elems);
+#endif
         const IT my_rank = *(comm_args_decoded->my_rank);
         const IT comm_size = *(comm_args_decoded->comm_size);
+
 
     public:
         VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
@@ -263,13 +286,17 @@ class SpmvKernel {
         SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
             if(config->value_type == "mp"){
                 if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+#ifdef USE_MPI
                     if(my_rank == 0)
+#endif
                         std::cout << "MP-CRS kernel selected" << std::endl;   
                     two_prec_kernel_func_ptr = spmv_omp_csr_mp_1<IT>;
                     // two_prec_kernel_func_ptr = spmv_omp_csr_mp_2<IT>;
                 }
                 else if(config->kernel_format == "scs"){
+#ifdef USE_MPI
                     if(my_rank == 0)
+#endif
                         std::cout << "MP-SCS kernel selected" << std::endl;   
                     two_prec_kernel_func_ptr = spmv_omp_scs_mp_1<IT>;
                     // two_prec_kernel_func_ptr = spmv_omp_scs_mp_2<IT>;
@@ -281,18 +308,24 @@ class SpmvKernel {
             }
             else if(config->value_type != "mp"){
                 if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+#ifdef USE_MPI
                     if(my_rank == 0)
+#endif
                         std::cout << "CRS kernel selected" << std::endl;
                     // TODO: More performant to just instantiate template here?
                     one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
                 }
                 else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
+#ifdef USE_MPI
                     if(my_rank == 0)
+#endif
                         std::cout << "ELL_rm kernel selected" << std::endl;
                     one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
                 }
                 else if (config->kernel_format == "ell_cm"){
+#ifdef USE_MPI
                     if(my_rank == 0)
+#endif
                         std::cout << "ELL_cm kernel selected" << std::endl;
                     one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
                 }
@@ -304,7 +337,9 @@ class SpmvKernel {
                     // && config->chunk_size != 16
                     // && config->chunk_size != 32
                     // && config->chunk_size != 64){
+#ifdef USE_MPI
                     if(my_rank == 0)
+#endif
                         std::cout << "SCS kernel selected" << std::endl;
                     one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
                 }
@@ -322,6 +357,7 @@ class SpmvKernel {
         }
 
         inline void init_halo_exchange(void){
+#ifdef USE_MPI
             int outgoing_buf_size, incoming_buf_size;
             int receiving_proc, sending_proc;
 
@@ -403,16 +439,20 @@ class SpmvKernel {
                     );
                 }
             }
+#endif
         }
 
         inline void finalize_halo_exchange(void){
+#ifdef USE_MPI
             MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
+#endif
         }
 
         // TODO: make into two communicators, hp and lp
         // Still only communicates with hp_x info
         inline void init_mp_halo_exchange(void){
+#ifdef USE_MPI
             int outgoing_buf_size, incoming_buf_size;
             int receiving_proc, sending_proc;
 
@@ -472,11 +512,14 @@ class SpmvKernel {
                     &send_requests[to_proc_idx]
                 );
             }
+#endif
         }
 
         inline void finalize_mp_halo_exchange(void){
+#ifdef USE_MPI
             MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
+#endif
         }
 
         inline void execute_spmv(void){
@@ -494,41 +537,41 @@ class SpmvKernel {
         }
 
         inline void execute_mp_spmv(void){
-                two_prec_kernel_func_ptr(
-                    hp_n_chunks,
-                    hp_C,
-                    hp_chunk_ptrs,
-                    hp_chunk_lengths,
-                    hp_col_idxs,
-                    hp_values,
-                    hp_local_x,
-                    hp_local_y, 
-                    lp_n_chunks,
-                    lp_C,
-                    lp_chunk_ptrs,
-                    lp_chunk_lengths,
-                    lp_col_idxs,
-                    lp_values,
-                    lp_local_x,
-                    lp_local_y,
-                    my_rank
-                );
+            two_prec_kernel_func_ptr(
+                hp_n_chunks,
+                hp_C,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                hp_local_x,
+                hp_local_y, 
+                lp_n_chunks,
+                lp_C,
+                lp_chunk_ptrs,
+                lp_chunk_lengths,
+                lp_col_idxs,
+                lp_values,
+                lp_local_x,
+                lp_local_y,
+                my_rank,
+                lp_perm,
+                hp_perm,
+                lp_inv_perm,
+                hp_inv_perm
+            );
         }
 
         // TODO: bad. can likely avoid
         inline void copy_hp_halos_to_lp(){
+#ifdef USE_MPI
             // With mp, all communication will happen in double prec. on the hp_local_x, 
             // distributes only the halo elements to lp_local_x
             int halo_elements = local_context->recv_counts_cumsum.back();
             for(int i = 0; i < halo_elements; ++i){
-                lp_local_x[hp_n_chunks + i] = static_cast<float>(hp_local_x[hp_n_chunks + i]);
+                lp_local_x[hp_n_chunks * hp_C + i] = static_cast<float>(hp_local_x[hp_n_chunks * hp_C + i]);
             }
-        }
-
-        inline void copy_hp_results_to_lp(){
-            for(int i = 0; i < local_context->num_local_rows; ++i){
-                lp_local_y[i] = static_cast<float>(hp_local_y[i]);
-            }
+#endif
         }
 
         inline void swap_local_vectors(){
@@ -681,9 +724,12 @@ struct ScsData
     std::vector<int> new_to_old_idx; //inverse of above
     // TODO: ^ make V object as well?
 
-    // Only used for column compression with mp when n_procs > 1
+    // Only used in column compression routine
     std::vector<int> is_elem_hp;
+    std::vector<int> hp_to_original_mapping;
     std::vector<int> is_elem_lp;
+    std::vector<int> lp_to_original_mapping;
+
 
     void permute(IT *_perm_, IT*  _invPerm_);
     void write_to_mtx_file(int my_rank, std::string file_out_name);

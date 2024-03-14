@@ -69,4 +69,30 @@ extern ScsExplicitData<double, int> explicit_exp_M1_hp_scs_1_1;
 extern MtxData<float, int> exp_M1_lp;
 extern ScsData<float, int> exp_M1_lp_scs_1_1;
 extern ScsExplicitData<float, int> explicit_exp_M1_lp_scs_1_1;
+
+//////////////////////////// M-big test data ////////////////////////////
+extern MtxData<double, int> M_big;
+
+//////////////////////////// M-big-hp test data ////////////////////////////
+extern MtxData<float, int> exp_M_big_lp;
+extern ScsData<float, int> exp_M_big_lp_scs_1_2;
+extern ScsExplicitData<float, int> explicit_exp_M_big_lp_scs_1_2;
+extern ScsData<float, int> exp_M_big_lp_scs_1_2_compressed;
+extern ScsExplicitData<float, int> explicit_exp_M_big_lp_scs_1_2_compressed;
+extern ScsData<float, int> exp_M_big_lp_scs_1_128;
+extern ScsExplicitData<float, int> explicit_exp_M_big_lp_scs_1_128;
+extern ScsData<float, int> exp_M_big_lp_scs_1_128_compressed;
+extern ScsExplicitData<float, int> explicit_exp_M_big_lp_scs_1_128_compressed;
+
+//////////////////////////// M-big-lp test data ////////////////////////////
+extern MtxData<double, int> exp_M_big_hp;
+extern ScsData<double, int> exp_M_big_hp_scs_1_2;
+extern ScsExplicitData<double, int> explicit_exp_M_big_hp_scs_1_2;
+extern ScsData<double, int> exp_M_big_hp_scs_1_2_compressed;
+extern ScsExplicitData<double, int> explicit_exp_M_big_hp_scs_1_2_compressed;
+extern ScsData<double, int> exp_M_big_hp_scs_1_128;
+extern ScsExplicitData<double, int> explicit_exp_M_big_hp_scs_1_128;
+extern ScsData<double, int> exp_M_big_hp_scs_1_128_compressed;
+extern ScsExplicitData<double, int> explicit_exp_M_big_hp_scs_1_128_compressed;
+
 #endif
