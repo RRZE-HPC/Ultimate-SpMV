@@ -12,10 +12,6 @@
 #include <unistd.h>
 #include <set>
 
-#ifdef USE_SPMP
-    #include "SpMP/CSR.hpp"
-#endif
-
 #ifdef USE_MPI
 /**
     @brief Generate unique tags for communication, based on the cantor pairing function. 
@@ -175,8 +171,6 @@ void collect_local_needed_heri(
     std::vector<std::vector<IT>> *communication_recv_idxs,
     std::vector<IT> *recv_counts_cumsum,
     ScsData<VT, IT> *local_scs,
-    ScsData<double, IT> *hp_local_scs,
-    ScsData<float, IT> *lp_local_scs,
     const IT *work_sharing_arr,
     int my_rank,
     int comm_size)
@@ -331,280 +325,6 @@ void collect_local_needed_heri(
                 }
             }
         }
-    }
-
-    // TODO: clean up. Really a headache
-    if(value_type == "mp"){
-    // for (IT i = 0; i < local_scs->n_elements; ++i)
-    // {
-    //     if(abs(scs->values[i]) >= bucket_size){
-    //         scs->is_elem_hp[i] = 1;
-    //     } 
-    //     else{
-    //         scs->is_elem_lp[i] = 1;
-    //     }
-    // }
-
-    // printf("is_hp = [");
-    // for (IT i = 0; i < local_scs->n_elements; ++i)
-    // {
-    //     printf("%i, ", local_scs->is_elem_hp[i]);
-    // }
-    // printf("]\n");
-
-    // printf("is_lp = [");
-    // for (IT i = 0; i < local_scs->n_elements; ++i)
-    // {
-    //     printf("%i, ", local_scs->is_elem_lp[i]);
-    // }
-    // printf("]\n");
-
-    // Shouldn't matter because values stay the same, only col_idx changes
-    // printf("is_hp_after_comp = [");
-    // for (IT i = 0; i < local_scs->n_elements; ++i)
-    // {
-    //     printf("%i, ", is_elem_hp_after_compression[i]);
-    // }
-    // printf("]\n");
-
-    // printf("is_hp_after_comp = [");
-    // for (IT i = 0; i < local_scs->n_elements; ++i)
-    // {
-    //     printf("%i, ", is_elem_hp_after_compression[i]);
-    // }
-    // printf("]\n");
-
-    IT hp_elem_cntr = 0;
-    IT lp_elem_cntr = 0;
-
-    // Make mapping from xp_struct back to local_scs
-    // NOTE: padding elements from local_scs are ignored
-    for (IT i = 0; i < local_scs->n_elements; ++i)
-    {
-        elem_col = original_col_idxs[i];
-
-        // Ignore padding elements from local_scs, since they differ
-        // from padding elements in xp_local_scs
-        // NOTE: this info is collected BEFORE column compression
-        if (elem_col == 0 && local_scs->values[i] == 0) {
-#ifdef DEBUG_MODE_FINE
-            std::cout << "Padding element at index: " << i << " detected" << std::endl;
-#endif
-            continue;
-        }
-        if(local_scs->is_elem_hp[i]){
-            hp_local_scs->hp_to_original_mapping[hp_elem_cntr] = i;
-            ++hp_elem_cntr;
-        }
-        if(local_scs->is_elem_lp[i]){
-            lp_local_scs->lp_to_original_mapping[lp_elem_cntr] = i;
-            ++lp_elem_cntr;
-        }
-        // if(is_elem_hp_after_compression[i]){
-        //     hp_local_scs->hp_to_original_mapping[hp_elem_cntr] = i;
-        //     ++hp_elem_cntr;
-        // }
-        // if(is_elem_lp_after_compression[i]){
-        //     lp_local_scs->lp_to_original_mapping[lp_elem_cntr] = i;
-        //     ++lp_elem_cntr;
-        // }
-    }
-    // This gives us
-
-    // Sanity check
-    // if(hp_elem_cntr != hp_local_scs->n_elements){
-    //     printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr != hp_local_scs->n_elements.\n", my_rank);
-    //     printf("hp_elem_cntr = %i\n", hp_elem_cntr);
-    //     printf("hp_local_scs->n_elements = %i\n", hp_local_scs->n_elements);
-    //     exit(1);
-    // }
-
-    // printf("hp_to_original_mapping = [");
-    // for (IT i = 0; i < hp_elem_cntr; ++i)
-    // {
-    //     printf("%i, ", hp_local_scs->hp_to_original_mapping[i]);
-    // }
-    // printf("]\n");
-
-    // printf("lp_to_original_mapping = [");
-    // for (IT i = 0; i < lp_elem_cntr; ++i)
-    // {
-    //     printf("%i, ", lp_local_scs->lp_to_original_mapping[i]);
-    // }
-    // printf("]\n");
-
-    int hp_padding_elems = 0;
-    hp_elem_cntr = 0;
-    lp_elem_cntr = 0;
-    // local_scs padding is ignored
-    for (IT i = 0; i < hp_local_scs->n_elements; ++i)
-    {
-        int hp_elem_col = hp_local_scs->col_idxs[i];
-
-        // Collect padding elements
-        if(hp_elem_col == 0 && hp_local_scs->values[i] == 0) {
-            ++hp_padding_elems;
-        }
-
-        // Remember, just want to copy the right column index from local_scs
-        else if (hp_elem_col < work_sharing_arr[my_rank] || hp_elem_col > work_sharing_arr[my_rank + 1] - 1)
-        {
-#ifdef DEBUG_MODE
-            std::cout << "hp Remote element!" << std::endl;
-            if (hp_elem_col < work_sharing_arr[my_rank]){
-                std::cout << "hp_elem_col: " << hp_elem_col << " < " <<  "work_sharing_arr[" << my_rank << "] : " <<  work_sharing_arr[my_rank] << std::endl;
-            }
-            else if( hp_elem_col > work_sharing_arr[my_rank + 1] - 1){
-                std::cout << "hp_elem_col: " << hp_elem_col << " > " << "work_sharing_arr[" << my_rank + 1 << "] - 1: " << work_sharing_arr[my_rank + 1] - 1 << std::endl;
-            }
-#endif
-            // i.e. if LHS remote element
-                hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[hp_local_scs->hp_to_original_mapping[i-hp_padding_elems]];
-        }
-        else{
-            // local elements and padding elements
-            hp_local_scs->col_idxs[hp_elem_cntr] -= work_sharing_arr[my_rank];
-        }
-        ++hp_elem_cntr;
-    }
-    // You want to copy the column indices from local_scs AFTER it has already been compressed!! 
-    // Actually doesn't matter
-
-    // hp_local_scs->print();
-
-    int lp_padding_elems = 0;
-    // local_scs padding is ignored
-    for (IT i = 0; i < lp_local_scs->n_elements; ++i)
-    {
-        int lp_elem_col = lp_local_scs->col_idxs[i];
-
-        // Collect padding elements
-        if(lp_elem_col == 0 && lp_local_scs->values[i] == 0) {
-            ++lp_padding_elems;
-        }
-
-        // Remember, just want to copy the right column index from local_scs
-        else if (lp_elem_col < work_sharing_arr[my_rank] || lp_elem_col > work_sharing_arr[my_rank + 1] - 1)
-        {
-#ifdef DEBUG_MODE
-            std::cout << "lp Remote element!" << std::endl;
-            if (lp_elem_col < work_sharing_arr[my_rank]){
-                std::cout << "lp_elem_col: " << lp_elem_col << " < " <<  "work_sharing_arr[" << my_rank << "] : " <<  work_sharing_arr[my_rank] << std::endl;
-            }
-            else if( lp_elem_col > work_sharing_arr[my_rank + 1] - 1){
-                std::cout << "lp_elem_col: " << lp_elem_col << " > " << "work_sharing_arr[" << my_rank + 1 << "] - 1: " << work_sharing_arr[my_rank + 1] - 1 << std::endl;
-            }
-#endif
-            // i.e. if LHS remote element
-                lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[lp_local_scs->lp_to_original_mapping[i-lp_padding_elems]];
-        }
-        else{
-            // local elements and padding elements
-            lp_local_scs->col_idxs[lp_elem_cntr] -= work_sharing_arr[my_rank];
-        }
-        ++lp_elem_cntr;
-    }
-    
-
-    // lp_local_scs->print();
-    // exit(0);
-
-    // Copy remote elements from local_scs information already collected
-//     if(value_type == "mp"){
-//         // Scan all elements again, in order to use "is_elem_xp" arrays without some weird mapping
-//         for (IT i = 0; i < local_scs->n_elements; ++i)
-//         {
-//             elem_col = local_scs->col_idxs[i];
-
-//             // TODO: what is happening now, with these "0 element" communicators?
-//             // if this column corresponds to a padded element, continue to next nnz
-//             // if(elem_col == 0 && local_scs->values[i] == 0) {continue;}
-
-//             if (elem_col < work_sharing_arr[my_rank])
-//             {
-//                 if(local_scs->is_elem_hp[i]){
-//                     hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
-// #ifdef DEBUG_MODE_FINE
-//                     std::cout << "L Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
-// #endif
-//                     ++hp_elem_cntr;
-//                 }
-//                 else if(local_scs->is_elem_lp[i]){
-//                     lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
-// #ifdef DEBUG_MODE_FINE
-//                     std::cout << "L Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
-// #endif
-//                     ++lp_elem_cntr;
-//                 }
-//                 else{
-//                     printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
-//                 }
-//             }
-//             else if (elem_col > work_sharing_arr[my_rank + 1] - 1)
-//             { // i.e. if RHS remote element
-//                 if(local_scs->is_elem_hp[i]){
-//                     hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
-// #ifdef DEBUG_MODE_FINE
-//                     std::cout << "R Remote hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
-// #endif
-//                     ++hp_elem_cntr;
-//                 }
-//                 else if(local_scs->is_elem_lp[i]){
-//                     lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
-// #ifdef DEBUG_MODE_FINE
-//                     std::cout << "R Remote lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
-// #endif
-//                     ++lp_elem_cntr;
-//                 }
-//                 else{
-//                     printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
-//                 }
-//             }
-//             else{
-//                 if(local_scs->is_elem_hp[i]){
-//                     // hp_max_local_col = elem_col ? elem_col > hp_max_local_col : hp_max_local_col;
-// #ifdef DEBUG_MODE_FINE
-//                     std::cout << "Local hp: before_adjustment hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
-// #endif
-//                     hp_local_scs->col_idxs[hp_elem_cntr] = local_scs->col_idxs[i];
-// #ifdef DEBUG_MODE_FINE
-//                     std::cout << "Local hp: hp_local_scs->col_idxs[" << hp_elem_cntr << "] = " << hp_local_scs->col_idxs[hp_elem_cntr] << std::endl;
-// #endif
-//                     ++hp_elem_cntr;
-//                 }
-//                 else if(local_scs->is_elem_lp[i]){
-//                     // lp_max_local_col = elem_col ? elem_col > lp_max_local_col : lp_max_local_col;
-//                     lp_local_scs->col_idxs[lp_elem_cntr] = local_scs->col_idxs[i];
-//                     // ++lp_local_elem_count; // <- this isnt correct, because you run over remote elements
-// #ifdef DEBUG_MODE_FINE
-//                     std::cout << "Local lp: lp_local_scs->col_idxs[" << lp_elem_cntr << "] = " << lp_local_scs->col_idxs[lp_elem_cntr] << std::endl;
-// #endif
-//                     ++lp_elem_cntr;
-//                 }
-//                 else{
-//                     printf("collect_local_needed_heri ERROR: element detected outside of a bucket.\n");exit(1);
-//                 }
-//             }
-//         }
-
-        // Sanity check
-        if(hp_elem_cntr != hp_local_scs->n_elements){
-            printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr != hp_local_scs->n_elements.\n", my_rank);
-            printf("hp_elem_cntr = %i\n", hp_elem_cntr);
-            printf("hp_local_scs->n_elements = %i\n", hp_local_scs->n_elements);
-            exit(1);
-        }
-        if(lp_elem_cntr != lp_local_scs->n_elements){
-            printf("collect_local_needed_heri ERROR: rank %i, lp_elem_cntr != lp_local_scs->n_elements.\n", my_rank);
-            printf("lp_elem_cntr = %i\n", lp_elem_cntr);
-            printf("lp_local_scs->n_elements = %i\n", lp_local_scs->n_elements);
-            exit(1);
-        }
-        // Not true in general!
-        // if (hp_elem_cntr + lp_elem_cntr != local_scs->n_elements){
-        //     printf("collect_local_needed_heri ERROR: rank %i, hp_elem_cntr + lp_elem_cntr != local_scs->n_elements.\n", my_rank);exit(1);
-        // }
-
     }
 
     // Construct recv_counts_cumsum from lhs/rhs_cumsum_heri_counts
@@ -887,85 +607,9 @@ void define_bookkeeping_type(
 }
 #endif
 
-/**
-    @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into hp and lp sub-structs
-    @param *local_mtx : Process-local coo matrix, received on this process from an earlier routine
-    @param *hp_local_mtx : Process-local "higher precision" coo matrix
-    @param *lp_local_mtx : Process-local "lower precision" coo matrix
-*/
-template <typename VT, typename IT>
-void seperate_lp_from_hp(
-    double threshold,
-    MtxData<VT, IT> *local_mtx, 
-    MtxData<double, int> *hp_local_mtx, 
-    MtxData<float, int> *lp_local_mtx,
-    int my_rank = NULL)
-{
-    hp_local_mtx->is_sorted = local_mtx->is_sorted;
-    hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
-    hp_local_mtx->n_rows = local_mtx->n_rows;
-    hp_local_mtx->n_cols = local_mtx->n_cols;
-
-    lp_local_mtx->is_sorted = local_mtx->is_sorted;
-    lp_local_mtx->is_symmetric = local_mtx->is_symmetric;
-    lp_local_mtx->n_rows = local_mtx->n_rows;
-    lp_local_mtx->n_cols = local_mtx->n_cols;
-
-    int lp_elem_ctr = 0;
-    int hp_elem_ctr = 0;
-
-    std::vector<int> hp_local_I;
-    std::vector<int> hp_local_J;
-    std::vector<double> hp_local_vals;
-    hp_local_mtx->I = hp_local_I;
-    hp_local_mtx->J = hp_local_J;
-    hp_local_mtx->values = hp_local_vals;
-
-    std::vector<int> lp_local_I;
-    std::vector<int> lp_local_J;
-    std::vector<float> lp_local_vals;
-    lp_local_mtx->I = lp_local_I;
-    lp_local_mtx->J = lp_local_J;
-    lp_local_mtx->values = lp_local_vals;
-
-    // Scan local_mtx
-    // TODO: If this is a bottleneck:
-    // 1. Scan in parallel 
-    // 2. Allocate space
-    // 3. Assign in parallel
-    for(int i = 0; i < local_mtx->nnz; ++i){
-        // If element value below threshold, place in hp_local_mtx
-        if(abs(local_mtx->values[i]) >= threshold){   
-            hp_local_mtx->values.push_back(local_mtx->values[i]);
-            hp_local_mtx->I.push_back(local_mtx->I[i]);
-            hp_local_mtx->J.push_back(local_mtx->J[i]);
-            ++hp_elem_ctr;
-        }
-        else{
-            // else, place in lp_local_mtx 
-            lp_local_mtx->values.push_back(local_mtx->values[i]);
-            lp_local_mtx->I.push_back(local_mtx->I[i]);
-            lp_local_mtx->J.push_back(local_mtx->J[i]);
-            ++lp_elem_ctr;
-        }
-    }
-
-    hp_local_mtx->nnz = hp_elem_ctr;
-    lp_local_mtx->nnz = lp_elem_ctr;
-
-    if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
-        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when seperating \
-        into lp and hp structs on rank: %i.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr), my_rank);
-        exit(1);
-    }
-}
-
-
 /** 
     @brief Initialize total_mtx, segment and send this to local_mtx, convert to local_scs format, init comm information
     @param *local_scs : pointer to process-local scs struct
-    @param *hp_local_scs : pointer to process-local higher precision scs struct
-    @param *lp_local_scs : pointer to process-local lower precision scs struct
     @param *local_context : struct containing local_scs + communication information
     @param *total_mtx : global mtx struct
     @param *config : struct to initialze default values and user input
@@ -974,8 +618,6 @@ void seperate_lp_from_hp(
 template<typename VT, typename IT>
 void init_local_structs(
     ScsData<VT, IT> *local_scs,
-    ScsData<double, IT> *hp_local_scs,
-    ScsData<float, IT> *lp_local_scs,
     ContextData<IT> *local_context,
     MtxData<VT, IT> *total_mtx,
     Config *config, // shouldn't this be const?
@@ -988,6 +630,8 @@ void init_local_structs(
 {
 
     MtxData<VT, IT> *local_mtx = new MtxData<VT, IT>;
+
+    local_context->total_nnz = total_mtx->nnz;
 
 #ifdef USE_MPI
     MPI_Status status_bk, status_cols, status_rows, status_vals;
@@ -1032,23 +676,20 @@ void init_local_structs(
             // Assign rows, columns, and values to process local vectors
             seg_mtx_struct<VT, IT>(total_mtx, &local_I, &local_J, &local_vals, work_sharing_arr, loop_rank);
 
-            // Give the total nnz count to root process
-            local_context->total_nnz = total_mtx->nnz;
-
             // Count the number of rows in each processes
             IT local_row_cnt = std::set<IT>(local_I.begin(), local_I.end()).size();
 
             // Here, we segment data for the root process
             if (loop_rank == 0)
             {
-                local_mtx.n_rows = local_row_cnt;
-                local_mtx.n_cols = total_mtx->n_cols;
-                local_mtx.nnz = local_vals.size();
-                local_mtx.is_sorted = config->sort_matrix;
-                local_mtx.is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
-                local_mtx.I = local_I;      // should work as both local and global row ptr
-                local_mtx.J = local_J;
-                local_mtx.values = local_vals;
+                local_mtx->n_rows = local_row_cnt;
+                local_mtx->n_cols = total_mtx->n_cols;
+                local_mtx->nnz = local_vals.size();
+                local_mtx->is_sorted = config->sort_matrix;
+                local_mtx->is_symmetric = 0; // NOTE: These "sub matricies" will (almost) never be symmetric
+                local_mtx->I = local_I;      // should work as both local and global row ptr
+                local_mtx->J = local_J;
+                local_mtx->values = local_vals;
             }
             // Here, we segment and send data to another proc
             else
@@ -1106,30 +747,31 @@ void init_local_structs(
         std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);
         std::vector<VT> vals_vec(recv_buf_vals, recv_buf_vals + msg_length);
 
-        local_mtx.n_rows = recv_bk.n_rows;
-        local_mtx.n_cols = recv_bk.n_cols; // TODO: hey, is this where the col_index overflow bug comes from?
-        local_mtx.nnz = recv_bk.nnz;
-        local_mtx.is_sorted = recv_bk.is_sorted;
-        local_mtx.is_symmetric = recv_bk.is_symmetric;
-        local_mtx.I = global_rows_vec;
-        local_mtx.J = cols_vec;
-        local_mtx.values = vals_vec;
+        local_mtx->n_rows = recv_bk.n_rows;
+        local_mtx->n_cols = recv_bk.n_cols; // TODO: hey, is this where the col_index overflow bug comes from?
+        local_mtx->nnz = recv_bk.nnz;
+        local_mtx->is_sorted = recv_bk.is_sorted;
+        local_mtx->is_symmetric = recv_bk.is_symmetric;
+        local_mtx->I = global_rows_vec;
+        local_mtx->J = cols_vec;
+        local_mtx->values = vals_vec;
         
         delete[] recv_buf_global_row_coords;
         delete[] recv_buf_col_coords;
         delete[] recv_buf_vals;
     }
 
-    std::vector<IT> local_row_coords(local_mtx.nnz, 0);
+    std::vector<IT> local_row_coords(local_mtx->nnz, 0);
 
-    for (IT i = 0; i < local_mtx.nnz; ++i)
+    #pragma omp parallel for
+    for (IT i = 0; i < local_mtx->nnz; ++i)
     {
         // subtract first pointer from the rest, to make them "process local"
-        local_row_coords[i] = local_mtx.I[i] - local_mtx.I[0];
+        local_row_coords[i] = local_mtx->I[i] - local_mtx->I[0];
     }
 
     // assign local row ptrs to struct
-    local_mtx.I = local_row_coords;
+    local_mtx->I = local_row_coords;
 
     // just let every process know the total number of nnz.
     // TODO: necessary?
@@ -1156,56 +798,16 @@ void init_local_structs(
     // convert local_mtx to local_scs and permute rows (if applicable)
     convert_to_scs<VT, IT>(config->bucket_size, local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
 
-    // Only used for mixed precision
-    MtxData<double, int> *hp_local_mtx = new MtxData<double, int>;
-    MtxData<float, int> *lp_local_mtx = new MtxData<float, int>;
-
-    if (config->value_type == "mp"){
-        // Higher and Lower precision scs is only populated if we are computing in mixed pre
-        // Keeping COO format, partition local_mtx into high and low precision structs, based on value
-        seperate_lp_from_hp<VT,IT>(config->bucket_size, local_mtx, hp_local_mtx, lp_local_mtx, my_rank);
-
-        convert_to_scs<double, IT>(config->bucket_size, hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
-        convert_to_scs<float, IT>(config->bucket_size, lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
-        // std::cout << "hp_Beta = " << ((double)hp_local_scs->nnz / hp_local_scs->n_elements) * 100.0 << std::endl;
-        // std::cout << "lp_Beta = " << ((double)lp_local_scs->nnz / lp_local_scs->n_elements) * 100.0 << std::endl;
-        // std::cout << "hp_Nnzr = " << (double)hp_local_scs->nnz / hp_local_scs->n_rows  << std::endl;
-        // std::cout << "lp_Nnzr = " << (double)lp_local_scs->nnz / lp_local_scs->n_rows<< std::endl;
-        // exit(0);
-
 #ifdef OUTPUT_SPARSITY
-        printf("Writing sparsity pattern to output file.\n");
-        std::string file_out_name;
-        file_out_name = "hp_local_scs";
-        hp_local_scs->write_to_mtx_file(my_rank, file_out_name);
-        file_out_name = "lp_local_scs";
-        lp_local_scs->write_to_mtx_file(my_rank, file_out_name);
+    printf("Writing sparsity pattern to output file.\n");
+    std::string file_out_name;
+    file_out_name = "local_scs";
+    local_scs->write_to_mtx_file(my_rank, file_out_name);
 #ifdef USE_MPI
-        MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
 #endif
-        exit(0);
+    exit(0);
 #endif
-    }
-
-
-    // std::cout << "Beta = " << ((double)local_scs->nnz / local_scs->n_elements) * 100.0 << std::endl;
-    // std::cout << "Nnzr = " << (double)local_scs->nnz / local_scs->n_rows << std::endl;
-
-    // exit(0);
-
-        
-    if (config->value_type != "mp"){
-#ifdef OUTPUT_SPARSITY
-        printf("Writing sparsity pattern to output file.\n");
-        std::string file_out_name;
-        file_out_name = "local_scs";
-        local_scs->write_to_mtx_file(my_rank, file_out_name);
-#ifdef USE_MPI
-        MPI_Barrier(MPI_COMM_WORLD);
-#endif
-        exit(0);
-#endif
-    }
 
 #ifdef USE_MPI
     MPI_Type_free(&bk_type);
@@ -1225,7 +827,7 @@ void init_local_structs(
     std::vector<IT> recv_counts_cumsum(comm_size + 1, 0);
     std::vector<IT> send_counts_cumsum(comm_size + 1, 0);
 
-    collect_local_needed_heri<VT, IT>(config->value_type, &communication_recv_idxs, &recv_counts_cumsum, local_scs, hp_local_scs, lp_local_scs, work_sharing_arr, my_rank, comm_size);
+    collect_local_needed_heri<VT, IT>(config->value_type, &communication_recv_idxs, &recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
 
     organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
 
@@ -1271,51 +873,14 @@ void init_local_structs(
     local_context->recv_tags = recv_tags;
     local_context->recv_counts_cumsum = recv_counts_cumsum;
     local_context->send_counts_cumsum = send_counts_cumsum;
-    local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
     local_context->num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
 #else
     local_context->num_local_rows = local_scs->n_rows;
 #endif
-    
+    local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
 
-    // Should this be the place where you do local RCM? Try it
-// #ifdef USE_SPMP
-//     if(local_scs->rcm_viable())
-//         local_scs->do_rcm(my_rank);
-//     else{
-//         if(my_rank == 0){printf("local_scs ERROR: Matrix not viable for RCM permutation.\n");exit(1);}
-//     }
-        
-// #endif
-
+    // For symmetric permutation of matrix data
     permute_scs_cols(local_scs, &(local_scs->old_to_new_idx)[0]);
-
-    if (config->value_type == "mp"){
-        // Permute column indices the same as the original scs struct
-        // But rows are permuted differently (i.e. within the convert_to_scs routine)
-        // permute_scs_cols(hp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
-        // permute_scs_cols(lp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
-        for(int i = 0; i < hp_local_scs->n_elements; ++i){
-            std::cout << "hp_local_scs->col_idxs[" << i << "] = " << hp_local_scs->col_idxs[i] << std::endl;
-        }
-        for(int i = 0; i < lp_local_scs->n_elements; ++i){
-            std::cout << "lp_local_scs->col_idxs[" << i << "] = " << lp_local_scs->col_idxs[i] << std::endl;
-        }
-
-        permute_scs_cols(hp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
-        permute_scs_cols(lp_local_scs, &(lp_local_scs->old_to_new_idx)[0]);
-
-        for(int i = 0; i < hp_local_scs->n_elements; ++i){
-            std::cout << "hp_local_scs->col_idxs[" << i << "] = " << hp_local_scs->col_idxs[i] << std::endl;
-        }
-        for(int i = 0; i < lp_local_scs->n_elements; ++i){
-            std::cout << "lp_local_scs->col_idxs[" << i << "] = " << lp_local_scs->col_idxs[i] << std::endl;
-        }
-    }
-
-    // delete local_mtx;
-    // delete hp_local_mtx;
-    // delete lp_local_mtx;
 
 }
 #endif

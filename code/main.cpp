@@ -32,32 +32,20 @@
     @brief Perform SPMV kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
     @param *local_scs : pointer to process-local scs struct 
-    @param *hp_local_scs : pointer to higher precision local scs struct, only used for mixed precision 
-    @param *lp_local_scs : pointer to lower precision local scs struct, only used for mixed precision
     @param *local_context : struct containing communication information
     @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *local_y : Process-local results vector, instance of SimpleDenseMatrix class
-    @param *hp_local_y : Process-local higher precision results vector, only used for mixed precision 
-    @param *lp_local_y : Process-local lower precision results vector, only used for mixed precision 
     @param *local_x : local RHS vector, instance of SimpleDenseMatrix class
-    @param *hp_local_x : Process-local higher precision RHS vector, only used for mixed precision 
-    @param *lp_local_x : Process-local lower precision RHS vector, only used for mixed precision 
     @param *r : a Result struct, in which results of the benchmark are stored
 */
 template <typename VT, typename IT>
 void bench_spmv(
     Config *config,
     ScsData<VT, IT> *local_scs,
-    ScsData<double, IT> *hp_local_scs,
-    ScsData<float, IT> *lp_local_scs,
     ContextData<IT> *local_context,
     const IT *work_sharing_arr,
     std::vector<VT> *local_y,
-    std::vector<double> *hp_local_y,
-    std::vector<float> *lp_local_y,
     std::vector<VT> *local_x,
-    std::vector<double> *hp_local_x,
-    std::vector<float> *lp_local_x,
     Result<VT, IT> *r,
     int my_rank,
     int comm_size)
@@ -84,64 +72,25 @@ void bench_spmv(
 
     // Permute x, in order to match the permutation which was done to the columns
     std::vector<VT> local_x_permuted(local_x->size(), 0);
-    std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
-    std::vector<float> lp_local_x_permuted(local_x->size(), 0);
 
     apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
-
-    if(config->value_type == "mp"){
-        apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
-        apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(lp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
-    }
 
     void *comm_args_void_ptr;
     void *kernel_args_void_ptr;
 
     OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded = new OnePrecKernelArgs<VT, IT>;
-    TwoPrecKernelArgs<IT> *two_prec_kernel_args_encoded = new TwoPrecKernelArgs<IT>;
     CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
 
-    if(config->value_type == "mp"){
-        // Encode kernel args into struct
-        two_prec_kernel_args_encoded->n_chunks = hp_local_scs->n_chunks; //shared for now
-        // TODO: allow for each struct to have it's own C
-        two_prec_kernel_args_encoded->hp_C = hp_local_scs->C;
-        two_prec_kernel_args_encoded->hp_chunk_ptrs = hp_local_scs->chunk_ptrs.data();
-        two_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
-        two_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
-        two_prec_kernel_args_encoded->hp_values = hp_local_scs->values.data();
-        // two_prec_kernel_args_encoded->hp_local_x = &(*hp_local_x)[0];
-        two_prec_kernel_args_encoded->hp_local_x = &(hp_local_x_permuted)[0];
-        two_prec_kernel_args_encoded->hp_local_y = &(*hp_local_y)[0];
-        two_prec_kernel_args_encoded->lp_C = lp_local_scs->C;
-        two_prec_kernel_args_encoded->lp_chunk_ptrs = lp_local_scs->chunk_ptrs.data();
-        two_prec_kernel_args_encoded->lp_chunk_lengths = lp_local_scs->chunk_lengths.data();
-        two_prec_kernel_args_encoded->lp_col_idxs = lp_local_scs->col_idxs.data();
-        two_prec_kernel_args_encoded->lp_values = lp_local_scs->values.data();
-        // two_prec_kernel_args_encoded->lp_local_x = &(*lp_local_x)[0];
-        two_prec_kernel_args_encoded->lp_local_x = &(lp_local_x_permuted)[0];
-        two_prec_kernel_args_encoded->lp_local_y = &(*lp_local_y)[0];
-
-        two_prec_kernel_args_encoded->lp_perm = &(lp_local_scs->old_to_new_idx)[0];
-        two_prec_kernel_args_encoded->hp_perm = &(hp_local_scs->old_to_new_idx)[0];
-        two_prec_kernel_args_encoded->lp_inv_perm = &(lp_local_scs->new_to_old_idx)[0];
-        two_prec_kernel_args_encoded->hp_inv_perm = &(hp_local_scs->new_to_old_idx)[0];
-
-        kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
-    }
-    else{   
-        // Encode kernel args into struct
-        one_prec_kernel_args_encoded->C = local_scs->C;
-        one_prec_kernel_args_encoded->n_chunks = local_scs->n_chunks;
-        one_prec_kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
-        one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
-        one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
-        one_prec_kernel_args_encoded->values = local_scs->values.data();
-        // one_prec_kernel_args_encoded->local_x = &(*local_x)[0];
-        one_prec_kernel_args_encoded->local_x = &(local_x_permuted)[0];
-        one_prec_kernel_args_encoded->local_y = &(*local_y)[0];
-        kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
-    }
+    // Encode kernel args into struct
+    one_prec_kernel_args_encoded->C = local_scs->C;
+    one_prec_kernel_args_encoded->n_chunks = local_scs->n_chunks;
+    one_prec_kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
+    one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
+    one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
+    one_prec_kernel_args_encoded->values = local_scs->values.data();
+    one_prec_kernel_args_encoded->local_x = &(local_x_permuted)[0];
+    one_prec_kernel_args_encoded->local_y = &(*local_y)[0];
+    kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
 
 #ifdef USE_MPI
     // Encode comm args into struct
@@ -177,35 +126,19 @@ void bench_spmv(
         begin_warm_up_loop_time = getTimeStamp();
 #endif
 
-        if(config->value_type != "mp"){
-            for(int k = 0; k < WARM_UP_REPS; ++k){
+        for(int k = 0; k < WARM_UP_REPS; ++k){
 #ifdef USE_MPI
-                spmv_kernel.init_halo_exchange();
-                spmv_kernel.finalize_halo_exchange();
+            spmv_kernel.init_halo_exchange();
+            spmv_kernel.finalize_halo_exchange();
 #endif
-                spmv_kernel.execute_spmv();
-                spmv_kernel.swap_local_vectors();
+            spmv_kernel.execute_spmv();
+            spmv_kernel.swap_local_vectors();
 #ifdef USE_MPI
-                if(config->ba_synch)
-                    MPI_Barrier(MPI_COMM_WORLD);
+            if(config->ba_synch)
+                MPI_Barrier(MPI_COMM_WORLD);
 #endif
-            }
         }
-        else if(config->value_type == "mp"){
-            for(int k = 0; k < WARM_UP_REPS; ++k){
-#ifdef USE_MPI
-                spmv_kernel.init_mp_halo_exchange();
-                spmv_kernel.finalize_mp_halo_exchange();
-                spmv_kernel.copy_hp_halos_to_lp();
-#endif
-                spmv_kernel.execute_mp_spmv();
-                spmv_kernel.swap_local_mp_vectors();
-#ifdef USE_MPI
-                if(config->ba_synch)
-                    MPI_Barrier(MPI_COMM_WORLD);
-#endif
-            }
-        }
+
 
 #ifdef USE_MPI
         end_warm_up_loop_time = MPI_Wtime();
@@ -228,131 +161,58 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
 #endif
 
         if(config->comm_halos){
-            if(config->value_type != "mp"){
-                do{
 #ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    begin_bench_loop_time = MPI_Wtime();
+            do{
+                MPI_Barrier(MPI_COMM_WORLD);
+                begin_bench_loop_time = MPI_Wtime();
+                for(int k=0; k<n_iter; ++k) {
+                    spmv_kernel.init_halo_exchange();
+                    spmv_kernel.finalize_halo_exchange();
+                    spmv_kernel.execute_spmv();
+                    spmv_kernel.swap_local_vectors();
+                    if(config->ba_synch)
+                        MPI_Barrier(MPI_COMM_WORLD);
+                }
+                MPI_Barrier(MPI_COMM_WORLD);
+                n_iter = n_iter*2;
+                runtime = MPI_Wtime() - begin_bench_loop_time;
+            } while (runtime < config->bench_time);
+            n_iter = n_iter/2;
 #else
-                    begin_bench_loop_time = getTimeStamp();
+    printf("ERROR: Cannot communicate halo elements.\n \
+        Validate that either USE_MPI = 0 and comm_halos = 0,\n \
+        or that USE_MPI = 1.\n");
+    exit(1);
 #endif
-                    for(int k=0; k<n_iter; ++k) {
-#ifdef USE_MPI
-                        spmv_kernel.init_halo_exchange();
-                        spmv_kernel.finalize_halo_exchange();
-#endif
-                        spmv_kernel.execute_spmv();
-                        spmv_kernel.swap_local_vectors();
-#ifdef USE_MPI
-                        if(config->ba_synch)
-                            MPI_Barrier(MPI_COMM_WORLD);
-#endif
-                    }
-#ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
-#endif
-                    n_iter = n_iter*2;
-#ifdef USE_MPI
-                    runtime = MPI_Wtime() - begin_bench_loop_time;
-#else
-                    runtime = getTimeStamp() - begin_bench_loop_time;
-#endif
-                } while (runtime < config->bench_time);
-                n_iter = n_iter/2;
-            }
-            else if(config->value_type == "mp"){
-                do{
-#ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    begin_bench_loop_time = MPI_Wtime();
-#else
-                    begin_bench_loop_time = getTimeStamp();
-#endif
-                    for(int k=0; k<n_iter; ++k) {
-#ifdef USE_MPI
-                        spmv_kernel.init_mp_halo_exchange();
-                        spmv_kernel.finalize_mp_halo_exchange();
-                        spmv_kernel.copy_hp_halos_to_lp();
-#endif
-                        spmv_kernel.execute_mp_spmv();
-                        spmv_kernel.swap_local_mp_vectors();
-#ifdef USE_MPI
-                        if(config->ba_synch)
-                            MPI_Barrier(MPI_COMM_WORLD);
-#endif
-                    }
-#ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
-#endif
-                    n_iter = n_iter*2;
-#ifdef USE_MPI
-                    runtime = MPI_Wtime() - begin_bench_loop_time;
-#else
-                    runtime = getTimeStamp() - begin_bench_loop_time;
-#endif
-                } while (runtime < config->bench_time);
-                n_iter = n_iter/2;
-            }
         }
         else if(!config->comm_halos){
-            if(config->value_type != "mp"){
-                do{
+            do{
 #ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    begin_bench_loop_time = MPI_Wtime();
+                MPI_Barrier(MPI_COMM_WORLD);
+                begin_bench_loop_time = MPI_Wtime();
 #else
-                    begin_bench_loop_time = getTimeStamp();
+                begin_bench_loop_time = getTimeStamp();
 #endif
-                    for(int k=0; k<n_iter; ++k) {
+                for(int k=0; k<n_iter; ++k) {
 
-                        spmv_kernel.execute_spmv();
-                        spmv_kernel.swap_local_vectors();
+                    spmv_kernel.execute_spmv();
+                    spmv_kernel.swap_local_vectors();
 #ifdef USE_MPI
-                        if(config->ba_synch)
-                            MPI_Barrier(MPI_COMM_WORLD);
+                    if(config->ba_synch)
+                        MPI_Barrier(MPI_COMM_WORLD);
 #endif
-                    }
+                }
 #ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
+                MPI_Barrier(MPI_COMM_WORLD);
 #endif
-                    n_iter = n_iter*2;
+                n_iter = n_iter*2;
 #ifdef USE_MPI
-                    runtime = MPI_Wtime() - begin_bench_loop_time;
+                runtime = MPI_Wtime() - begin_bench_loop_time;
 #else
-                    runtime = getTimeStamp() - begin_bench_loop_time;
+                runtime = getTimeStamp() - begin_bench_loop_time;
 #endif
-                } while (runtime < config->bench_time);
-                n_iter = n_iter/2;
-            }
-            else if(config->value_type == "mp"){
-                do{
-#ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
-                    begin_bench_loop_time = MPI_Wtime();
-#else
-                    begin_bench_loop_time = getTimeStamp();
-#endif
-                    for(int k=0; k<n_iter; ++k) {
-                        
-                        spmv_kernel.execute_mp_spmv();
-                        spmv_kernel.swap_local_mp_vectors();
-#ifdef USE_MPI
-                        if(config->ba_synch)
-                            MPI_Barrier(MPI_COMM_WORLD);
-#endif
-                    }
-#ifdef USE_MPI
-                    MPI_Barrier(MPI_COMM_WORLD);
-#endif
-                    n_iter = n_iter*2;
-#ifdef USE_MPI
-                    runtime = MPI_Wtime() - begin_bench_loop_time;
-#else
-                    runtime = getTimeStamp() - begin_bench_loop_time;
-#endif
-                } while (runtime < config->bench_time);
-                n_iter = n_iter/2;
-            }
+            } while (runtime < config->bench_time);
+            n_iter = n_iter/2;
         }
         r->n_calls = n_iter;
         r->duration_total_s = runtime;
@@ -362,8 +222,8 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                             / 1e9;                   // Only count usefull flops
     }
     else if(config->mode == 's'){ // Enter main COMM-SPMV-SWAP loop, solve mode
-        std::vector<VT> sorted_local_y(local_y->size(), 0);
-        std::vector<double> sorted_hp_local_y(local_y->size(), 0);
+        // Selects the first (n_rows)-many elements of a sorted y vector, and chops off padding
+        std::vector<VT> sorted_local_y(local_context->num_local_rows, 0);
 
         for (int i = 0; i < config->n_repetitions; ++i)
         {
@@ -380,46 +240,11 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
             }
 #endif
 
-            if(config->value_type == "mp"){
 #ifdef USE_MPI
-                spmv_kernel.init_mp_halo_exchange();
-                spmv_kernel.finalize_mp_halo_exchange();
-
+            spmv_kernel.init_halo_exchange();
+            spmv_kernel.finalize_halo_exchange();
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
-                std::cout << "after comm spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "after comm spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
-                spmv_kernel.copy_hp_halos_to_lp(); // mp Overhead 1. Can just receive into both buffers as well
-#endif
-                spmv_kernel.execute_mp_spmv();
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 0){
-                std::cout << "after_kernel spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "after_kernel spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
-
-            }
-            else{
-#ifdef USE_MPI
-                spmv_kernel.init_halo_exchange();
-                spmv_kernel.finalize_halo_exchange();
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
                 std::cout << "after comm spmv_kernel->local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.local_x[i] << std::endl;
@@ -431,9 +256,9 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
             }
 #endif
 #endif
-                spmv_kernel.execute_spmv();
+            spmv_kernel.execute_spmv();
 #ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
+            if(my_rank == 0){
                 std::cout << "after_kernel spmv_kernel->local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.local_x[i] << std::endl;
@@ -444,33 +269,9 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                 }
             }
 #endif
-            }
-
-            // swap x <-> y
-            if(config->value_type == "mp"){    
-                // TODO: Bandaid until I figure out swapping
-                // for(int i = 0; i < local_y->size(); ++i){
-                //     (spmv_kernel.lp_local_x)[i] = (spmv_kernel.lp_local_y)[i];
-                //     (spmv_kernel.hp_local_x)[i] = (spmv_kernel.hp_local_y)[i];
-                // }
-                spmv_kernel.swap_local_mp_vectors();
+            spmv_kernel.swap_local_vectors();
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
-                std::cout << "after_kernel and swap spmv_kernel->hp_local_x" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_x[i] << std::endl;
-                }
-                std::cout << "after_kernel and swap spmv_kernel->hp_local_y" << std::endl;
-                for(int i = 0; i < local_x->size(); ++i){
-                    std::cout << spmv_kernel.hp_local_y[i] << std::endl;
-                }
-            }
-#endif
-            }
-            else{
-                spmv_kernel.swap_local_vectors();
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 1){
                 std::cout << "after_kernel and swap spmv_kernel->local_x" << std::endl;
                 for(int i = 0; i < local_x->size(); ++i){
                     std::cout << spmv_kernel.local_x[i] << std::endl;
@@ -481,7 +282,7 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
                 }
             }
 #endif
-            }
+
 #ifdef USE_MPI
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
@@ -489,28 +290,15 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
         }
 
         // Bring local_x out of permuted space
-        // TODO: pretty ugly. try to clean up
-        if(config->value_type == "mp"){
-            apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
+        apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_x)[0], &(local_scs->old_to_new_idx)[0], local_context->num_local_rows);
         
-            // // Give result to local_y for results output
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = (sorted_hp_local_y)[i];
-            }
-        
-            // Give result to local_y for results output
-            // for(int i = 0; i < local_y->size(); ++i){
-            //     (*local_y)[i] = (spmv_kernel.hp_local_x)[i];
-            // }
+        // Give result to local_y for results output
+        for(int i = 0; i < local_context->num_local_rows; ++i){
+            (*local_y)[i] = (sorted_local_y)[i];
         }
-        else{
-            apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-            
-            // Give result to local_y for results output
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = (sorted_local_y)[i];
-            }
-        }
+
+        // Manually resize for ease later on (and I don't see a better way)
+        local_y->resize(local_context->num_local_rows);
     }
 
     // Delete the allocated space for each other process send buffers
@@ -551,10 +339,6 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
     r->C               = local_scs->C;
     r->sigma           = local_scs->sigma;
 
-    // Only relevant for mp
-    r->hp_nnz = hp_local_scs->nnz;
-    r->lp_nnz = lp_local_scs->nnz;
-
 #ifdef USE_MPI
     delete[] recv_requests;
     delete[] send_requests;
@@ -562,7 +346,6 @@ LIKWID_MARKER_REGISTER("spmv_benchmark");
 
     delete comm_args_encoded;
     delete one_prec_kernel_args_encoded;
-    delete two_prec_kernel_args_encoded;
 }
 
 /**
@@ -592,12 +375,10 @@ void gather_results(
 #endif
 
     if(config->mode == 'b'){
-#ifdef USE_MPI
-        double *perfs_from_procs_arr = new double[comm_size];
-        unsigned long *hp_nnz_per_procs_arr = new unsigned long[comm_size];
-        unsigned long *lp_nnz_per_procs_arr = new unsigned long[comm_size];
-        unsigned long *nnz_per_procs_arr = new unsigned long[comm_size];
 
+        double *perfs_from_procs_arr = new double[comm_size];
+        unsigned long *nnz_per_procs_arr = new unsigned long[comm_size];
+#ifdef USE_MPI
 
         MPI_Gather(&(r->perf_gflops),
                 1,
@@ -605,24 +386,6 @@ void gather_results(
                 perfs_from_procs_arr,
                 1,
                 MPI_DOUBLE,
-                0,
-                MPI_COMM_WORLD);
-
-        MPI_Gather(&(r->hp_nnz),
-                1,
-                MPI_UNSIGNED_LONG,
-                hp_nnz_per_procs_arr,
-                1,
-                MPI_UNSIGNED_LONG,
-                0,
-                MPI_COMM_WORLD);
-
-        MPI_Gather(&(r->lp_nnz),
-                1,
-                MPI_UNSIGNED_LONG,
-                lp_nnz_per_procs_arr,
-                1,
-                MPI_UNSIGNED_LONG,
                 0,
                 MPI_COMM_WORLD);
 
@@ -634,35 +397,19 @@ void gather_results(
                 MPI_UNSIGNED_LONG,
                 0,
                 MPI_COMM_WORLD);
+#else 
+    perfs_from_procs_arr[0] = r->perf_gflops;
+    nnz_per_procs_arr[0] = r->nnz;
+#endif
 
         // NOTE: Garbage values for all but root process
         r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + comm_size);
-        r->hp_nnz_per_proc = std::vector<unsigned long>(hp_nnz_per_procs_arr, hp_nnz_per_procs_arr + comm_size);
-        r->lp_nnz_per_proc = std::vector<unsigned long>(lp_nnz_per_procs_arr, lp_nnz_per_procs_arr + comm_size);
         r->nnz_per_proc = std::vector<unsigned long>(nnz_per_procs_arr, nnz_per_procs_arr + comm_size);
 
-        r->cumulative_hp_nnz = 0;
-        r->cumulative_lp_nnz = 0;
-
-        for(int i = 0; i < comm_size; ++i){
-            r->cumulative_hp_nnz += r->hp_nnz_per_proc[i];
-            r->cumulative_lp_nnz += r->lp_nnz_per_proc[i];
-        }
-
-        r->total_hp_percent = (r->cumulative_hp_nnz / (double)r->total_nnz) * 100.0;
-        r->total_lp_percent = (r->cumulative_lp_nnz / (double)r->total_nnz) * 100.0;
-
         delete[] perfs_from_procs_arr;
-        delete[] hp_nnz_per_procs_arr;
-        delete[] lp_nnz_per_procs_arr;
         delete[] nnz_per_procs_arr;
-#else
-        r->cumulative_hp_nnz = r->hp_nnz;
-        r->cumulative_lp_nnz = r->lp_nnz;
 
-        r->total_hp_percent = (r->cumulative_hp_nnz / (double)r->total_nnz) * 100.0;
-        r->total_lp_percent = (r->cumulative_lp_nnz / (double)r->total_nnz) * 100.0;
-#endif
+
     }
     else if(config->mode == 's'){
         std::vector<VT> sorted_local_y(num_local_rows);
@@ -701,7 +448,7 @@ void gather_results(
                             0,
                             MPI_COMM_WORLD);
                 // Gather all x_vector copies to root for mkl validation
-                MPI_Gatherv(local_x_copy[0],
+                MPI_Gatherv(&(*local_x_copy)[0],
                             num_local_rows,
                             MPI_DOUBLE,
                             &total_x[0],
@@ -722,7 +469,7 @@ void gather_results(
                             0,
                             MPI_COMM_WORLD);
 
-                MPI_Gatherv(local_x_copy[0],
+                MPI_Gatherv(&(*local_x_copy)[0],
                             num_local_rows,
                             MPI_FLOAT,
                             &total_x[0],
@@ -769,10 +516,6 @@ void compute_result(
     // Declare local structs on each process
     ScsData<VT, IT> local_scs;
 
-    // Must be declared, but only used for mixed precision case
-    ScsData<double, IT> hp_local_scs;
-    ScsData<float, IT> lp_local_scs;
-
     ContextData<IT> local_context;
 
     // Allocate space for work sharing array
@@ -800,8 +543,6 @@ void compute_result(
 
     init_local_structs<VT, IT>(
         &local_scs,
-        &hp_local_scs,
-        &lp_local_scs,
         &local_context, 
         total_mtx,
         config, 
@@ -815,30 +556,12 @@ void compute_result(
 
     // Declare local vectors to be used
     SimpleDenseMatrix<VT, IT> local_x(&local_context);
-
-    // Must be declared, but only used for mixed precision case
-    // TODO: not efficient for storage, but used later for mp interop
-    SimpleDenseMatrix<double, IT> hp_local_x(&local_context);
-    SimpleDenseMatrix<float, IT> lp_local_x(&local_context);
-
     SimpleDenseMatrix<VT, IT> local_y(&local_context);
-
-    // NOTE: a low precision y vector is needed for swapping with low precision x
-    SimpleDenseMatrix<double, IT> hp_local_y(&local_context);
-    SimpleDenseMatrix<float, IT> lp_local_y(&local_context);
 
     // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp,
     // or with 1s (by default)
     local_x.init(config);
     local_y.init(config);
-
-    // TODO: wrap in method or something
-    if(config->value_type == "mp"){
-        for(int i = 0; i < (local_x.vec).size(); ++i){
-            hp_local_x.vec[i] = static_cast<double>(local_x.vec[i]);
-            lp_local_x.vec[i] = static_cast<float>(local_x.vec[i]);
-        }
-    }
 
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x.vec;
@@ -849,16 +572,10 @@ void compute_result(
     bench_spmv<VT, IT>(
         config,
         &local_scs,
-        &hp_local_scs,
-        &lp_local_scs,
         &local_context,
         work_sharing_arr,
         &local_y.vec,
-        &hp_local_y.vec,
-        &lp_local_y.vec,
         &local_x.vec,
-        &hp_local_x.vec,
-        &lp_local_x.vec,
         r,
         my_rank,
         comm_size
@@ -925,8 +642,6 @@ int my_rank = 0, comm_size = 1;
     int sigma = config.sigma;
     int revisions = config.n_repetitions;
 
-    double total_walltimes[comm_size];
-
     parse_cli_inputs(argc, argv, &matrix_file_name, &seg_method, &kernel_format, &value_type, &config, my_rank);
 
     config.seg_method = seg_method;
@@ -939,21 +654,22 @@ int my_rank = 0, comm_size = 1;
         Result<double, int> r;
 
         if(my_rank == 0){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Reading mtx file.\n");}
-#endif
+            if(my_rank == 0){printf("Reading mtx file.\n");}
             read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
             r.total_nnz = total_mtx.nnz;
             r.total_rows = total_mtx.n_rows;
         }
-#ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}
-#endif
         compute_result<double, int>(&total_mtx, &config, &r, my_rank, comm_size);
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
 
+#ifdef USE_MPI
+    r.total_walltime = MPI_Wtime() - begin_main_time;
+#else
+    r.total_walltime = getTimeStamp() - begin_main_time;
+#endif
         if(my_rank == 0){
             if(config.mode == 's'){
                 if(config.validate_result){
@@ -974,7 +690,7 @@ int my_rank = 0, comm_size = 1;
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Writing benchmark results to file.\n");}
 #endif
-                write_bench_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, total_walltimes, comm_size);
+                write_bench_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, comm_size);
             }
         }
     }
@@ -998,7 +714,11 @@ int my_rank = 0, comm_size = 1;
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Complete compute_result.\n");}
 #endif
-
+#ifdef USE_MPI
+    r.total_walltime = MPI_Wtime() - begin_main_time;
+#else
+    r.total_walltime = getTimeStamp() - begin_main_time;
+#endif
         if(my_rank == 0){
             if(config.mode == 's'){
                 if(config.validate_result){
@@ -1019,55 +739,7 @@ int my_rank = 0, comm_size = 1;
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Writing benchmark results to file.\n");}
 #endif
-                write_bench_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r, total_walltimes, comm_size);
-            }
-        }
-    }
-    else if (config.value_type == "mp")
-    // Currently, everything is still read and results are written as doubles.
-    // i.e. VT = double, IT = int.
-    {
-        MtxData<double, int> total_mtx;
-        Result<double, int> r;
-
-        if(my_rank == 0){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Reading mtx file.\n");}
-#endif
-            read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
-            r.total_nnz = total_mtx.nnz;
-            r.total_rows = total_mtx.n_rows;
-        }
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Enter compute_result.\n");}
-#endif
-        compute_result<double, int>(&total_mtx, &config, &r, my_rank, comm_size);
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Complete compute_result.\n");}
-#endif
-
-        if(my_rank == 0){
-            if(config.mode == 's'){
-                if(config.validate_result){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Validating results.\n");}
-#endif
-                    std::vector<double> mkl_dp_result;
-                    validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Writing validation results to file.\n");}
-#endif
-                    // Validate against doubles, but it would be nice to validate against both dp and sp.
-                    write_result_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_dp_result, comm_size);
-                }
-                else{
-                }
-            }
-            else if(config.mode == 'b'){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Writing benchmark results to file.\n");}
-#endif
-                write_bench_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, total_walltimes, comm_size);
+                write_bench_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r, comm_size);
             }
         }
     }

@@ -2,7 +2,9 @@
 #define WRITE_RESULTS
 
 #include <mkl.h>
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 #include <iomanip>
 #include <cmath>
 
@@ -26,7 +28,6 @@ void write_bench_to_file(
     const std::string *seg_method,
     Config *config,
     Result<VT, IT> *r,
-    const double *total_walltimes,
     int comm_size
 ){
     std::fstream working_file;
@@ -50,13 +51,14 @@ void write_bench_to_file(
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
     }
-    if (config->value_type == "mp"){
-        working_file << ", data_type: mp" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % hp elems: " << r->total_hp_percent << ", % lp elems: " << r->total_lp_percent;    
-    }
     else{
         working_file << ", data_type: " << typeid(VT).name();
     }
-    working_file << ", revisions: " << r->n_calls << ", and seg_method: " << *seg_method << std::endl;
+#ifdef USE_MPI
+    working_file << ", revisions: " << r->n_calls << ", seg_method: " << *seg_method << std::endl;
+#else
+    working_file << ", revisions: " << r->n_calls << std::endl;
+#endif
     working_file << std::endl;
 
     working_file << std::left << std::setw(width) << "Total Gflops:" <<
@@ -67,7 +69,7 @@ void write_bench_to_file(
     // Since performance of slowest process is taken after a barrier, it doesn't matter which index we choose
     working_file << std::left << std::setprecision(16) <<
                     std::left << std::setw(width) << r->perfs_from_procs[0] <<
-                    std::left << std::setw(width) << total_walltimes[0] <<  std::endl;
+                    std::left << std::setw(width) << r->total_walltime <<  std::endl;
 
     working_file << std::endl;
 }
@@ -124,9 +126,6 @@ void write_result_to_file(
     else if(config->value_type == "sp"){
         output_filename = config->output_filename_sp;
     }
-    else if(config->value_type == "mp"){
-        output_filename = config->output_filename_mp;
-    }
     working_file.open(output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with ";
 #ifdef USE_MPI
@@ -143,10 +142,11 @@ void write_result_to_file(
     else if(config->value_type == "sp"){
         working_file << ", data_type: " << "sp";
     }
-    else if(config->value_type == "mp"){
-        working_file << ", data_type: " << "mp";
-    }
-    working_file << ", revisions: " << config->n_repetitions << ", and seg_method: " << *seg_method << std::endl;
+#ifdef USE_MPI
+    working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << std::endl;
+#else
+    working_file << ", revisions: " << config->n_repetitions << std::endl;
+#endif
 
     // Print header
     if(config->verbose_validation == 1){

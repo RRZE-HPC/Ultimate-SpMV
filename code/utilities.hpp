@@ -1466,21 +1466,6 @@ void convert_to_scs(
     // }    
 
     // return true;
-
-    // Collect for column compression with mp when n_procs > 1
-    scs->is_elem_hp = std::vector<int>(n_scs_elements,0);
-    scs->is_elem_lp = std::vector<int>(n_scs_elements,0);
-    scs->hp_to_original_mapping = std::vector<int>(n_scs_elements,0);
-    scs->lp_to_original_mapping = std::vector<int>(n_scs_elements,0); // TODO: pretty wasteful, should only be as long as the xp_struct??
-   
-    for (ST i = 0; i < n_scs_elements; ++i) {
-        if(abs(scs->values[i]) >= bucket_size){
-            scs->is_elem_hp[i] = 1;
-        } 
-        else{
-            scs->is_elem_lp[i] = 1;
-        }
-    }
 }
 
 template<typename IT>
@@ -1704,15 +1689,12 @@ class SimpleDenseMatrix {
 
         SimpleDenseMatrix(const ContextData<IT> *local_context){
             // TODO: not too sure about this
-            IT needed_padding;
+            IT padding_from_heri = 0;
 
 #ifdef USE_MPI
-            IT padding_from_heri = (local_context->recv_counts_cumsum).back();
-            needed_padding = std::max(local_context->scs_padding, padding_from_heri);
-#else
-            needed_padding = 0;
+            padding_from_heri = (local_context->recv_counts_cumsum).back();   
 #endif
-
+            IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
             vec.resize(needed_padding + local_context->num_local_rows, 0);
         }
 

@@ -15,10 +15,6 @@
 #include <metis.h>
 #endif
 
-#ifdef USE_SPMP
-#include "SpMP/CSR.hpp"
-#endif
-
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
 using ST = long;
@@ -91,9 +87,6 @@ struct Config
     // filename for double precision results printing
     std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
 
-    // filename for mixed precision results printing
-    std::string output_filename_mp = "spmv_mkl_compare_mp.txt";
-
     // filename for benchmark results printing
     std::string output_filename_bench = "spmv_bench.txt";
 
@@ -154,32 +147,6 @@ struct OnePrecKernelArgs
     VT * RESTRICT local_y;
 };
 
-template <typename IT>
-struct TwoPrecKernelArgs
-{
-    // TwoPrecKernelArgs::TwoPrecKernelArgs();
-
-    ST n_chunks; // (same for both)
-    ST hp_C;
-    IT * RESTRICT hp_chunk_ptrs;
-    IT * RESTRICT hp_chunk_lengths;
-    IT * RESTRICT hp_col_idxs;
-    double * RESTRICT hp_values;
-    double * RESTRICT hp_local_x;
-    double * RESTRICT hp_local_y;
-    ST lp_C;
-    IT * RESTRICT lp_chunk_ptrs;
-    IT * RESTRICT lp_chunk_lengths;
-    IT * RESTRICT lp_col_idxs;
-    float * RESTRICT lp_values;
-    float * RESTRICT lp_local_x;
-    float * RESTRICT lp_local_y;
-    IT * lp_perm;
-    IT * hp_perm;
-    IT * lp_inv_perm;
-    IT * hp_inv_perm;
-};
-
 template <typename VT, typename IT>
 class SpmvKernel {
     private:
@@ -192,36 +159,10 @@ class SpmvKernel {
             const VT *, // values
             VT *, // x
             VT *, //y
-            int
+            int // my_rank
         )> OnePrecFuncPtr;
 
-        typedef std::function<void(
-            const ST, // hp_n_chunks // TODO same, for now.
-            const ST, // hp_C
-            const IT * RESTRICT, // hp_chunk_ptrs
-            const IT * RESTRICT, // hp_chunk_lengths
-            const IT * RESTRICT, // hp_col_idxs
-            const double * RESTRICT, // hp_values
-            double * RESTRICT, // hp_x
-            double * RESTRICT, // hp_y
-            const ST, // lp_n_chunks // TODO same, for now.
-            const ST, // lp_C
-            const IT * RESTRICT, // lp_chunk_ptrs
-            const IT * RESTRICT, // lp_chunk_lengths
-            const IT * RESTRICT, // lp_col_idxs
-            const float * RESTRICT, // lp_values
-            float * RESTRICT, // lp_x
-            float * RESTRICT, // lp_y
-            int,
-            IT *,
-            IT *,
-            IT *,
-            IT *
-        )> TwoPrecFuncPtr;
-
         OnePrecFuncPtr one_prec_kernel_func_ptr;
-        TwoPrecFuncPtr two_prec_kernel_func_ptr;
-
 
         void *kernel_args_encoded;
         void *comm_args_encoded;
@@ -229,7 +170,6 @@ class SpmvKernel {
 
         // Decode kernel args. TODO: Can you assign both like this?
         OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_decoded = (OnePrecKernelArgs<VT, IT>*) kernel_args_encoded;
-        TwoPrecKernelArgs<IT> *two_prec_kernel_args_decoded = (TwoPrecKernelArgs<IT>*) kernel_args_encoded;
 
         const ST C = one_prec_kernel_args_decoded->C;
         const ST n_chunks = one_prec_kernel_args_decoded->n_chunks;
@@ -237,25 +177,6 @@ class SpmvKernel {
         const IT * RESTRICT chunk_lengths = one_prec_kernel_args_decoded->chunk_lengths;
         const IT * RESTRICT col_idxs = one_prec_kernel_args_decoded->col_idxs;
         const VT * RESTRICT values = one_prec_kernel_args_decoded->values;
-
-        // Just need different names on all of unpacked args
-        const ST hp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
-        const ST hp_C = two_prec_kernel_args_decoded->hp_C;
-        const IT * RESTRICT hp_chunk_ptrs = two_prec_kernel_args_decoded->hp_chunk_ptrs;
-        const IT * RESTRICT hp_chunk_lengths = two_prec_kernel_args_decoded->hp_chunk_lengths;
-        const IT * RESTRICT hp_col_idxs = two_prec_kernel_args_decoded->hp_col_idxs;
-        const double * RESTRICT hp_values = two_prec_kernel_args_decoded->hp_values;
-        const ST lp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
-        const ST lp_C = two_prec_kernel_args_decoded->lp_C;
-        const IT * RESTRICT lp_chunk_ptrs = two_prec_kernel_args_decoded->lp_chunk_ptrs;
-        const IT * RESTRICT lp_chunk_lengths = two_prec_kernel_args_decoded->lp_chunk_lengths;
-        const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
-        const float * RESTRICT lp_values = two_prec_kernel_args_decoded->lp_values; 
-
-        IT* lp_perm = two_prec_kernel_args_decoded->lp_perm;
-        IT* hp_perm = two_prec_kernel_args_decoded->hp_perm;
-        IT* lp_inv_perm = two_prec_kernel_args_decoded->lp_inv_perm;
-        IT* hp_inv_perm = two_prec_kernel_args_decoded->hp_inv_perm;
 
         // Decode comm args
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
@@ -276,83 +197,42 @@ class SpmvKernel {
 
     public:
         VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
-        VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
-        double * RESTRICT hp_local_x = two_prec_kernel_args_decoded->hp_local_x;
-        double * RESTRICT hp_local_y = two_prec_kernel_args_decoded->hp_local_y;
-        float * RESTRICT lp_local_x = two_prec_kernel_args_decoded->lp_local_x;
-        float * RESTRICT lp_local_y = two_prec_kernel_args_decoded->lp_local_y;
+        VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by spmv routine
         
 
         SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
-            if(config->value_type == "mp"){
-                if (config->kernel_format == "crs" || config->kernel_format == "csr"){
-#ifdef USE_MPI
-                    if(my_rank == 0)
-#endif
-                        std::cout << "MP-CRS kernel selected" << std::endl;   
-                    two_prec_kernel_func_ptr = spmv_omp_csr_mp_1<IT>;
-                    // two_prec_kernel_func_ptr = spmv_omp_csr_mp_2<IT>;
-                }
-                else if(config->kernel_format == "scs"){
-#ifdef USE_MPI
-                    if(my_rank == 0)
-#endif
-                        std::cout << "MP-SCS kernel selected" << std::endl;   
-                    two_prec_kernel_func_ptr = spmv_omp_scs_mp_1<IT>;
-                    // two_prec_kernel_func_ptr = spmv_omp_scs_mp_2<IT>;
-                }
-                else {
-                    std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
-                    exit(1);
-                }
+            if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+                if(my_rank == 0){printf("CRS kernel selected\n");}
+                // TODO: More performant to just instantiate template here?
+                one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
             }
-            else if(config->value_type != "mp"){
-                if (config->kernel_format == "crs" || config->kernel_format == "csr"){
-#ifdef USE_MPI
-                    if(my_rank == 0)
-#endif
-                        std::cout << "CRS kernel selected" << std::endl;
-                    // TODO: More performant to just instantiate template here?
-                    one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
-                }
-                else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
-#ifdef USE_MPI
-                    if(my_rank == 0)
-#endif
-                        std::cout << "ELL_rm kernel selected" << std::endl;
-                    one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
-                }
-                else if (config->kernel_format == "ell_cm"){
-#ifdef USE_MPI
-                    if(my_rank == 0)
-#endif
-                        std::cout << "ELL_cm kernel selected" << std::endl;
-                    one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
-                }
-                else if (config->kernel_format == "scs"){
-                    // && config->chunk_size != 1
-                    // && config->chunk_size != 2 
-                    // && config->chunk_size != 4
-                    // && config->chunk_size != 8
-                    // && config->chunk_size != 16
-                    // && config->chunk_size != 32
-                    // && config->chunk_size != 64){
-#ifdef USE_MPI
-                    if(my_rank == 0)
-#endif
-                        std::cout << "SCS kernel selected" << std::endl;
-                    one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
-                }
-                // else if (config->kernel_format == "scs"){
-                //     // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
-                //     if(my_rank == 0)
-                //         std::cout << "Advanced SCS kernel selected" << std::endl;
-                //     one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
-                // }
-                else {
-                    std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
-                    exit(1);
-                }
+            else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
+                if(my_rank == 0){printf("ELL_rm kernel selected\n");}
+                one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
+            }
+            else if (config->kernel_format == "ell_cm"){
+                if(my_rank == 0){printf("ELL_cm kernel selected\n");}
+                one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
+            }
+            else if (config->kernel_format == "scs"
+                && config->chunk_size != 1
+                && config->chunk_size != 2 
+                && config->chunk_size != 4
+                && config->chunk_size != 8
+                && config->chunk_size != 16
+                && config->chunk_size != 32
+                && config->chunk_size != 64){
+                if(my_rank == 0){printf("SCS kernel selected\n");}
+                one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+            }
+            else if (config->kernel_format == "scs"){
+                // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
+                if(my_rank == 0){printf("Advanced SCS kernel selected\n");}
+                one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+            }
+            else {
+                std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
+                exit(1);
             }
         }
 
@@ -449,79 +329,6 @@ class SpmvKernel {
 #endif
         }
 
-        // TODO: make into two communicators, hp and lp
-        // Still only communicates with hp_x info
-        inline void init_mp_halo_exchange(void){
-#ifdef USE_MPI
-            int outgoing_buf_size, incoming_buf_size;
-            int receiving_proc, sending_proc;
-
-            for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
-            {
-                sending_proc = local_context->non_zero_senders[from_proc_idx];
-                incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
-
-#ifdef DEBUG_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-#endif
-                MPI_Irecv(
-                    &(hp_local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
-                    incoming_buf_size,
-                    MPI_DOUBLE,
-                    sending_proc,
-                    (local_context->recv_tags[sending_proc])[my_rank],
-                    MPI_COMM_WORLD,
-                    &recv_requests[from_proc_idx]
-                );
-            }
-
-            // TODO: more performant varients?
-            // for (int to_proc = 0; to_proc < comm_size; ++to_proc)
-            // for(auto to_proc : local_context->non_zero_receivers)
-            for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
-            {
-                receiving_proc = local_context->non_zero_receivers[to_proc_idx];
-                outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
-
-#ifdef DEBUG_MODE
-                if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
-                    std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
-                    exit(1);
-                }
-#endif
-
-                // Move non-contiguous data to a contiguous buffer for communication
-                #pragma omp parallel for if(config->par_pack)
-                for(int i = 0; i < outgoing_buf_size; ++i){
-                    (to_send_elems[to_proc_idx])[i] = hp_local_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
-#ifdef DEBUG_MODE
-                    if(my_rank == 1)
-                        std::cout << "I'm proc: " << my_rank << ", sending the element: " << (to_send_elems[to_proc_idx])[i] << std::endl;
-#endif
-                }
-#ifdef DEBUG_MODE
-                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
-#endif
-                MPI_Isend(
-                    &(to_send_elems[to_proc_idx])[0],
-                    outgoing_buf_size,
-                    MPI_DOUBLE,
-                    receiving_proc,
-                    (local_context->send_tags[my_rank])[receiving_proc],
-                    MPI_COMM_WORLD,
-                    &send_requests[to_proc_idx]
-                );
-            }
-#endif
-        }
-
-        inline void finalize_mp_halo_exchange(void){
-#ifdef USE_MPI
-            MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
-            MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
-#endif
-        }
-
         inline void execute_spmv(void){
             one_prec_kernel_func_ptr(
                 C,
@@ -536,51 +343,8 @@ class SpmvKernel {
             );
         }
 
-        inline void execute_mp_spmv(void){
-            two_prec_kernel_func_ptr(
-                hp_n_chunks,
-                hp_C,
-                hp_chunk_ptrs,
-                hp_chunk_lengths,
-                hp_col_idxs,
-                hp_values,
-                hp_local_x,
-                hp_local_y, 
-                lp_n_chunks,
-                lp_C,
-                lp_chunk_ptrs,
-                lp_chunk_lengths,
-                lp_col_idxs,
-                lp_values,
-                lp_local_x,
-                lp_local_y,
-                my_rank,
-                lp_perm,
-                hp_perm,
-                lp_inv_perm,
-                hp_inv_perm
-            );
-        }
-
-        // TODO: bad. can likely avoid
-        inline void copy_hp_halos_to_lp(){
-#ifdef USE_MPI
-            // With mp, all communication will happen in double prec. on the hp_local_x, 
-            // distributes only the halo elements to lp_local_x
-            int halo_elements = local_context->recv_counts_cumsum.back();
-            for(int i = 0; i < halo_elements; ++i){
-                lp_local_x[hp_n_chunks * hp_C + i] = static_cast<float>(hp_local_x[hp_n_chunks * hp_C + i]);
-            }
-#endif
-        }
-
         inline void swap_local_vectors(){
             std::swap(local_x, local_y);
-        }
-
-        inline void swap_local_mp_vectors(){
-            std::swap(lp_local_x, lp_local_y);
-            std::swap(hp_local_x, hp_local_y);
         }
 };
 
@@ -723,12 +487,6 @@ struct ScsData
     V<IT, IT> old_to_new_idx;
     std::vector<int> new_to_old_idx; //inverse of above
     // TODO: ^ make V object as well?
-
-    // Only used in column compression routine
-    std::vector<int> is_elem_hp;
-    std::vector<int> hp_to_original_mapping;
-    std::vector<int> is_elem_lp;
-    std::vector<int> lp_to_original_mapping;
 
 
     void permute(IT *_perm_, IT*  _invPerm_);
@@ -1238,16 +996,7 @@ struct Result
     double mem_mb{};
     std::vector<double> perfs_from_procs; // used in Gather
 
-    // Used in mp
-    std::vector<unsigned long> hp_nnz_per_proc;
-    std::vector<unsigned long> lp_nnz_per_proc;
     std::vector<unsigned long> nnz_per_proc;
-    unsigned long lp_nnz;
-    unsigned long hp_nnz;
-    unsigned long cumulative_hp_nnz;
-    unsigned long cumulative_lp_nnz;
-    double total_hp_percent;
-    double total_lp_percent;
 
     unsigned long total_nnz;
     unsigned long total_rows;
@@ -1294,6 +1043,8 @@ struct Result
     std::vector<VT> x_out;
     std::vector<VT> total_uspmv_result;
     std::vector<VT> total_x;
+
+    double total_walltime;
 };
 
 // NOTE: purely for convieience, not entirely necessary
