@@ -494,7 +494,7 @@ void gather_results(
 
 /**
     @brief The main harness for the SpMV kernel, in which we:
-        1. Segment and distribute the needed structs to each MPI process (mpi_init_local_structs),
+        1. Segment and distribute the needed structs to each MPI process (init_local_structs),
         2. Benchmark the selected SpMV kernel (bench_spmv),
         3. Gather benchmark results to the root MPI process (gather_results).
     @param *total_mtx : global mtx struct, read from a .mtx file (or generated with ScaMaC TODO)
@@ -559,7 +559,6 @@ void compute_result(
     SimpleDenseMatrix<VT, IT> local_y(&local_context);
 
     // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp,
-    // or with 1s (by default)
     local_x.init(config);
     local_y.init(config);
 
@@ -592,6 +591,7 @@ void compute_result(
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Gather results to root process.\n");}
 #endif
+
     gather_results(config, r, work_sharing_arr, &local_x_copy, &(local_y.vec), my_rank, comm_size);
 
 #ifdef USE_MPI

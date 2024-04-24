@@ -175,7 +175,6 @@ void collect_local_needed_heri(
     int my_rank,
     int comm_size)
 {
-    // std::cout << "got here 2" << std::endl;
     IT from_proc, to_proc, elem_col;
     IT needed_heri_count = 0;
     IT amnt_lhs_halo_elems = 0;
@@ -605,67 +604,61 @@ void define_bookkeeping_type(
     MPI_Type_commit(bk_type);
 
 }
-#endif
 
-/** 
-    @brief Initialize total_mtx, segment and send this to local_mtx, convert to local_scs format, init comm information
-    @param *local_scs : pointer to process-local scs struct
-    @param *local_context : struct containing local_scs + communication information
-    @param *total_mtx : global mtx struct
-    @param *config : struct to initialze default values and user input
-    @param *work_sharing_arr : the array describing the partitioning of the rows
-*/
-template<typename VT, typename IT>
-void init_local_structs(
-    ScsData<VT, IT> *local_scs,
-    ContextData<IT> *local_context,
+template <typename VT, typename IT>
+void seg_and_send_work_sharing_arr(
+    Config *config,
     MtxData<VT, IT> *total_mtx,
-    Config *config, // shouldn't this be const?
     IT *work_sharing_arr,
     int my_rank,
     int comm_size,
-    int* metis_part = NULL,
-    int* metis_perm = NULL,
-    int* metis_inv_perm = NULL)
-{
+    int* metis_part, // NULL if metis not used
+    int* metis_perm, // NULL if metis not used
+    int* metis_inv_perm // NULL if metis not used
+){
+    if (my_rank == 0)
+    {
+        // TODO: if this works, remove commented out regions
+        // Segment global row pointers, and place into an array
+        // if(config->seg_method == "seg-metis"){
+            // total_mtx is coming out of this function (symmetrically) permuted
+            seg_work_sharing_arr<VT, IT>(config, total_mtx, work_sharing_arr, comm_size, my_rank, metis_part, metis_perm, metis_inv_perm);
+        // }
+        // else{
+        //     seg_work_sharing_arr<VT, IT>(config, total_mtx, work_sharing_arr, comm_size, my_rank, NULL, NULL, NULL);
+        // }
+    }
 
-    MtxData<VT, IT> *local_mtx = new MtxData<VT, IT>;
+    // Broadcast work sharing array to other processes
+    MPI_Bcast(work_sharing_arr,
+            comm_size + 1,
+            MPI_INT,
+            0,
+            MPI_COMM_WORLD);
+}
 
-    local_context->total_nnz = total_mtx->nnz;
-
-#ifdef USE_MPI
+template <typename VT, typename IT>
+void seg_and_send_matrix_data(
+    Config *config,
+    MtxData<VT, IT> *total_mtx,
+    MtxData<VT, IT> *local_mtx,
+    IT *work_sharing_arr,
+    int my_rank,
+    int comm_size
+){
     MPI_Status status_bk, status_cols, status_rows, status_vals;
-
     MtxDataBookkeeping<ST> send_bk, recv_bk;
     MPI_Datatype bk_type;
 
     define_bookkeeping_type<IT>(&send_bk, &bk_type);
 
-    IT msg_length;
-
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Segmenting and sending work to other processes.\n");}
-#endif
-
-    if (my_rank == 0)
-    {
-        // Segment global row pointers, and place into an array
-        if(config->seg_method == "seg-metis"){
-            // total_mtx is coming out of this function (symmetrically) permuted
-            seg_work_sharing_arr<VT, IT>(config, total_mtx, work_sharing_arr, comm_size, my_rank, metis_part, metis_perm, metis_inv_perm);
-        }
-        else{
-            seg_work_sharing_arr<VT, IT>(config, total_mtx, work_sharing_arr, comm_size, my_rank, NULL, NULL, NULL);
-        }
-    }
-
     // Only split up work if there are more than 1 processes
-    // if(comm_size > 1){ ??
+    // if(comm_size > 1){ ?? TODO: 
     if (my_rank == 0){
 
         // Eventhough we're iterting through the ranks, this loop is
         // (in the present implementation) executing sequentially on the root proc
-        // STRONG CONTENDER FOR PRAGMA PARALELL
+        // STRONG CONTENDER FOR PRAGMA PARALELL TODO TODO TODO!!
         for (IT loop_rank = 0; loop_rank < comm_size; ++loop_rank)
         { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
 
@@ -726,7 +719,7 @@ void init_local_structs(
 
         // Next, allocate space for incoming arrays
         // TODO: should these be on the heap?
-        msg_length = recv_bk.nnz;
+        IT msg_length = recv_bk.nnz;
         IT *recv_buf_global_row_coords = new IT[msg_length];
         IT *recv_buf_col_coords = new IT[msg_length];
         VT *recv_buf_vals = new VT[msg_length];
@@ -761,6 +754,13 @@ void init_local_structs(
         delete[] recv_buf_vals;
     }
 
+    MPI_Type_free(&bk_type);
+}
+
+template <typename VT, typename IT>
+void localize_row_idx(
+    MtxData<VT, IT> *local_mtx
+){
     std::vector<IT> local_row_coords(local_mtx->nnz, 0);
 
     #pragma omp parallel for
@@ -772,30 +772,109 @@ void init_local_structs(
 
     // assign local row ptrs to struct
     local_mtx->I = local_row_coords;
+}
 
-    // just let every process know the total number of nnz.
-    // TODO: necessary?
-    MPI_Bcast(&(local_context->total_nnz),
-            1,
-            MPI_INT,
-            0,
-            MPI_COMM_WORLD);
+template <typename VT, typename IT>
+void collect_comm_info(
+    Config *config,
+    ScsData<VT, IT> *local_scs,
+    IT *work_sharing_arr,
+    std::vector<std::vector<IT>> *communication_recv_idxs,
+    std::vector<std::vector<IT>> *communication_send_idxs,
+    std::vector<IT> *non_zero_receivers,
+    std::vector<IT> *non_zero_senders,
+    std::vector<std::vector<IT>> *send_tags,
+    std::vector<std::vector<IT>> *recv_tags,
+    std::vector<IT> *recv_counts_cumsum,
+    std::vector<IT> *send_counts_cumsum,
+    int my_rank,
+    int comm_size
+){
+    // Fill vectors with empty vectors, representing places to store "to_send_idxs"
+    for(int i = 0; i < comm_size; ++i){
+        communication_recv_idxs->push_back(std::vector<IT>());
+        communication_send_idxs->push_back(std::vector<IT>());
+    }
 
-    // Broadcast work sharing array to other processes
-    MPI_Bcast(work_sharing_arr,
-              comm_size + 1,
-              MPI_INT,
-              0,
-              MPI_COMM_WORLD);
+    // This function is a beast...
+    collect_local_needed_heri<VT, IT>(config->value_type, communication_recv_idxs, recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
+
+    organize_cumsums<VT, IT>(send_counts_cumsum, recv_counts_cumsum, my_rank, comm_size);
+
+    collect_comm_idxs<VT, IT>(communication_send_idxs, communication_recv_idxs, send_counts_cumsum, my_rank, comm_size);
+
+    // Necessary for "high comm" instances (Just leave it).
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    // Determine which of the other processes THIS processes send anything to
+    for(int i = 0; i < communication_send_idxs->size(); ++i){
+        if((*communication_send_idxs)[i].size() > 0){
+        non_zero_receivers->push_back(i); 
+        }
+    }
+    for(int i = 0; i < communication_recv_idxs->size(); ++i){
+        if((*communication_recv_idxs)[i].size() > 0){
+        non_zero_senders->push_back(i); 
+        }
+    }
+
+    // Necessary for "high comm" instances (Just leave it).
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    for(int i = 0; i < comm_size; ++i){
+        send_tags->push_back(std::vector<IT>());
+        recv_tags->push_back(std::vector<IT>());
+    }
+
+    gen_unique_comm_tags<VT, IT>(send_tags, recv_tags, my_rank, comm_size);
+}
+#endif
+/** 
+    @brief Initialize total_mtx, segment and send this to local_mtx, convert to local_scs format, init comm information
+    @param *local_scs : pointer to process-local scs struct
+    @param *local_context : struct containing local_scs + communication information
+    @param *total_mtx : global mtx struct
+    @param *config : struct to initialze default values and user input
+    @param *work_sharing_arr : the array describing the partitioning of the rows
+*/
+template<typename VT, typename IT>
+void init_local_structs(
+    ScsData<VT, IT> *local_scs,
+    ContextData<IT> *local_context,
+    MtxData<VT, IT> *total_mtx,
+    Config *config,
+    IT *work_sharing_arr,
+    int my_rank,
+    int comm_size,
+    int* metis_part = NULL,
+    int* metis_perm = NULL,
+    int* metis_inv_perm = NULL)
+{
+
+    MtxData<VT, IT> *local_mtx = new MtxData<VT, IT>;
+
+    local_context->total_nnz = total_mtx->nnz;
+
+#ifdef USE_MPI
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Segmenting and sending work to other processes.\n");}
+#endif
+
+    seg_and_send_work_sharing_arr<VT, IT>(config, total_mtx, work_sharing_arr, my_rank, comm_size, metis_part, metis_perm, metis_inv_perm);
+
+    seg_and_send_matrix_data<VT, IT>(config, total_mtx, local_mtx, work_sharing_arr, my_rank, comm_size);
+
+    localize_row_idx<VT, IT>(local_mtx);
 #else
-    // TODO: validate how this works with the no-mpi case
     local_mtx = total_mtx;
 #endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Converting COO matrix to SELL-C-SIG and permuting locally (NOTE: rows only, i.e. nonsymetrically).\n");}
 #endif
-    // convert local_mtx to local_scs and permute rows (if applicable)
+
+    // convert local_mtx to local_scs and permute rows (if sigma > 1)
     convert_to_scs<VT, IT>(config->bucket_size, local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
 
 #ifdef OUTPUT_SPARSITY
@@ -810,58 +889,70 @@ void init_local_structs(
 #endif
 
 #ifdef USE_MPI
-    MPI_Type_free(&bk_type);
-
-
     // TODO: is an array of vectors better?
     // Vector of vecs, Keep track of which remote columns come from which processes
     std::vector<std::vector<IT>> communication_recv_idxs;
     std::vector<std::vector<IT>> communication_send_idxs;
-
-    // Fill vectors with empty vectors, representing places to store "to_send_idxs"
-    for(int i = 0; i < comm_size; ++i){
-        communication_recv_idxs.push_back(std::vector<IT>());
-        communication_send_idxs.push_back(std::vector<IT>());
-    }
-
+    std::vector<IT> non_zero_receivers;
+    std::vector<IT> non_zero_senders;
+    std::vector<std::vector<IT>> send_tags;
+    std::vector<std::vector<IT>> recv_tags;
     std::vector<IT> recv_counts_cumsum(comm_size + 1, 0);
     std::vector<IT> send_counts_cumsum(comm_size + 1, 0);
 
-    collect_local_needed_heri<VT, IT>(config->value_type, &communication_recv_idxs, &recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
+    // Main routine for collecting all sending and receiving information!
+    collect_comm_info<VT, IT>(
+        config, 
+        local_scs, 
+        work_sharing_arr, 
+        &communication_recv_idxs,
+        &communication_send_idxs,
+        &non_zero_receivers,
+        &non_zero_senders,
+        &send_tags,
+        &recv_tags,
+        &recv_counts_cumsum,
+        &send_counts_cumsum,
+        my_rank,
+        comm_size
+    );
+    // // Fill vectors with empty vectors, representing places to store "to_send_idxs"
+    // for(int i = 0; i < comm_size; ++i){
+    //     communication_recv_idxs.push_back(std::vector<IT>());
+    //     communication_send_idxs.push_back(std::vector<IT>());
+    // }
 
-    organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
+    // // This function is a beast...
+    // collect_local_needed_heri<VT, IT>(config->value_type, &communication_recv_idxs, &recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
 
-    collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, &send_counts_cumsum, my_rank, comm_size);
+    // organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
 
-    // Necessary for "high comm" instances. Just leave it.
-    MPI_Barrier(MPI_COMM_WORLD);
+    // collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, &send_counts_cumsum, my_rank, comm_size);
 
-    // Determine which of the other processes THIS processes send anything to
-    std::vector<IT> non_zero_receivers;
-    std::vector<IT> non_zero_senders;
+    // // Necessary for "high comm" instances (Just leave it).
+    // MPI_Barrier(MPI_COMM_WORLD);
 
-    for(int i = 0; i < communication_send_idxs.size(); ++i){
-        if(communication_send_idxs[i].size() > 0){
-           non_zero_receivers.push_back(i); 
-        }
-    }
-    for(int i = 0; i < communication_recv_idxs.size(); ++i){
-        if(communication_recv_idxs[i].size() > 0){
-           non_zero_senders.push_back(i); 
-        }
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
+    // // Determine which of the other processes THIS processes send anything to
+    // for(int i = 0; i < communication_send_idxs.size(); ++i){
+    //     if(communication_send_idxs[i].size() > 0){
+    //        non_zero_receivers.push_back(i); 
+    //     }
+    // }
+    // for(int i = 0; i < communication_recv_idxs.size(); ++i){
+    //     if(communication_recv_idxs[i].size() > 0){
+    //        non_zero_senders.push_back(i); 
+    //     }
+    // }
 
-    std::vector<std::vector<IT>> send_tags;
-    std::vector<std::vector<IT>> recv_tags;
+    // // Necessary for "high comm" instances (Just leave it).
+    // MPI_Barrier(MPI_COMM_WORLD);
 
-    for(int i = 0; i < comm_size; ++i){
-        send_tags.push_back(std::vector<IT>());
-        recv_tags.push_back(std::vector<IT>());
-    }
+    // for(int i = 0; i < comm_size; ++i){
+    //     send_tags.push_back(std::vector<IT>());
+    //     recv_tags.push_back(std::vector<IT>());
+    // }
 
-    gen_unique_comm_tags<VT, IT>(&send_tags, &recv_tags, my_rank, comm_size);
-
+    // gen_unique_comm_tags<VT, IT>(&send_tags, &recv_tags, my_rank, comm_size);
 
     // Collect all our hard work to single structure for convenience
     // NOTE: not used at all in the no-mpi case

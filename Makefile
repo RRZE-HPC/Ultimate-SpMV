@@ -1,4 +1,4 @@
-COMPILER = icx
+COMPILER = gcc
 VECTOR_LENGTH = 4
 DEBUG_MODE = 0
 DEBUG_MODE_FINE = 0
@@ -7,7 +7,7 @@ CPP_VERSION=c++14
 
 # 0/1 library usage
 USE_MPI = 1
-USE_METIS = 0
+USE_METIS = 1
 USE_LIKWID = 0
 
 # compiler options
@@ -57,8 +57,15 @@ endif
 
 ifeq ($(USE_METIS),1)
   # !!! include your own file paths !!!
+  # For example: (I've had better luck with static libraries)
+  # METIS_INC = -I/home/hpc/k107ce/k107ce17/install/include/
+  # METIS_LIB = /home/hpc/k107ce/k107ce17/install/lib/libmetis.a 
+  # GK_INC = -I/home/hpc/k107ce/k107ce17/install/include/
+  # GK_LIB = /home/hpc/k107ce/k107ce17/install/lib/libGKlib.a
   METIS_INC = 
   METIS_LIB = 
+  GK_INC = 
+  GK_LIB = 
   ifeq ($(METIS_INC),)
     $(error USE_METIS selected, but no include path given in METIS_INC)
   endif
@@ -66,8 +73,8 @@ ifeq ($(USE_METIS),1)
     $(error USE_METIS selected, but no library path given in METIS_LIB)
   endif
 
-  CXXFLAGS  += -DUSE_METIS $(METIS_INC)
-  LIBS += $(METIS_LIB)
+  CXXFLAGS  += -DUSE_METIS $(METIS_INC) $(GK_INC)
+  LIBS += $(METIS_LIB) $(GK_LIB)
 endif
 
 ifeq ($(USE_LIKWID),1)
@@ -103,9 +110,9 @@ CXXFLAGS += $(HEADERS)
 REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
-all: uspmv
+all: uspmv_multi_proc
 
-uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
+uspmv_multi_proc: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)
