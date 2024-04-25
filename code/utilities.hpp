@@ -1194,6 +1194,11 @@ void parse_cli_inputs(
     }
 #endif
 
+#ifndef USE_MPI
+    printf("USE_MPI not defined, forcing comm_halos = 0.\n");
+    config->comm_halos = 0;
+#endif
+
     // Is this even true?
     // if (config->sigma > config->chunk_size)
     // {

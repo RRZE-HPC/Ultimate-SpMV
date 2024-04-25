@@ -2,7 +2,7 @@
 #SBATCH -J validation_tests_single_proc
 #SBATCH -N 1
 #SBATCH --cpus-per-task=1
-#SBATCH -t 01:00:00
+#SBATCH -t 04:00:00
 #SBATCH --exclusive
 #SBATCH --output=/home/hpc/k107ce/k107ce17/linking_it_solve/Ultimate-SpMV/code/scripts/results/%j_%x.out
 
@@ -153,6 +153,33 @@ do
                 mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
                 mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
                 mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+            done
+        done
+    done
+done
+
+# Bench!
+export I_MPI_PIN_DOMAIN="72:compact"
+export OMP_NUM_THREADS=72
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close
+for C in "${Cs[@]}";
+do
+    for sigma in "${sigmas[@]}";
+    do
+        for seg_method in "${seg_types[@]}";
+        do
+            for rand_opt in 0 1;
+            do
+                export I_MPI_PIN_DOMAIN="36:compact"
+                export OMP_NUM_THREADS=36
+                export OMP_PLACES=cores
+                export OMP_PROC_BIND=close
+                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
+                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
+                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
+                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -sp
+                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -sp
             done
         done
     done

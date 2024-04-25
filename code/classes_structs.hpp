@@ -82,13 +82,13 @@ struct Config
 
     // TODO: consolidate?
     // filename for single precision results printing
-    std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
+    std::string output_filename_sp = "spmv_mkl_compare_sp_no_mpi.txt";
 
     // filename for double precision results printing
-    std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
+    std::string output_filename_dp = "spmv_mkl_compare_dp_no_mpi.txt";
 
     // filename for benchmark results printing
-    std::string output_filename_bench = "spmv_bench.txt";
+    std::string output_filename_bench = "spmv_bench_no_mpi.txt";
 
 };
 
