@@ -33,9 +33,5 @@ Notes:
 - Select compiler in Makefile (icc, icx, gcc)
 	- icc not advised (depreciated, known to seg fault in SCS kernel sometimes)
 - VECTOR_LENGTH for SIMD instructions is also defined at the top of the Makefile, useful for non-SELL_C_SIGMA kernels
-- If using AVX512 on icelake, I currently get around downfall perf bug with newest icx compiler using:
-	- module use -a ~unrz139/.modules/modulefiles
-	- module load oneapi/2023.2.0
-	- module load compiler
-	- export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/saturn/unrz/unrz139/.modules/oneapi-2023.2.0/compiler/2023.2.0/linux/compiler/lib/intel64
+- If using AVX512 on icelake, I currently get around downfall perf bug with the icx compiler from OneAPI 2023.2.0
 - The par_pack option yields better performance for MPI+Openmp runs with poorly load balanced matrices
