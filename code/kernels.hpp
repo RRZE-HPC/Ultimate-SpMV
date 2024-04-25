@@ -28,7 +28,7 @@ spmv_omp_csr(const ST C, // 1
     #pragma omp parallel 
     {   
 #ifdef USE_LIKWID
-        LIKWID_MARKER_START("spmv_benchmark");
+        LIKWID_MARKER_START("spmv_crs_benchmark");
 #endif
         #pragma omp for schedule(static)
         for (ST row = 0; row < num_rows; ++row) {
@@ -41,7 +41,7 @@ spmv_omp_csr(const ST C, // 1
             y[row] = sum;
         }
 #ifdef USE_LIKWID
-    LIKWID_MARKER_STOP("spmv_benchmark");
+    LIKWID_MARKER_STOP("spmv_crs_benchmark");
 #endif
     }
 }
@@ -128,7 +128,7 @@ spmv_omp_scs(const ST C,
     #pragma omp parallel 
     {
 #ifdef USE_LIKWID
-    LIKWID_MARKER_START("spmv_benchmark");
+    LIKWID_MARKER_START("spmv_scs_benchmark");
 #endif
         #pragma omp for schedule(static)
         for (ST c = 0; c < n_chunks; ++c) {
@@ -151,7 +151,7 @@ spmv_omp_scs(const ST C,
             }
         }
 #ifdef USE_LIKWID
-    LIKWID_MARKER_STOP("spmv_benchmark");
+    LIKWID_MARKER_STOP("spmv_scs_benchmark");
 #endif
     }
 }

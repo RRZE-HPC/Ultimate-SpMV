@@ -656,9 +656,7 @@ void seg_and_send_matrix_data(
     // if(comm_size > 1){ ?? TODO: 
     if (my_rank == 0){
 
-        // Eventhough we're iterting through the ranks, this loop is
-        // (in the present implementation) executing sequentially on the root proc
-        // STRONG CONTENDER FOR PRAGMA PARALELL TODO TODO TODO!!
+        // #pragma omp parallel for
         for (IT loop_rank = 0; loop_rank < comm_size; ++loop_rank)
         { // NOTE: This loop assumes we're using all ranks 0 -> comm_size-1
 
@@ -916,44 +914,7 @@ void init_local_structs(
         my_rank,
         comm_size
     );
-    // // Fill vectors with empty vectors, representing places to store "to_send_idxs"
-    // for(int i = 0; i < comm_size; ++i){
-    //     communication_recv_idxs.push_back(std::vector<IT>());
-    //     communication_send_idxs.push_back(std::vector<IT>());
-    // }
-
-    // // This function is a beast...
-    // collect_local_needed_heri<VT, IT>(config->value_type, &communication_recv_idxs, &recv_counts_cumsum, local_scs, work_sharing_arr, my_rank, comm_size);
-
-    // organize_cumsums<VT, IT>(&send_counts_cumsum, &recv_counts_cumsum, my_rank, comm_size);
-
-    // collect_comm_idxs<VT, IT>(&communication_send_idxs, &communication_recv_idxs, &send_counts_cumsum, my_rank, comm_size);
-
-    // // Necessary for "high comm" instances (Just leave it).
-    // MPI_Barrier(MPI_COMM_WORLD);
-
-    // // Determine which of the other processes THIS processes send anything to
-    // for(int i = 0; i < communication_send_idxs.size(); ++i){
-    //     if(communication_send_idxs[i].size() > 0){
-    //        non_zero_receivers.push_back(i); 
-    //     }
-    // }
-    // for(int i = 0; i < communication_recv_idxs.size(); ++i){
-    //     if(communication_recv_idxs[i].size() > 0){
-    //        non_zero_senders.push_back(i); 
-    //     }
-    // }
-
-    // // Necessary for "high comm" instances (Just leave it).
-    // MPI_Barrier(MPI_COMM_WORLD);
-
-    // for(int i = 0; i < comm_size; ++i){
-    //     send_tags.push_back(std::vector<IT>());
-    //     recv_tags.push_back(std::vector<IT>());
-    // }
-
-    // gen_unique_comm_tags<VT, IT>(&send_tags, &recv_tags, my_rank, comm_size);
-
+    
     // Collect all our hard work to single structure for convenience
     // NOTE: not used at all in the no-mpi case
     local_context->comm_send_idxs = communication_send_idxs;

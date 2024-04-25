@@ -36,7 +36,7 @@ struct Config
     bool random_init_A{false};
 
     // No. of repetitions to perform.
-    unsigned long n_repetitions{5};
+    unsigned long n_repetitions{1};
 
     // Verify result of SpVM.
     int validate_result = 1;
@@ -66,7 +66,7 @@ struct Config
     char mode = 'b'; 
 
     // Runs benchmark for a specified number of seconds
-    double bench_time = 10.0;
+    double bench_time = 5.0;
 
     // Mixed Precision bucket size, used for partitioning matrix
     double bucket_size = 1.0;
@@ -82,10 +82,10 @@ struct Config
 
     // TODO: consolidate?
     // filename for single precision results printing
-    std::string output_filename_sp = "spmv_mkl_compare_sp_multi_proc.txt";
+    std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
 
     // filename for double precision results printing
-    std::string output_filename_dp = "spmv_mkl_compare_dp_multi_proc.txt";
+    std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
 
     // filename for benchmark results printing
     std::string output_filename_bench = "spmv_bench.txt";
@@ -122,7 +122,6 @@ struct CommArgs
     const IT *perm;
     VT **to_send_elems;
     const IT *work_sharing_arr;
-    // const IT *perm; // TODO: perms, i.e. from METIS, need to be included
     MPI_Request *recv_requests;
     const IT *nzs_size;
     MPI_Request *send_requests;
@@ -168,7 +167,7 @@ class SpmvKernel {
         void *comm_args_encoded;
         Config *config;
 
-        // Decode kernel args. TODO: Can you assign both like this?
+        // Decode kernel args
         OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_decoded = (OnePrecKernelArgs<VT, IT>*) kernel_args_encoded;
 
         const ST C = one_prec_kernel_args_decoded->C;

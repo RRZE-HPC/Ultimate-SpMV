@@ -6,8 +6,8 @@ OUTPUT_SPARSITY = 0
 CPP_VERSION=c++14
 
 # 0/1 library usage
-USE_MPI = 1
-USE_METIS = 1
+USE_MPI = 0
+USE_METIS = 0
 USE_LIKWID = 0
 
 # compiler options
@@ -110,9 +110,9 @@ CXXFLAGS += $(HEADERS)
 REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
-all: uspmv_multi_proc
+all: uspmv
 
-uspmv_multi_proc: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
+uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)

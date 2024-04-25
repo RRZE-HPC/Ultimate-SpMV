@@ -151,14 +151,6 @@ void bench_spmv(
         // Use user-defined time limit to calculate n_iter
         double runtime;
         int n_iter = 1;
-        int all_procs_finished = 0;
-
-#ifdef USE_LIKWID
-#pragma omp parallel
-{
-LIKWID_MARKER_REGISTER("spmv_benchmark");
-}
-#endif
 
         if(config->comm_halos){
 #ifdef USE_MPI
