@@ -110,9 +110,9 @@ CXXFLAGS += $(HEADERS)
 REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
-all: uspmv_no_mpi
+all: uspmv
 
-uspmv_no_mpi: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
+uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)
