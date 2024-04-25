@@ -1,6 +1,8 @@
 # Ultimate-SpMV
 ## MPI+X SpMV with SELL-C-sigma format
 
+Can be run as a standalone benchmarking harness, or as a library. See API_doc.md for information about the interface.
+
 Example:\
 	```mpirun -n 4 ./uspmv <matrix_name>.mtx <kernel_format> <options>```
 
