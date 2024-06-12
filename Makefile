@@ -1,14 +1,56 @@
-COMPILER = gcc
+#[gcc, icc, icx, nvcc]
+COMPILER = nvcc
 VECTOR_LENGTH = 4
 DEBUG_MODE = 0
 DEBUG_MODE_FINE = 0
 OUTPUT_SPARSITY = 0
-CPP_VERSION=c++14
+CPP_VERSION = c++14
+#[none, a40, a100]
+GPGPU_ARCH = a40
 
 # 0/1 library usage
 USE_MPI = 0
 USE_METIS = 0
 USE_LIKWID = 0
+
+# Validate Makefile options
+ifneq ($(GPGPU_ARCH),none)
+ifneq ($(GPGPU_ARCH),a40)
+ifneq ($(GPGPU_ARCH),a100)
+$(info GPGPU_ARCH=$(GPGPU_ARCH))
+$(error Please select a GPGPU architecture in: [none, a40, a100])
+endif
+endif
+endif
+
+ifneq ($(COMPILER),gcc)
+ifneq ($(COMPILER),nvcc)
+ifneq ($(COMPILER),icx)
+ifneq ($(COMPILER),icc)
+$(info COMPILER=$(COMPILER))
+$(error Please select a compiler in: [gcc, icc, icx, nvcc])
+endif
+endif
+endif
+endif
+
+ifeq ($(COMPILER),nvcc)
+ifeq ($(USE_MPI),1)
+$(error MPI is not currently supported for GPUs)
+endif
+endif
+
+ifneq ($(GPGPU_ARCH),none)
+ifeq ($(GPGPU_ARCH),a40)
+	GPGPU_ARCH_FLAGS += -gencode arch=compute_86,code=sm_86 -Xcompiler -fopenmp
+endif
+ifeq ($(GPGPU_ARCH),a100)
+	GPGPU_ARCH_FLAGS += -gencode arch=compute_80,code=sm_80 -Xcompiler -fopenmp
+endif
+
+MKL = -I${MKLROOT}/include -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
+CXXFLAGS += $(MKL)
+endif
 
 # compiler options
 ifeq ($(COMPILER),gcc)
@@ -17,7 +59,7 @@ ifeq ($(COMPILER),gcc)
   OPT_LEVEL = -Ofast
   OPT_ARCH  = -march=native
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH) -DVECTOR_LENGTH=$(VECTOR_LENGTH)
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH)
 
   LIBS += -L${MKLROOT}/lib/intel64 
 endif
@@ -29,7 +71,7 @@ ifeq ($(COMPILER),icc)
   OPT_ARCH  = -march=native
   MKL = -qmkl
 
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH) -DVECTOR_LENGTH=$(VECTOR_LENGTH)
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH)
 endif
 
 ifeq ($(COMPILER),icx)
@@ -40,8 +82,10 @@ ifeq ($(COMPILER),icx)
   MKL = -qmkl
   AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
 
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(AVX512_fix) $(OPT_ARCH) -DVECTOR_LENGTH=$(VECTOR_LENGTH)
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(AVX512_fix) $(OPT_ARCH)
 endif
+
+CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH)
 
 ifeq ($(DEBUG_MODE),1)
   DEBUGFLAGS += -g -DDEBUG_MODE
@@ -105,24 +149,39 @@ ifeq ($(UBSAN),1)
   CXXFLAGS += -fsanitize=undefined -g
 endif
 
-CXXFLAGS += $(HEADERS)
 # Also rebuild when following files change.
-REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
+REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
 all: uspmv
 
 uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
+ifeq ($(COMPILER),nvcc)
+	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+endif
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)
+ifeq ($(COMPILER),nvcc)
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ -c $<
+else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
+endif
 
 code/timing.o: code/timing.c $(REBUILD_DEPS)
+ifeq ($(COMPILER),nvcc)
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ -c $<
+else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
+endif
 
 code/mmio.o: code/mmio.cpp code/mmio.h
+ifeq ($(COMPILER),nvcc)
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ -c $<
+else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
+endif
 
 TEST_INC_DIR = $(PWD)/code
 TEST_PREFIX = code/test_suite

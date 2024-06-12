@@ -176,73 +176,73 @@ private:
     }
 };
 
-template<typename VT, typename IT>
-class VectorGpu : public BaseVector<VT, IT>
-{
-public:
+// template<typename VT, typename IT>
+// class VectorGpu : public BaseVector<VT, IT>
+// {
+// public:
 
-    explicit VectorGpu(const Vector<VT, IT> & dv)
-    : BaseVector<VT, IT>(dv.n_rows)
-    {
-#ifdef __NVCC__
-        size_t n_bytes_to_alloc = sizeof(VT) * this->n_rows;
+//     explicit VectorGpu(const Vector<VT, IT> & dv)
+//     : BaseVector<VT, IT>(dv.n_rows)
+//     {
+// #ifdef __NVCC__
+//         size_t n_bytes_to_alloc = sizeof(VT) * this->n_rows;
 
-        double t_start = get_time();
+//         double t_start = get_time();
 
-        VT * memory;
-        assert_gpu(cudaMalloc(&memory, n_bytes_to_alloc));
-        this->data(memory);
+//         VT * memory;
+//         assert_gpu(cudaMalloc(&memory, n_bytes_to_alloc));
+//         this->data(memory);
 
-        assert_gpu(cudaMemcpy(this->data(), dv.data(), n_bytes_to_alloc, cudaMemcpyHostToDevice));
+//         assert_gpu(cudaMemcpy(this->data(), dv.data(), n_bytes_to_alloc, cudaMemcpyHostToDevice));
 
-        double duration = get_time() - t_start;
+//         double duration = get_time() - t_start;
 
-        // log("VectorGpu: copy host -> device:  %9e MB   %9e MB/s   %e s\n",
-        //     n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
-#endif
-    }
+//         // log("VectorGpu: copy host -> device:  %9e MB   %9e MB/s   %e s\n",
+//         //     n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
+// #endif
+//     }
 
-    VectorGpu(const VectorGpu &) = delete;
-    VectorGpu(VectorGpu && rhs) = default;
+//     VectorGpu(const VectorGpu &) = delete;
+//     VectorGpu(VectorGpu && rhs) = default;
 
-    VectorGpu & operator=(const VectorGpu &) = delete;
-    VectorGpu & operator=(VectorGpu && rhs)
-    {
-        if (this->data())
-            assert_gpu(cudaFree(this->data()));
+//     VectorGpu & operator=(const VectorGpu &) = delete;
+//     VectorGpu & operator=(VectorGpu && rhs)
+//     {
+//         if (this->data())
+//             assert_gpu(cudaFree(this->data()));
 
-        BaseVector<VT, IT>::operator=(std::move(rhs));
+//         BaseVector<VT, IT>::operator=(std::move(rhs));
 
-        return *this;
-    }
+//         return *this;
+//     }
 
-    ~VectorGpu()
-    {
-        if (this->data())
-            assert_gpu(cudaFree(this->data()));
-    }
+//     ~VectorGpu()
+//     {
+//         if (this->data())
+//             assert_gpu(cudaFree(this->data()));
+//     }
 
-    Vector<VT, IT>
-    copy_from_device()
-    {
-        Vector<VT, IT> dv(this->n_rows);
-#ifdef __NVCC__
-        double t_start = get_time();
+//     Vector<VT, IT>
+//     copy_from_device()
+//     {
+//         Vector<VT, IT> dv(this->n_rows);
+// #ifdef __NVCC__
+//         double t_start = get_time();
 
-        assert_gpu(cudaMemcpy(dv.data(),
-                              this->data(),
-                              sizeof(VT) * this->n_rows,
-                              cudaMemcpyDeviceToHost));
+//         assert_gpu(cudaMemcpy(dv.data(),
+//                               this->data(),
+//                               sizeof(VT) * this->n_rows,
+//                               cudaMemcpyDeviceToHost));
 
-        double duration = get_time() - t_start;
+//         double duration = get_time() - t_start;
 
-        size_t n_bytes_to_alloc = sizeof(VT) * this->n_rows;
-        // log("VectorGpu: copy device -> host:  %9e MB   %9e MB/s   %e s\n",
-        //     n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
-#endif
-        return dv;
-    }
-};
+//         size_t n_bytes_to_alloc = sizeof(VT) * this->n_rows;
+//         // log("VectorGpu: copy device -> host:  %9e MB   %9e MB/s   %e s\n",
+//         //     n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
+// #endif
+//         return dv;
+//     }
+// };
 
 #endif
 
