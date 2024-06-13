@@ -46,7 +46,11 @@ void write_bench_to_file(
 #ifdef USE_MPI
     working_file << comm_size << " MPI processes, and ";
 #endif 
-    working_file << num_omp_threads << " thread(s) per proc" << std::endl; 
+#ifdef __CUDACC__
+    working_file << config->num_blocks << " blocks, and " << config->tpb << " threads per block" << std::endl;
+#else
+    working_file << num_omp_threads << " thread(s) per proc" << std::endl;
+#endif 
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;

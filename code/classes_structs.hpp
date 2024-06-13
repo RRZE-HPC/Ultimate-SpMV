@@ -71,6 +71,12 @@ struct Config
     // Mixed Precision bucket size, used for partitioning matrix
     double bucket_size = 1.0;
 
+    // Just to make it easier to report kernel launch configuration at the end
+#ifdef __CUDACC__
+    int num_blocks = 1;
+    int tpb = 1;
+#endif
+
     // Default matrix segmentation method
     std::string seg_method = "seg-rows";
 
@@ -203,15 +209,30 @@ class SpmvKernel {
             if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                 if(my_rank == 0){printf("CRS kernel selected\n");}
                 // TODO: More performant to just instantiate template here?
+#ifdef __CUDACC__
+                // TODO: Integrate with func pointers to device kernels
+                // one_prec_kernel_func_ptr = spmv_gpu_csr<VT, IT>;
+#else
                 one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
+#endif
             }
             else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
                 if(my_rank == 0){printf("ELL_rm kernel selected\n");}
+#ifdef __CUDACC__
+                if(my_rank == 0){printf("Currently no GPU support for ELL_rm kernel\n");}
+                exit(1);
+#else
                 one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
+#endif
             }
             else if (config->kernel_format == "ell_cm"){
                 if(my_rank == 0){printf("ELL_cm kernel selected\n");}
+#ifdef __CUDACC__
+                if(my_rank == 0){printf("Currently no GPU support for ELL_rm kernel\n");}
+                exit(1);
+#else
                 one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
+#endif
             }
             else if (config->kernel_format == "scs"
                 && config->chunk_size != 1
@@ -222,12 +243,22 @@ class SpmvKernel {
                 && config->chunk_size != 32
                 && config->chunk_size != 64){
                 if(my_rank == 0){printf("SCS kernel selected\n");}
+#ifdef __CUDACC__
+                // TODO: Integrate with func pointers to device kernels
+                // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
+#else
                 one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+#endif
             }
             else if (config->kernel_format == "scs"){
                 // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
-                if(my_rank == 0){printf("Advanced SCS kernel selected\n");}
+                if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
+#ifdef __CUDACC__
+                // TODO: Integrate with func pointers to device kernels
+                // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
+#else
                 one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+#endif
             }
             else {
                 std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
@@ -342,6 +373,7 @@ class SpmvKernel {
             );
         }
 
+        // TODO: How to swap with GPU?
         inline void swap_local_vectors(){
             std::swap(local_x, local_y);
         }

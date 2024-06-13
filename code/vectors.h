@@ -176,6 +176,7 @@ private:
     }
 };
 
+// TODO: Why would one need this?
 // template<typename VT, typename IT>
 // class VectorGpu : public BaseVector<VT, IT>
 // {

@@ -6,7 +6,7 @@ DEBUG_MODE_FINE = 0
 OUTPUT_SPARSITY = 0
 CPP_VERSION = c++14
 #[none, a40, a100]
-GPGPU_ARCH = a40
+GPGPU_ARCH = a100
 
 # 0/1 library usage
 USE_MPI = 0
@@ -14,6 +14,10 @@ USE_METIS = 0
 USE_LIKWID = 0
 
 # Validate Makefile options
+ifneq ($(COMPILER),nvcc)
+GPGPU_ARCH = none
+endif
+
 ifneq ($(GPGPU_ARCH),none)
 ifneq ($(GPGPU_ARCH),a40)
 ifneq ($(GPGPU_ARCH),a100)
@@ -88,11 +92,17 @@ endif
 CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH)
 
 ifeq ($(DEBUG_MODE),1)
-  DEBUGFLAGS += -g -DDEBUG_MODE
+	DEBUGFLAGS += -g -DDEBUG_MODE
+ifneq ($(GPGPU_ARCH),none)
+  DEBUGFLAGS += -G
+endif
 endif
 
 ifeq ($(DEBUG_MODE_FINE),1)
-  DEBUGFLAGS += -g -DDEBUG_MODE -DDEBUG_MODE_FINE
+	DEBUGFLAGS += -g -DDEBUG_MODE -DDEBUG_MODE_FINE
+ifneq ($(GPGPU_ARCH),none)
+  DEBUGFLAGS += -G
+endif
 endif
 
 ifeq ($(OUTPUT_SPARSITY),1)
@@ -153,32 +163,32 @@ endif
 REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
-all: uspmv
+all: uspmv_gpu
 
-uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
+uspmv_gpu: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
-	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 endif
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
-	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ -c $<
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ -c $<
 else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
 endif
 
 code/timing.o: code/timing.c $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
-	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ -c $<
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ -c $<
 else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
 endif
 
 code/mmio.o: code/mmio.cpp code/mmio.h
 ifeq ($(COMPILER),nvcc)
-	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) -o $@ -c $<
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ -c $<
 else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
 endif
