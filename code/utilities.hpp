@@ -1419,7 +1419,11 @@ void convert_to_scs(
     IT padded_col_idx = 0;
 
     if(work_sharing_arr != nullptr){
+        printf("Padding col_idxs by: %i.\n", work_sharing_arr[my_rank]);
         padded_col_idx = work_sharing_arr[my_rank];
+    }
+    else{
+        printf("Not padding col_idxs.\n");
     }
 
     for (ST i = 0; i < n_scs_elements; ++i) {
@@ -1444,6 +1448,11 @@ void convert_to_scs(
         IT idx = chunk_start + col_idx_in_row[row] * scs->C + chunk_row;
 
         scs->col_idxs[idx] = local_mtx->J[i];
+
+        if(scs->col_idxs[idx] >= local_mtx->n_cols){
+            printf("ERROR: scs->col_idxs blows up.\n");
+        }
+
         scs->values[idx]   = local_mtx->values[i];
 
         col_idx_in_row[row]++;

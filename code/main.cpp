@@ -512,6 +512,7 @@ void compute_result(
 
     // Allocate space for work sharing array
     IT work_sharing_arr[comm_size + 1];
+    work_sharing_arr[0] = 0; // Initialize first element, since it's used always
 
     // Allocate global permutation vectors
     int *metis_part = NULL;
