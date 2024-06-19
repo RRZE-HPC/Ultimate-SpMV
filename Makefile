@@ -1,7 +1,7 @@
 #[gcc, icc, icx, nvcc]
-COMPILER = nvcc
-VECTOR_LENGTH = 4
-DEBUG_MODE = 0
+COMPILER = icx
+VECTOR_LENGTH = 1
+DEBUG_MODE = 1
 DEBUG_MODE_FINE = 0
 OUTPUT_SPARSITY = 0
 CPP_VERSION = c++14
@@ -81,7 +81,7 @@ endif
 ifeq ($(COMPILER),icx)
   CXX       = icpx
   MPICXX     = mpiicpc -cxx=icpx
-  OPT_LEVEL = -Ofast
+  OPT_LEVEL = -O3
   OPT_ARCH  = -xhost
   MKL = -qmkl
   AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
@@ -163,9 +163,9 @@ endif
 REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
-all: uspmv_gpu
+all: uspmv_safe
 
-uspmv_gpu: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
+uspmv_safe: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
 	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 else

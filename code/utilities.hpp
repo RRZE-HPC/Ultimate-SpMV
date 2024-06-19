@@ -12,6 +12,8 @@
 #include <iomanip>
 #include <limits>
 #include <algorithm>
+#include <float.h>
+#include <math.h>
 
 template <typename T>
 struct max_rel_error
@@ -843,7 +845,11 @@ IT get_index(std::vector<IT> v, int K)
 }
 
 template <typename VT>
-void random_init(VT *begin, VT *end)
+void random_init(
+    Config *config,
+    VT *begin, 
+    VT *end
+)
 {
     int my_rank;
 
@@ -855,7 +861,7 @@ void random_init(VT *begin, VT *end)
     srand(time(NULL));
 #endif
 
-    // std::mt19937 engine;
+    std::mt19937 engine;
 
     // if (!g_same_seed_for_every_vector)
     // {
@@ -863,11 +869,12 @@ void random_init(VT *begin, VT *end)
     //     engine.seed(rnd_device());
     // }
 
-    std::uniform_real_distribution<double> dist(0.1, 2.0);
+    std::uniform_real_distribution<double> dist(config->matrix_min, config->matrix_max);
 
     for (VT *it = begin; it != end; ++it)
     {
-        *it = ((VT) rand() / ((VT) RAND_MAX)) + 1;
+        // *it = ((VT) rand() / ((VT) RAND_MAX)) + 1;
+        *it = dist(engine);
     }
 }
 
@@ -915,16 +922,17 @@ void init_with_ptr_or_value(V<VT, IT> &x,
 
 template <typename VT>
 void init_std_vec_with_ptr_or_value(
+    Config *config,
     std::vector<VT> &x,
     ST n_x,
     VT default_value,
-    bool init_with_random_numbers = false,
+    char init_with_random_numbers,
     const std::vector<VT> *x_in = nullptr
 )
 {
-    if (!init_with_random_numbers)
+    if (init_with_random_numbers == '0' || init_with_random_numbers == 'm')
     {
-        if (x_in)
+        if (x_in) // NOTE: not used right now
         {
             if (x_in->size() != size_t(n_x))
             {
@@ -947,7 +955,8 @@ void init_std_vec_with_ptr_or_value(
     }
     else
     {
-        random_init(&(*x.begin()), &(*x.end()));
+        // Randomly initialize between max and min value of matrix
+        random_init(config, &(*x.begin()), &(*x.end()));
     }
 }
 
@@ -958,8 +967,8 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%i], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i]\n",
-                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack);
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], , -bucket_size [%g], -jacobi_scale[%i]\n",
+                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size, config->jacobi_scale);
                     
 }
 
@@ -1090,12 +1099,14 @@ void parse_cli_inputs(
         }
         else if (arg == "-rand_x" || arg == "-rand-x")
         {
-            config->random_init_x = atoi(argv[++i]); // i.e. grab the NEXT
+            // config->random_init_x = atoi(argv[++i]); // i.e. grab the NEXT
+            config->random_init_x = *(argv[++i]); // i.e. grab the NEXT
 
-            if (config->random_init_x != 0 && config->random_init_x != 1)
+            // NOTE: were taking a char here, to allow for the case where x is taken as the mean
+            if (config->random_init_x != '0' && config->random_init_x != '1' && config->random_init_x != 'm')
             {
                 if(my_rank == 0){
-                    fprintf(stderr, "ERROR: You can only choose to initialize x randomly (1, i.e. yes) or not (0, i.e. no).\n");
+                    fprintf(stderr, "ERROR: You can only choose to initialize x randomly (1, i.e. yes), fix x to 1 (0, i.e. no), or fix to the mean of matrix data (m, i.e. for mean).\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }
@@ -1153,6 +1164,19 @@ void parse_cli_inputs(
                 }
             }
         }
+        else if (arg == "-jacobi_scale" || arg == "-jacobi-scale")
+        {
+            config->jacobi_scale = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->jacobi_scale != 0 && config->jacobi_scale != 1)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to scale matrix elements by the diagonal (1, i.e. yes) or not (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
         else if (arg == "-dp")
         {
             *value_type = "dp";
@@ -1194,9 +1218,17 @@ void parse_cli_inputs(
     }
 #endif
 
+#ifdef __CUDACC__
+    if(*value_type == "mp"){fprintf(stderr, "ERROR: Mixed precision with GPUs is not supported at this time.\n");exit(1);}
+#endif
+
 #ifndef USE_MPI
     printf("USE_MPI not defined, forcing comm_halos = 0.\n");
     config->comm_halos = 0;
+#endif
+
+#ifdef USE_MPI
+    if(*value_type == "mp"){fprintf(stderr, "ERROR: Mixed precision with MPI is not supported at this time.\n");exit(1);}
 #endif
 
     // Is this even true?
@@ -1213,8 +1245,7 @@ void parse_cli_inputs(
     }
 
     if((*value_type == "mp" && *kernel_format != "crs") || (*value_type == "mp" && *kernel_format != "crs")){
-        // NOTE: temporary, just to get betas
-        // if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
+        if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
     }
 }
 
@@ -1419,11 +1450,11 @@ void convert_to_scs(
     IT padded_col_idx = 0;
 
     if(work_sharing_arr != nullptr){
-        printf("Padding col_idxs by: %i.\n", work_sharing_arr[my_rank]);
+        // printf("Padding col_idxs by: %i.\n", work_sharing_arr[my_rank]);
         padded_col_idx = work_sharing_arr[my_rank];
     }
     else{
-        printf("Not padding col_idxs.\n");
+        // printf("Not padding col_idxs.\n");
     }
 
     for (ST i = 0; i < n_scs_elements; ++i) {
@@ -1721,14 +1752,41 @@ class SimpleDenseMatrix {
         //     vec(vec_to_copy.begin(), vec_to_copy.end());
         // }
 
-        void init(Config *config){
+        void init(Config *config, char vec_type){
             DefaultValues<VT, IT> default_values;
+
+            if (config->random_init_x == 'm'){
+                default_values.x = config->matrix_mean;
+            }
+            else if (config->random_init_x == '0'){
+                default_values.x = 1.0;
+            }
+            else if (config->random_init_x == '1'){
+                // Should already be handled
+            }
+            else{
+                printf("ERROR: config->random_init_x not recognized");
+            }
+
+            if (vec_type == 'x'){
             init_std_vec_with_ptr_or_value(
+                config,
                 vec, 
                 vec.size(),
-                default_values.x, 
+                default_values.x,
                 config->random_init_x);
+            }
+            else if (vec_type == 'y'){
+            init_std_vec_with_ptr_or_value(
+                config,
+                vec, 
+                vec.size(),
+                default_values.y,
+                config->random_init_x);   
+            }
         }
+
+
 
         // void populte(std::vector<double> vec_to_copy, const ContextData<IT> *local_context){
         //     IT padding_from_heri = (local_context->recv_counts_cumsum).back();
@@ -1737,6 +1795,61 @@ class SimpleDenseMatrix {
         //     vec.resize(needed_padding + local_context->num_local_rows, 0);
         //     vec(vec_to_copy.begin(), vec_to_copy.end());
         // }
+};
+
+template <typename VT, typename IT>
+void extract_matrix_min_mean_max( 
+    MtxData<VT, IT> *local_mtx,
+    Config *config
+){
+    // Get max
+    double max_val = 0;
+
+    #pragma omp parallel for reduction(max:max_val) 
+    for (int idx = 0; idx < local_mtx->nnz; idx++)
+       max_val = max_val > fabs(local_mtx->values[idx]) ? max_val : fabs(local_mtx->values[idx]);
+
+    // Get min
+    double min_val = DBL_MAX;
+
+    #pragma omp parallel for reduction(min:min_val) 
+    for (int idx = 0; idx < local_mtx->nnz; idx++)
+       min_val = min_val < fabs(local_mtx->values[idx]) ? min_val : fabs(local_mtx->values[idx]);
+
+    // Take average and save max and min
+    config->matrix_mean = min_val + ((max_val - min_val) / 2.0);
+    config->matrix_max = max_val;
+    config->matrix_min = min_val;
+
+    printf("matrix_min = %f\n", config->matrix_min);
+    printf("matrix_mean = %f\n", config->matrix_mean);
+    printf("matrix_max = %f\n", config->matrix_max);
+
+};
+
+template <typename VT, typename IT>
+void extract_diagonal(
+    const MtxData<VT,IT> *coo_mat,
+    std::vector<VT> *diag
+){
+    #pragma omp parallel for schedule (static)
+    for (int nz_idx = 0; nz_idx < coo_mat->nnz; ++nz_idx){
+        if(coo_mat->I[nz_idx] == coo_mat->J[nz_idx]){
+            (*diag)[coo_mat->I[nz_idx]] = coo_mat->values[nz_idx];
+        }
+    }
+};
+
+template <typename VT, typename IT>
+void scale_w_jacobi(
+    MtxData<VT,IT> *coo_mat,
+    std::vector<VT> *diag
+){
+    #pragma omp parallel for schedule (static)
+    for (int nz_idx = 0; nz_idx < coo_mat->nnz; ++nz_idx){
+        coo_mat->values[nz_idx] /= (*diag)[coo_mat->I[nz_idx]];
+    }
+
 };
 
 #endif

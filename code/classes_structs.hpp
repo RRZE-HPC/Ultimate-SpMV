@@ -30,10 +30,19 @@ struct Config
     long sigma{1};         // sell-c-sigma
 
     // Initialize rhs vector with random numbers.
-    bool random_init_x{true};
+    char random_init_x = '1';
+
+    // Scale elements in row by diagonal element, useful for matrices with high condition number
+    int jacobi_scale = 0;
 
     // Override values of the matrix, read via mtx file, with random numbers.
     bool random_init_A{false};
+
+    // Convenient way to pass data to x-vector init func...
+    // TODO: probably not the cleanest way 
+    double matrix_max = 1.0;
+    double matrix_mean = 1.0;
+    double matrix_min = 1.0;
 
     // No. of repetitions to perform.
     unsigned long n_repetitions{1};
@@ -66,7 +75,7 @@ struct Config
     char mode = 'b'; 
 
     // Runs benchmark for a specified number of seconds
-    double bench_time = 5.0;
+    double bench_time = 10.0;
 
     // Mixed Precision bucket size, used for partitioning matrix
     double bucket_size = 1.0;
@@ -91,7 +100,10 @@ struct Config
     std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
 
     // filename for double precision results printing
-    std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
+    std::string output_filename_dp = "spmv_mkl_compare_dp_safe.txt";
+
+    // filename for mixed precision results printing
+    std::string output_filename_mp = "spmv_mkl_compare_mp.txt";
 
     // filename for benchmark results printing
     std::string output_filename_bench = "spmv_bench.txt";
@@ -152,6 +164,30 @@ struct OnePrecKernelArgs
     VT * RESTRICT local_y;
 };
 
+template <typename IT>
+struct TwoPrecKernelArgs
+{
+    ST n_chunks; // (same for both)
+    ST hp_C;
+    IT * RESTRICT hp_chunk_ptrs;
+    IT * RESTRICT hp_chunk_lengths;
+    IT * RESTRICT hp_col_idxs;
+    double * RESTRICT hp_values;
+    double * RESTRICT hp_local_x;
+    double * RESTRICT hp_local_y;
+    ST lp_C;
+    IT * RESTRICT lp_chunk_ptrs;
+    IT * RESTRICT lp_chunk_lengths;
+    IT * RESTRICT lp_col_idxs;
+    float * RESTRICT lp_values;
+    float * RESTRICT lp_local_x;
+    float * RESTRICT lp_local_y;
+    IT * lp_perm;
+    IT * hp_perm;
+    IT * lp_inv_perm;
+    IT * hp_inv_perm;
+};
+
 template <typename VT, typename IT>
 class SpmvKernel {
     private:
@@ -167,7 +203,32 @@ class SpmvKernel {
             int // my_rank
         )> OnePrecFuncPtr;
 
+        typedef std::function<void(
+            const ST, // hp_n_chunks // TODO same, for now.
+            const ST, // hp_C
+            const IT * RESTRICT, // hp_chunk_ptrs
+            const IT * RESTRICT, // hp_chunk_lengths
+            const IT * RESTRICT, // hp_col_idxs
+            const double * RESTRICT, // hp_values
+            double * RESTRICT, // hp_x
+            double * RESTRICT, // hp_y
+            const ST, // lp_n_chunks // TODO same, for now.
+            const ST, // lp_C
+            const IT * RESTRICT, // lp_chunk_ptrs
+            const IT * RESTRICT, // lp_chunk_lengths
+            const IT * RESTRICT, // lp_col_idxs
+            const float * RESTRICT, // lp_values
+            float * RESTRICT, // lp_x
+            float * RESTRICT, // lp_y
+            int,
+            IT *,
+            IT *,
+            IT *,
+            IT *
+        )> TwoPrecFuncPtr;
+
         OnePrecFuncPtr one_prec_kernel_func_ptr;
+        TwoPrecFuncPtr two_prec_kernel_func_ptr;
 
         void *kernel_args_encoded;
         void *comm_args_encoded;
@@ -175,6 +236,7 @@ class SpmvKernel {
 
         // Decode kernel args
         OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_decoded = (OnePrecKernelArgs<VT, IT>*) kernel_args_encoded;
+        TwoPrecKernelArgs<IT> *two_prec_kernel_args_decoded = (TwoPrecKernelArgs<IT>*) kernel_args_encoded;
 
         const ST C = one_prec_kernel_args_decoded->C;
         const ST n_chunks = one_prec_kernel_args_decoded->n_chunks;
@@ -182,6 +244,25 @@ class SpmvKernel {
         const IT * RESTRICT chunk_lengths = one_prec_kernel_args_decoded->chunk_lengths;
         const IT * RESTRICT col_idxs = one_prec_kernel_args_decoded->col_idxs;
         const VT * RESTRICT values = one_prec_kernel_args_decoded->values;
+
+        // Just need different names on all of unpacked args
+        const ST hp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
+        const ST hp_C = two_prec_kernel_args_decoded->hp_C;
+        const IT * RESTRICT hp_chunk_ptrs = two_prec_kernel_args_decoded->hp_chunk_ptrs;
+        const IT * RESTRICT hp_chunk_lengths = two_prec_kernel_args_decoded->hp_chunk_lengths;
+        const IT * RESTRICT hp_col_idxs = two_prec_kernel_args_decoded->hp_col_idxs;
+        const double * RESTRICT hp_values = two_prec_kernel_args_decoded->hp_values;
+        const ST lp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
+        const ST lp_C = two_prec_kernel_args_decoded->lp_C;
+        const IT * RESTRICT lp_chunk_ptrs = two_prec_kernel_args_decoded->lp_chunk_ptrs;
+        const IT * RESTRICT lp_chunk_lengths = two_prec_kernel_args_decoded->lp_chunk_lengths;
+        const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
+        const float * RESTRICT lp_values = two_prec_kernel_args_decoded->lp_values; 
+
+        IT* lp_perm = two_prec_kernel_args_decoded->lp_perm;
+        IT* hp_perm = two_prec_kernel_args_decoded->hp_perm;
+        IT* lp_inv_perm = two_prec_kernel_args_decoded->lp_inv_perm;
+        IT* hp_inv_perm = two_prec_kernel_args_decoded->hp_inv_perm;
 
         // Decode comm args
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
@@ -202,67 +283,95 @@ class SpmvKernel {
 
     public:
         VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
-        VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by spmv routine
+        VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
+        double * RESTRICT hp_local_x = two_prec_kernel_args_decoded->hp_local_x;
+        double * RESTRICT hp_local_y = two_prec_kernel_args_decoded->hp_local_y;
+        float * RESTRICT lp_local_x = two_prec_kernel_args_decoded->lp_local_x;
+        float * RESTRICT lp_local_y = two_prec_kernel_args_decoded->lp_local_y;
         
 
         SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
-            if (config->kernel_format == "crs" || config->kernel_format == "csr"){
-                if(my_rank == 0){printf("CRS kernel selected\n");}
-                // TODO: More performant to just instantiate template here?
-#ifdef __CUDACC__
-                // TODO: Integrate with func pointers to device kernels
-                // one_prec_kernel_func_ptr = spmv_gpu_csr<VT, IT>;
-#else
-                one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
-#endif
+            if(config->value_type == "mp"){
+                if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+                    if(my_rank == 0){printf("MP-CRS kernel selected\n");}
+
+                    two_prec_kernel_func_ptr = spmv_omp_csr_mp_1<IT>;
+                    // two_prec_kernel_func_ptr = spmv_omp_csr_mp_2<IT>;
+                }
+                else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm" || config->kernel_format == "ell_cm"){
+                    if(my_rank == 0){printf("Currently no mixed precision support for ELL kernel\n");}
+                    exit(1);
+                }
+                else if (config->kernel_format == "scs"){
+                    if(my_rank == 0){printf("MP SCS kernel selected\n");}
+
+                    two_prec_kernel_func_ptr = spmv_omp_scs_mp_1<IT>;
+                    // two_prec_kernel_func_ptr = spmv_omp_scs_mp_2<IT>;
+                } // NOTE: Advanced kernels are not investigated
+                else {
+                    std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
+                    exit(1);
+                }
             }
-            else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
-                if(my_rank == 0){printf("ELL_rm kernel selected\n");}
+            else{
+                if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+                    if(my_rank == 0){printf("CRS kernel selected\n");}
+                    // TODO: More performant to just instantiate template here?
 #ifdef __CUDACC__
-                if(my_rank == 0){printf("Currently no GPU support for ELL_rm kernel\n");}
-                exit(1);
+                    // TODO: Integrate with func pointers to device kernels
+                    // one_prec_kernel_func_ptr = spmv_gpu_csr<VT, IT>;
 #else
-                one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
 #endif
-            }
-            else if (config->kernel_format == "ell_cm"){
-                if(my_rank == 0){printf("ELL_cm kernel selected\n");}
+                }
+                else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
+                    if(my_rank == 0){printf("ELL_rm kernel selected\n");}
 #ifdef __CUDACC__
-                if(my_rank == 0){printf("Currently no GPU support for ELL_rm kernel\n");}
-                exit(1);
+                    if(my_rank == 0){printf("Currently no GPU support for ELL_rm kernel\n");}
+                    exit(1);
 #else
-                one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_omp_ell_rm<VT, IT>;
 #endif
-            }
-            else if (config->kernel_format == "scs"
-                && config->chunk_size != 1
-                && config->chunk_size != 2 
-                && config->chunk_size != 4
-                && config->chunk_size != 8
-                && config->chunk_size != 16
-                && config->chunk_size != 32
-                && config->chunk_size != 64){
-                if(my_rank == 0){printf("SCS kernel selected\n");}
+                }
+                else if (config->kernel_format == "ell_cm"){
+                    if(my_rank == 0){printf("ELL_cm kernel selected\n");}
 #ifdef __CUDACC__
-                // TODO: Integrate with func pointers to device kernels
-                // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
+                    if(my_rank == 0){printf("Currently no GPU support for ELL_rm kernel\n");}
+                    exit(1);
 #else
-                one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_omp_ell_cm<VT, IT>;
 #endif
-            }
-            else if (config->kernel_format == "scs"){
-                // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
-                if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
+                }
+                else if (config->kernel_format == "scs"
+                    && config->chunk_size != 1
+                    && config->chunk_size != 2 
+                    && config->chunk_size != 4
+                    && config->chunk_size != 8
+                    && config->chunk_size != 16
+                    && config->chunk_size != 32
+                    && config->chunk_size != 64){
+                    if(my_rank == 0){printf("SCS kernel selected\n");}
 #ifdef __CUDACC__
-                // TODO: Integrate with func pointers to device kernels
-                // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
+                    // TODO: Integrate with func pointers to device kernels
+                    // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
 #else
-                one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
 #endif
-            }
-            else {
-                std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
-                exit(1);
+                }
+                else if (config->kernel_format == "scs"){
+                    // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
+                    if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
+#ifdef __CUDACC__
+                    // TODO: Integrate with func pointers to device kernels
+                    // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
+#else
+                    one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+#endif
+                }
+                else {
+                    std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
+                    exit(1);
+                }
             }
         }
 
@@ -373,9 +482,40 @@ class SpmvKernel {
             );
         }
 
+        inline void execute_mp_spmv(void){
+            two_prec_kernel_func_ptr(
+                hp_n_chunks,
+                hp_C,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                hp_local_x,
+                hp_local_y, 
+                lp_n_chunks,
+                lp_C,
+                lp_chunk_ptrs,
+                lp_chunk_lengths,
+                lp_col_idxs,
+                lp_values,
+                lp_local_x,
+                lp_local_y,
+                my_rank,
+                lp_perm,
+                hp_perm,
+                lp_inv_perm,
+                hp_inv_perm
+            );
+        }
+
         // TODO: How to swap with GPU?
         inline void swap_local_vectors(){
             std::swap(local_x, local_y);
+        }
+
+        inline void swap_local_mp_vectors(){
+            std::swap(lp_local_x, lp_local_y);
+            std::swap(hp_local_x, hp_local_y);
         }
 };
 
@@ -1028,6 +1168,16 @@ struct Result
     std::vector<double> perfs_from_procs; // used in Gather
 
     std::vector<unsigned long> nnz_per_proc;
+
+    // Used in mp
+    std::vector<unsigned long> hp_nnz_per_proc;
+    std::vector<unsigned long> lp_nnz_per_proc;
+    unsigned long lp_nnz;
+    unsigned long hp_nnz;
+    unsigned long cumulative_hp_nnz;
+    unsigned long cumulative_lp_nnz;
+    double total_hp_percent;
+    double total_lp_percent;
 
     unsigned long total_nnz;
     unsigned long total_rows;

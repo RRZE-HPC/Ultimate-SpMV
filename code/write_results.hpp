@@ -6,7 +6,7 @@
 #include <omp.h>
 #endif
 #include <iomanip>
-#include <cmath>
+#include <math.h>
 
 template<typename VT, typename IT>
 void compute_euclid_dist(
@@ -19,7 +19,7 @@ void compute_euclid_dist(
     for(int i = 0; i < r->total_rows; ++i){
         tmp += (r->total_uspmv_result[i] - (*x)[i]) * (r->total_uspmv_result[i] - (*x)[i]);
     }
-    r->euclid_dist = sqrt(tmp);
+    r->euclid_dist = std::sqrt(tmp);
 }
 
 template<typename VT, typename IT>
@@ -54,6 +54,9 @@ void write_bench_to_file(
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
+    }
+    if (config->value_type == "mp"){
+        working_file << ", data_type: mp" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % hp elems: " << r->total_hp_percent << ", % lp elems: " << r->total_lp_percent;    
     }
     else{
         working_file << ", data_type: " << typeid(VT).name();
@@ -102,15 +105,15 @@ void write_result_to_file(
     compute_euclid_dist<VT, IT>(r, x);
 
     int width;
-    VT relative_diff, max_relative_diff, max_relative_diff_elem_uspmv, max_relative_diff_elem_mkl;
-    VT absolute_diff, max_absolute_diff, max_absolute_diff_elem_uspmv, max_absolute_diff_elem_mkl;
+    long double relative_diff, max_relative_diff, max_relative_diff_elem_uspmv, max_relative_diff_elem_mkl;
+    long double absolute_diff, max_absolute_diff, max_absolute_diff_elem_uspmv, max_absolute_diff_elem_mkl;
     std::fstream working_file;
 
-    max_relative_diff = 0;
+    max_relative_diff = 0.0;
     max_relative_diff_elem_uspmv = r->total_uspmv_result[0];
     max_relative_diff_elem_mkl = (*x)[0];
 
-    max_absolute_diff = 0;
+    max_absolute_diff = 0.0;
     max_absolute_diff_elem_uspmv = r->total_uspmv_result[0];
     max_absolute_diff_elem_mkl = (*x)[0];
 
@@ -130,6 +133,9 @@ void write_result_to_file(
     else if(config->value_type == "sp"){
         output_filename = config->output_filename_sp;
     }
+    else if(config->value_type == "mp"){
+        output_filename = config->output_filename_mp;
+    }
     working_file.open(output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with ";
 #ifdef USE_MPI
@@ -145,6 +151,9 @@ void write_result_to_file(
     }
     else if(config->value_type == "sp"){
         working_file << ", data_type: " << "sp";
+    }
+    else if(config->value_type == "mp"){
+        working_file << ", data_type: " << "mp";
     }
 #ifdef USE_MPI
     working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << std::endl;
@@ -189,8 +198,14 @@ void write_result_to_file(
                     << std::left << std::setw(width) << "-----------------" << std::endl;
     }
     for(int i = 0; i < r->total_uspmv_result.size(); ++i){
-        relative_diff = abs(((*x)[i] - r->total_uspmv_result[i])/(*x)[i]);
-        absolute_diff = abs((*x)[i] - r->total_uspmv_result[i]);
+        relative_diff = std::abs( ((*x)[i] - r->total_uspmv_result[i]) /(*x)[i]);
+        absolute_diff = std::abs( (*x)[i] - r->total_uspmv_result[i]);
+
+        // Protect against printing 'inf's
+        if (std::abs((*x)[i]) < 1e-25){
+            printf("WARNING: At index %i, mkl_result = %f\n", i, (*x)[i]);
+            relative_diff = r->total_uspmv_result[i];
+        }
         
         if(config -> verbose_validation == 1)
         {
@@ -199,14 +214,16 @@ void write_result_to_file(
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
 
-            if((abs(relative_diff) > .01) || std::isinf(relative_diff)){
+            if((std::abs(relative_diff) > .01) || std::isinf(relative_diff)){
                 working_file << std::left << std::setw(width) << "ERROR";
             }
-            else if(abs(relative_diff) > .0001){
+            else if(std::abs(relative_diff) > .0001){
                 working_file << std::left << std::setw(width) << "WARNING";
             }
 
         working_file << std::endl;
+        // if(i > 5)
+        //     exit(1);
         }
         else if(config -> verbose_validation == 0)
         {
@@ -238,11 +255,11 @@ void write_result_to_file(
                     << std::left << std::setw(width) << max_absolute_diff
                     << std::left  << std::setw(width) << r->euclid_dist;
                          
-        if(((abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
+        if(((std::abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
         ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){
         working_file << std::left << std::setw(width) << "ERROR";       
         }
-        else if(abs(max_relative_diff) > .0001){
+        else if(std::abs(max_relative_diff) > .0001){
         working_file << std::left << std::setw(width) << "WARNING";
         }
 

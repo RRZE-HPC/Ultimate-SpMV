@@ -827,6 +827,80 @@ void collect_comm_info(
     gen_unique_comm_tags<VT, IT>(send_tags, recv_tags, my_rank, comm_size);
 }
 #endif
+
+/**
+    @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into hp and lp sub-structs
+    @param *local_mtx : Process-local coo matrix, received on this process from an earlier routine
+    @param *hp_local_mtx : Process-local "higher precision" coo matrix
+    @param *lp_local_mtx : Process-local "lower precision" coo matrix
+*/
+template <typename VT, typename IT>
+void seperate_lp_from_hp( 
+    double threshold,
+    MtxData<VT, IT> *local_mtx, 
+    MtxData<double, int> *hp_local_mtx, 
+    MtxData<float, int> *lp_local_mtx,
+    int my_rank = NULL)
+{
+    hp_local_mtx->is_sorted = local_mtx->is_sorted;
+    hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    hp_local_mtx->n_rows = local_mtx->n_rows;
+    hp_local_mtx->n_cols = local_mtx->n_cols;
+
+    lp_local_mtx->is_sorted = local_mtx->is_sorted;
+    lp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    lp_local_mtx->n_rows = local_mtx->n_rows;
+    lp_local_mtx->n_cols = local_mtx->n_cols;
+
+    int lp_elem_ctr = 0;
+    int hp_elem_ctr = 0;
+
+    std::vector<int> hp_local_I;
+    std::vector<int> hp_local_J;
+    std::vector<double> hp_local_vals;
+    hp_local_mtx->I = hp_local_I;
+    hp_local_mtx->J = hp_local_J;
+    hp_local_mtx->values = hp_local_vals;
+
+    std::vector<int> lp_local_I;
+    std::vector<int> lp_local_J;
+    std::vector<float> lp_local_vals;
+    lp_local_mtx->I = lp_local_I;
+    lp_local_mtx->J = lp_local_J;
+    lp_local_mtx->values = lp_local_vals;
+
+    // Scan local_mtx
+    // TODO: If this is a bottleneck:
+    // 1. Scan in parallel 
+    // 2. Allocate space
+    // 3. Assign in parallel
+    for(int i = 0; i < local_mtx->nnz; ++i){
+        // If element value below threshold, place in hp_local_mtx
+        if(fabs(local_mtx->values[i]) >= threshold){   
+            hp_local_mtx->values.push_back(local_mtx->values[i]);
+            hp_local_mtx->I.push_back(local_mtx->I[i]);
+            hp_local_mtx->J.push_back(local_mtx->J[i]);
+            ++hp_elem_ctr;
+        }
+        else{
+            // else, place in lp_local_mtx 
+            lp_local_mtx->values.push_back(local_mtx->values[i]);
+            lp_local_mtx->I.push_back(local_mtx->I[i]);
+            lp_local_mtx->J.push_back(local_mtx->J[i]);
+            ++lp_elem_ctr;
+        }
+    }
+
+    hp_local_mtx->nnz = hp_elem_ctr;
+    lp_local_mtx->nnz = lp_elem_ctr;
+
+    if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
+        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when seperating \
+        into lp and hp structs on rank: %i.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr), my_rank);
+        exit(1);
+    }
+}
+
 /** 
     @brief Initialize total_mtx, segment and send this to local_mtx, convert to local_scs format, init comm information
     @param *local_scs : pointer to process-local scs struct
@@ -838,9 +912,11 @@ void collect_comm_info(
 template<typename VT, typename IT>
 void init_local_structs(
     ScsData<VT, IT> *local_scs,
+    ScsData<double, IT> *hp_local_scs,
+    ScsData<float, IT> *lp_local_scs,
     ContextData<IT> *local_context,
     MtxData<VT, IT> *total_mtx,
-    Config *config,
+    Config *config, // shouldn't this be const?
     IT *work_sharing_arr,
     int my_rank,
     int comm_size,
@@ -872,19 +948,74 @@ void init_local_structs(
     if(my_rank == 0){printf("Converting COO matrix to SELL-C-SIG and permuting locally (NOTE: rows only, i.e. nonsymetrically).\n");}
 #endif
 
+    // Scale the one-precision matrix
+    if(config->value_type != "mp" && config->jacobi_scale){
+        std::vector<VT> diagonal(local_mtx->n_cols);
+        extract_diagonal<VT, IT>(local_mtx, &diagonal);
+        scale_w_jacobi<VT, IT>(local_mtx, &diagonal);
+    }
+
+    // extract matrix (and give to x-vector if option chosen at cli)
+    extract_matrix_min_mean_max(local_mtx, config);
+
     // convert local_mtx to local_scs and permute rows (if sigma > 1)
     convert_to_scs<VT, IT>(config->bucket_size, local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
 
+    // Only used for mixed precision
+    MtxData<double, int> *hp_local_mtx = new MtxData<double, int>;
+    MtxData<float, int> *lp_local_mtx = new MtxData<float, int>;
+
+    if (config->value_type == "mp"){
+        seperate_lp_from_hp<VT,IT>(config->bucket_size, local_mtx, hp_local_mtx, lp_local_mtx, my_rank);
+
+        // Need to scale after splitting, since it would affect bucket sizes (in an unknown way)
+        if(config->jacobi_scale){
+            std::vector<double> hp_diagonal(local_mtx->n_cols);
+            extract_diagonal<double, IT>(hp_local_mtx, &hp_diagonal);
+            scale_w_jacobi<double, IT>(hp_local_mtx, &hp_diagonal);
+
+            std::vector<float> lp_diagonal(local_mtx->n_cols);
+            extract_diagonal<float, IT>(lp_local_mtx, &lp_diagonal);
+            scale_w_jacobi<float, IT>(lp_local_mtx, &lp_diagonal);
+
+            // Only after other precisions are scaled, do we scale the complete local_mtx
+            // Mainly just for statistics, but not necessary
+            std::vector<VT> diagonal(local_mtx->n_cols);
+            extract_diagonal<VT, IT>(local_mtx, &diagonal);
+            scale_w_jacobi<VT, IT>(local_mtx, &diagonal);
+            extract_matrix_min_mean_max(local_mtx, config);
+            //////////////////////////////////////////////
+        }
+
+        convert_to_scs<double, IT>(config->bucket_size, hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
+        convert_to_scs<float, IT>(config->bucket_size, lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
+
 #ifdef OUTPUT_SPARSITY
-    printf("Writing sparsity pattern to output file.\n");
-    std::string file_out_name;
-    file_out_name = "local_scs";
-    local_scs->write_to_mtx_file(my_rank, file_out_name);
+        printf("Writing sparsity pattern to output file.\n");
+        std::string file_out_name;
+        file_out_name = "hp_local_scs";
+        hp_local_scs->write_to_mtx_file(my_rank, file_out_name);
+        file_out_name = "lp_local_scs";
+        lp_local_scs->write_to_mtx_file(my_rank, file_out_name);
 #ifdef USE_MPI
-    MPI_Barrier(MPI_COMM_WORLD);
+        MPI_Barrier(MPI_COMM_WORLD);
 #endif
-    exit(0);
+        exit(0);
 #endif
+    }
+
+    if (config->value_type != "mp"){
+#ifdef OUTPUT_SPARSITY
+        printf("Writing sparsity pattern to output file.\n");
+        std::string file_out_name;
+        file_out_name = "local_scs";
+        local_scs->write_to_mtx_file(my_rank, file_out_name);
+#ifdef USE_MPI
+        MPI_Barrier(MPI_COMM_WORLD);
+#endif
+        exit(0);
+#endif
+    }   
 
 #ifdef USE_MPI
     // TODO: is an array of vectors better?
@@ -933,6 +1064,30 @@ void init_local_structs(
 
     // For symmetric permutation of matrix data
     permute_scs_cols(local_scs, &(local_scs->old_to_new_idx)[0]);
+
+    // TODO: How to permute columns here?
+    // if (config->value_type == "mp"){
+    //     // Permute column indices the same as the original scs struct
+    //     // But rows are permuted differently (i.e. within the convert_to_scs routine)
+    //     // permute_scs_cols(hp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
+    //     // permute_scs_cols(lp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
+    //     for(int i = 0; i < hp_local_scs->n_elements; ++i){
+    //         std::cout << "hp_local_scs->col_idxs[" << i << "] = " << hp_local_scs->col_idxs[i] << std::endl;
+    //     }
+    //     for(int i = 0; i < lp_local_scs->n_elements; ++i){
+    //         std::cout << "lp_local_scs->col_idxs[" << i << "] = " << lp_local_scs->col_idxs[i] << std::endl;
+    //     }
+
+    //     permute_scs_cols(hp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);
+    //     permute_scs_cols(lp_local_scs, &(lp_local_scs->old_to_new_idx)[0]);
+
+    //     for(int i = 0; i < hp_local_scs->n_elements; ++i){
+    //         std::cout << "hp_local_scs->col_idxs[" << i << "] = " << hp_local_scs->col_idxs[i] << std::endl;
+    //     }
+    //     for(int i = 0; i < lp_local_scs->n_elements; ++i){
+    //         std::cout << "lp_local_scs->col_idxs[" << i << "] = " << lp_local_scs->col_idxs[i] << std::endl;
+    //     }
+    // }
 
 }
 #endif
