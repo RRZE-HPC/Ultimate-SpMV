@@ -14,6 +14,30 @@
 // SpMV kernels for computing  y = A * x, where A is a sparse matrix
 // represented by different formats.
 
+template <typename VT, typename IT>
+static void
+spmv_warmup_omp_csr(const ST C, // 1
+             const ST num_rows, // n_chunks
+             const IT * RESTRICT row_ptrs, // chunk_ptrs
+             const IT * RESTRICT row_lengths, // unused
+             const IT * RESTRICT col_idxs,
+             const VT * RESTRICT values,
+             VT * RESTRICT x,
+             VT * RESTRICT y,
+             int my_rank)
+{
+    #pragma omp parallel for schedule(static)
+    for (ST row = 0; row < num_rows; ++row) {
+        VT sum{};
+
+        #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
+        for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
+            sum += values[j] * x[col_idxs[j]];
+        }
+        y[row] = sum;
+    }
+}
+
 /**
  * Kernel for CSR format.
  */
@@ -45,7 +69,7 @@ spmv_omp_csr(const ST C, // 1
             y[row] = sum;
         }
 #ifdef USE_LIKWID
-    LIKWID_MARKER_STOP("spmv_crs_benchmark");
+        LIKWID_MARKER_STOP("spmv_crs_benchmark");
 #endif
     }
 }
@@ -236,6 +260,79 @@ spmv_omp_scs_adv(
 
 template <typename IT>
 static void
+spmv_warmup_omp_csr_mp_1(
+    const ST hp_n_rows, // TODO: (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_n_rows, // TODO: (same for both)
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_row_lengths, // unused for now
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank,
+    IT *lp_perm,
+    IT *hp_perm,
+    IT *lp_inv_perm,
+    IT *hp_inv_perm
+    )
+{
+    // if(my_rank == 1){
+    //     std::cout << "in-kernel spmv_kernel->hp_local_x" << std::endl;
+    //     for(int i = 0; i < num_rows; ++i){
+    //         std::cout << hp_x[i] << std::endl;
+    //     }
+    // }
+            // Each thread will traverse the hp struct, then the lp struct
+        // Load balancing depends on sparsity pattern AND data distribution
+
+        #pragma omp parallel for schedule(static)
+        for (ST row = 0; row < hp_n_rows; ++row) {
+            double hp_sum{};
+            #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
+            for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row+1]; ++j) {
+                hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){
+                printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);
+                printf("hp_sum += %f * %f\n", hp_values[j], hp_x[hp_col_idxs[j]]);
+            }
+#endif
+            }
+            
+
+            double lp_sum{};
+            // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+            #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:lp_sum)
+            for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
+                // lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+                lp_sum += lp_values[j] * hp_x[lp_col_idxs[j]];
+
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){
+                printf("j = %i, lp_col_idxs[j] = %i, lp_x[lp_col_idxs[j]] = %f\n", j, lp_col_idxs[j], lp_x[lp_col_idxs[j]]);
+                printf("lp_sum += %5.16f * %f\n", lp_values[j], lp_x[lp_col_idxs[j]]);
+
+            }
+#endif
+            }
+
+            hp_y[row] = hp_sum + lp_sum; // implicit conversion to double
+            // lp_y[row] = hp_sum + lp_sum; // implicit conversion to float. 
+            // ^ Required when performing multiple SpMVs 
+            // Assumes hp_sum + lp_sum is in the range of numbers representable by float
+        }
+}
+
+template <typename IT>
+static void
 spmv_omp_csr_mp_1(
     const ST hp_n_rows, // TODO: (same for both)
     const ST hp_C, // 1
@@ -288,11 +385,13 @@ spmv_omp_csr_mp_1(
                 }
                 
 
-                float lp_sum{};
+                double lp_sum{};
                 // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
                 #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:lp_sum)
                 for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
-                    lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+                    // lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+                    lp_sum += lp_values[j] * hp_x[lp_col_idxs[j]];
+
     #ifdef DEBUG_MODE_FINE
                 if(my_rank == 0){
                     printf("j = %i, lp_col_idxs[j] = %i, lp_x[lp_col_idxs[j]] = %f\n", j, lp_col_idxs[j], lp_x[lp_col_idxs[j]]);

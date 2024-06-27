@@ -1,0 +1,84 @@
+### Starting TaskPrologue of job 1350613 on f1145 at Sat Jun 15 10:02:27 CEST 2024
+#   SLURM_JOB_NODELIST=f1145
+#   SLURM_JOB_NUM_NODES=1
+#   SLURM_NTASKS=
+#   SLURM_NPROCS=
+#   SLURM_TASKS_PER_NODE=4
+#   SLURM_JOB_CPUS_PER_NODE=72
+#   SLURM_EXPORT_ENV=
+Running on cores 0-71 with governor powersave
+### Finished TaskPrologue
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.0
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.1
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.2
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.3
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.4
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.5
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.6
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.7
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.8
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.9
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.10
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.11
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.12
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.13
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.14
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.15
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.16
+slurmstepd: error: execve(): /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/./../../uspmv_spu: No such file or directory
+srun: error: f1145: task 0: Exited with exit code 2
+srun: Terminating StepId=1350613.17
+=== JOB_STATISTICS ===
+=== current date     : Sat Jun 15 10:02:49 CEST 2024
+= Job-ID             : 1350613 on fritz
+= Job-Name           : node_perf_tests
+= Job-Command        : /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/check_perf.sh
+= Initial workdir    : /home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts
+= Queue/Partition    : singlenode
+= Slurm account      : k107ce with QOS=normal
+= Requested resources:  for 01:00:00
+= Elapsed runtime    : 00:00:23
+= Total RAM usage    : 0.0 GiB 
+= Node list          : f1145
+= Subm/Elig/Start/End: 2024-06-15T10:02:25 / 2024-06-15T10:02:25 / 2024-06-15T10:02:26 / 2024-06-15T10:02:49
+======================
+=== Quota infos ======
+    Path              Used     SoftQ    HardQ    Gracetime  Filec    FileQ    FiHaQ    FileGrace    
+    /home/hpc           65.3G   104.9G   209.7G        N/A     335K     500K   1,000K        N/A    
+    /home/vault        208.0G  1048.6G  2097.2G        N/A     155K     200K     400K        N/A    
+    /lustre              4.0K     0.0K     0.0K        N/A       1       80K     250K        N/A    
+======================

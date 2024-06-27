@@ -836,12 +836,15 @@ void collect_comm_info(
 */
 template <typename VT, typename IT>
 void seperate_lp_from_hp( 
-    double threshold,
-    MtxData<VT, IT> *local_mtx, 
+    Config *config,
+    MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
     MtxData<double, int> *hp_local_mtx, 
     MtxData<float, int> *lp_local_mtx,
+    std::vector<VT> *largest_elems, // <- to adjust for jacobi scaling
     int my_rank = NULL)
 {
+    long double threshold = config->bucket_size;
+
     hp_local_mtx->is_sorted = local_mtx->is_sorted;
     hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
     hp_local_mtx->n_rows = local_mtx->n_rows;
@@ -876,19 +879,37 @@ void seperate_lp_from_hp(
     // 3. Assign in parallel
     for(int i = 0; i < local_mtx->nnz; ++i){
         // If element value below threshold, place in hp_local_mtx
-        if(fabs(local_mtx->values[i]) >= threshold){   
-            hp_local_mtx->values.push_back(local_mtx->values[i]);
-            hp_local_mtx->I.push_back(local_mtx->I[i]);
-            hp_local_mtx->J.push_back(local_mtx->J[i]);
-            ++hp_elem_ctr;
+        if(config->jacobi_scale){
+            if(std::abs(local_mtx->values[i]) >= std::abs((long double) threshold / (*largest_elems)[local_mtx->I[i]])){   
+                hp_local_mtx->values.push_back(local_mtx->values[i]);
+                hp_local_mtx->I.push_back(local_mtx->I[i]);
+                hp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++hp_elem_ctr;
+            }
+            else{
+                // else, place in lp_local_mtx 
+                lp_local_mtx->values.push_back(local_mtx->values[i]);
+                lp_local_mtx->I.push_back(local_mtx->I[i]);
+                lp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++lp_elem_ctr;
+            }
         }
         else{
-            // else, place in lp_local_mtx 
-            lp_local_mtx->values.push_back(local_mtx->values[i]);
-            lp_local_mtx->I.push_back(local_mtx->I[i]);
-            lp_local_mtx->J.push_back(local_mtx->J[i]);
-            ++lp_elem_ctr;
+            if(std::abs(local_mtx->values[i]) >= (long double) threshold){   
+                hp_local_mtx->values.push_back(local_mtx->values[i]);
+                hp_local_mtx->I.push_back(local_mtx->I[i]);
+                hp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++hp_elem_ctr;
+            }
+            else{
+                // else, place in lp_local_mtx 
+                lp_local_mtx->values.push_back(local_mtx->values[i]);
+                lp_local_mtx->I.push_back(local_mtx->I[i]);
+                lp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++lp_elem_ctr;
+            } 
         }
+
     }
 
     hp_local_mtx->nnz = hp_elem_ctr;
@@ -950,9 +971,9 @@ void init_local_structs(
 
     // Scale the one-precision matrix
     if(config->value_type != "mp" && config->jacobi_scale){
-        std::vector<VT> diagonal(local_mtx->n_cols);
-        extract_diagonal<VT, IT>(local_mtx, &diagonal);
-        scale_w_jacobi<VT, IT>(local_mtx, &diagonal);
+        std::vector<VT> largest_elems(local_mtx->n_cols);
+        extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
+        scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
     }
 
     // extract matrix (and give to x-vector if option chosen at cli)
@@ -966,26 +987,32 @@ void init_local_structs(
     MtxData<float, int> *lp_local_mtx = new MtxData<float, int>;
 
     if (config->value_type == "mp"){
-        seperate_lp_from_hp<VT,IT>(config->bucket_size, local_mtx, hp_local_mtx, lp_local_mtx, my_rank);
 
-        // Need to scale after splitting, since it would affect bucket sizes (in an unknown way)
+        // Initialize to 1s just for
+        std::vector<VT> largest_elems(local_mtx->n_cols, 0.0);
+
         if(config->jacobi_scale){
-            std::vector<double> hp_diagonal(local_mtx->n_cols);
-            extract_diagonal<double, IT>(hp_local_mtx, &hp_diagonal);
-            scale_w_jacobi<double, IT>(hp_local_mtx, &hp_diagonal);
-
-            std::vector<float> lp_diagonal(local_mtx->n_cols);
-            extract_diagonal<float, IT>(lp_local_mtx, &lp_diagonal);
-            scale_w_jacobi<float, IT>(lp_local_mtx, &lp_diagonal);
-
-            // Only after other precisions are scaled, do we scale the complete local_mtx
-            // Mainly just for statistics, but not necessary
-            std::vector<VT> diagonal(local_mtx->n_cols);
-            extract_diagonal<VT, IT>(local_mtx, &diagonal);
-            scale_w_jacobi<VT, IT>(local_mtx, &diagonal);
-            extract_matrix_min_mean_max(local_mtx, config);
-            //////////////////////////////////////////////
+            extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
+            // printf("Before scale:\n");
+            // for (int nz_idx = 0; nz_idx < local_mtx->nnz; ++nz_idx){
+            //     std::cout << local_mtx->values[nz_idx] << std::endl;
+            // }
+            scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
         }
+        // printf("After scale:\n");
+        // for (int nz_idx = 0; nz_idx < local_mtx->nnz; ++nz_idx){
+        //     std::cout << local_mtx->values[nz_idx] << std::endl;
+        // }
+        // exit(0);
+        seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_elems, my_rank);
+
+        // Only after other precisions are scaled, do we scale the complete local_mtx
+        // Mainly just for statistics, but not necessary
+        // std::vector<VT> diagonal(local_mtx->n_cols);
+        // extract_diagonal<VT, IT>(local_mtx, &diagonal);
+        // scale_w_jacobi<VT, IT>(local_mtx, &diagonal);
+        // extract_matrix_min_mean_max(local_mtx, config);
+        //////////////////////////////////////////////
 
         convert_to_scs<double, IT>(config->bucket_size, hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
         convert_to_scs<float, IT>(config->bucket_size, lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);

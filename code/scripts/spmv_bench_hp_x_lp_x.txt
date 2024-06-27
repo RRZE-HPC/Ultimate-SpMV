@@ -1,0 +1,630 @@
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 18 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.5155794572074068             61.4735141801647842             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 18 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4841851957158116             60.6801303010433912             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 18 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.5737984651295847             61.2550630678888410             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 18 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.3189708665715703             60.8411077708005905             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 18 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4926040880105695             61.7770830681547523             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 17 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4076586527065178             61.3329944079741836             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 17 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4854407640542160             61.4881089630071074             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 17 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4304285122677456             61.5881287190131843             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 17 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.5612487641382149             60.9364779451861978             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 17 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.3518581288062315             60.8638689620420337             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 16 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.3946354741494407             61.7117292969487607             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 16 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.5207042107347135             60.5245482618920505             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 16 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.3356866090280093             60.8888811198994517             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 16 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4336581998429399             61.3383333270903677             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 16 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.1164920063036039             61.5062319401185960             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 15 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4432988325764313             61.4425492039881647             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 15 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.3408531302171376             61.5298679789993912             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 15 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4306084457966399             61.3135331319645047             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 15 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.3930987322710244             61.8208942888304591             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 15 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.3014243630658697             61.5791568551212549             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 14 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.2533918164814732             61.7887106619309634             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 14 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.2758872686773639             61.6484886021353304             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 14 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.2800756195918765             61.0608203229494393             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 14 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.4098974975922793             60.4932838869281113             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 14 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.2263157994635687             61.8248694618232548             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 13 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.1524949327064995             62.2132460928987712             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 13 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.1409713789240339             61.9430027878843248             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 13 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.1058380622864981             62.0002799129579216             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 13 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.2146717655260240             62.0917322058230639             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 13 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+14.1592271839086639             62.1468735970556736             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 12 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.8817012487953910             61.9623694450128824             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 12 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.9340144763645473             62.4724329311866313             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 12 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.9287128024453200             62.4423271219711751             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 12 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.9117374356954393             62.0286861478816718             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 12 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.9696808018884600             62.2822380990255624             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 11 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.4056304423845631             63.9061780800111592             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 11 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.4267066206288277             63.8083936229813844             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 11 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.4828188304636178             63.4986792549025267             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 11 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.3998398286332865             63.8089188700541854             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 11 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+13.3161251193042247             64.1491800281219184             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 10 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.7748051165401346             64.8319503390230238             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 10 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.7162544551111818             65.5511977509595454             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 10 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.9018544899200052             65.0823492789641023             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 10 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.8879946873582707             65.3295562290586531             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 10 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.8705299992844857             65.0607452429831028             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 9 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.4253072660319024             66.4943369298707694             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 9 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.4307302458053996             66.5453109431546181             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 9 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.4152495028914949             66.0614055250771344             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 9 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.3903344490468417             66.0100892309565097             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 9 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+12.4071686511891439             65.6257899519987404             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 8 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+11.6783947701886390             68.0697310029063374             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 8 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+11.7304205400563539             68.3305072518996894             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 8 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+11.6991807491913899             68.7677350470330566             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 8 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+11.7232909820953317             68.7532176589593291             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 8 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 1280
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+11.7359548606141555             68.1962212410289794             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 7 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+10.8977106661458549             50.8648121859878302             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 7 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+10.8263301793666571             51.1044846838340163             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 7 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+10.8578859401415961             51.2501655761152506             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 7 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+10.8754092879353959             51.6953449218999594             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 7 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+10.8857785316751645             50.5778282368555665             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 6 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+9.7352846734701686              53.2972256310749799             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 6 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+9.7437862358537437              53.8318692541215569             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 6 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+9.7461398525434308              53.7352171298116446             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 6 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+9.7178201975908109              53.7822110701818019             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 6 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+9.7235379281136467              53.2601089151576161             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 5 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+8.4141245216486578              57.9490203361492604             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 5 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+8.3367425038129976              57.9898768800776452             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 5 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+8.3288929526651341              57.9291546070016921             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 5 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+8.4069133994295537              57.0279794710222632             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 5 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+8.3949831858470638              56.8738629720173776             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 4 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+6.8934474873026268              63.6176147379446775             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 4 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+6.8464003130375000              64.4177258329000324             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 4 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+6.8821018634257083              63.9475306400563568             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 4 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+6.8762767856492593              63.5839145339559764             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 4 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 640
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+6.8781558620004448              63.8893532180227339             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 3 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+5.2214436393320058              53.4141256778966635             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 3 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+5.2296011989097479              53.7854119618423283             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 3 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+5.2415300376126481              53.5549297709949315             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 3 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+5.2306327511802833              53.1866581968497485             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 3 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+5.2194208097142889              53.0040561340283602             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 2 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+3.6003337140533507              64.8274864270351827             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 2 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+3.6028145932913880              64.7075064550153911             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 2 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+3.5981424305819201              64.9226812550332397             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 2 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+3.5956730673847099              64.3632309020031244             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 2 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 320
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+3.5999653582128626              64.6722190580330789             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 1 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 160
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+1.8278638521194819              67.6614842240232974             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 1 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 160
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+1.8277958260566645              67.7241594039369375             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 1 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 160
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+1.8279864261425920              68.4086655420251191             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 1 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 160
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+1.8230127736043182              69.1573453599121422             
+
+/home/vault/k107ce/k107ce17/bench_matrices/Long_Coup_dt0.mtx with 1 thread(s) per proc
+kernel: crs, data_type: mp, threshold: 30846172.34, % hp elems: 51.56, % lp elems: 48.44, revisions: 160
+
+Total Gflops:                   Total Walltime:                 
+-------------                   -------------                   
+1.8288235016988834              68.4234990789555013             
+

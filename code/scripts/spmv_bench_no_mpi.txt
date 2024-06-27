@@ -1,7 +1,0 @@
-../../matrices/FDM-2d-16.mtx with 36 thread(s) per proc
-kernel: scs, C: 1 sigma: 32, revisions: 1048576
-
-Total Gflops:                   Total Walltime:                 
--------------                   -------------                   
-0.4001834538871257              12.71084277611226               
-

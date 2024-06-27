@@ -967,7 +967,7 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], , -bucket_size [%g], -jacobi_scale[%i]\n",
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], , -bucket_size [%Lf], -jacobi_scale[%i]\n",
                             argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size, config->jacobi_scale);
                     
 }
@@ -1828,17 +1828,55 @@ void extract_matrix_min_mean_max(
 };
 
 template <typename VT, typename IT>
-void extract_diagonal(
+void extract_largest_elems(
     const MtxData<VT,IT> *coo_mat,
-    std::vector<VT> *diag
+    std::vector<VT> *largest_elems
 ){
+    // #pragma omp parallel for schedule (static)
+    // for (int nz_idx = 0; nz_idx < coo_mat->nnz; ++nz_idx){
+    //     if(coo_mat->I[nz_idx] == coo_mat->J[nz_idx]){
+    //         (*diag)[coo_mat->I[nz_idx]] = coo_mat->values[nz_idx];
+    //     }
+    // }
+
     #pragma omp parallel for schedule (static)
     for (int nz_idx = 0; nz_idx < coo_mat->nnz; ++nz_idx){
-        if(coo_mat->I[nz_idx] == coo_mat->J[nz_idx]){
-            (*diag)[coo_mat->I[nz_idx]] = coo_mat->values[nz_idx];
+        int row = coo_mat->I[nz_idx];
+        // VT absValue = std::abs(coo_mat->values[nz_idx]);
+        double absValue = std::abs(static_cast<double>(coo_mat->values[nz_idx]));
+
+        #pragma omp critical
+        {
+            if (absValue > (*largest_elems)[row]) {
+                (*largest_elems)[row] = absValue;
+            }
         }
     }
 };
+
+// void extract_hp_diagonal(
+//     const MtxData<double,int> *coo_mat,
+//     std::vector<double> *diag
+// ){
+//     #pragma omp parallel for schedule (static)
+//     for (int nz_idx = 0; nz_idx < coo_mat->nnz; ++nz_idx){
+//         if(coo_mat->I[nz_idx] == coo_mat->J[nz_idx]){
+//             (*diag)[coo_mat->I[nz_idx]] = coo_mat->values[nz_idx];
+//         }
+//     }
+// };
+
+// void extract_lp_diagonal(
+//     const MtxData<float,int> *coo_mat,
+//     std::vector<double> *diag
+// ){
+//     #pragma omp parallel for schedule (static)
+//     for (int nz_idx = 0; nz_idx < coo_mat->nnz; ++nz_idx){
+//         if(coo_mat->I[nz_idx] == coo_mat->J[nz_idx]){
+//             (*diag)[coo_mat->I[nz_idx]] = coo_mat->values[nz_idx];
+//         }
+//     }
+// };
 
 template <typename VT, typename IT>
 void scale_w_jacobi(
@@ -1847,7 +1885,7 @@ void scale_w_jacobi(
 ){
     #pragma omp parallel for schedule (static)
     for (int nz_idx = 0; nz_idx < coo_mat->nnz; ++nz_idx){
-        coo_mat->values[nz_idx] /= (*diag)[coo_mat->I[nz_idx]];
+        coo_mat->values[nz_idx] = static_cast<VT>(coo_mat->values[nz_idx] / static_cast<double>((*diag)[coo_mat->I[nz_idx]]));
     }
 
 };

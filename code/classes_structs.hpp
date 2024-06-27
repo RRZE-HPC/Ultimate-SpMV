@@ -78,7 +78,7 @@ struct Config
     double bench_time = 10.0;
 
     // Mixed Precision bucket size, used for partitioning matrix
-    double bucket_size = 1.0;
+    long double bucket_size = 1.0;
 
     // Just to make it easier to report kernel launch configuration at the end
 #ifdef __CUDACC__
@@ -100,7 +100,7 @@ struct Config
     std::string output_filename_sp = "spmv_mkl_compare_sp.txt";
 
     // filename for double precision results printing
-    std::string output_filename_dp = "spmv_mkl_compare_dp_safe.txt";
+    std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
 
     // filename for mixed precision results printing
     std::string output_filename_mp = "spmv_mkl_compare_mp.txt";
@@ -228,7 +228,9 @@ class SpmvKernel {
         )> TwoPrecFuncPtr;
 
         OnePrecFuncPtr one_prec_kernel_func_ptr;
+        OnePrecFuncPtr one_prec_warmup_kernel_func_ptr;
         TwoPrecFuncPtr two_prec_kernel_func_ptr;
+        TwoPrecFuncPtr two_prec_warmup_kernel_func_ptr;
 
         void *kernel_args_encoded;
         void *comm_args_encoded;
@@ -296,6 +298,7 @@ class SpmvKernel {
                     if(my_rank == 0){printf("MP-CRS kernel selected\n");}
 
                     two_prec_kernel_func_ptr = spmv_omp_csr_mp_1<IT>;
+                    two_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr_mp_1<IT>;
                     // two_prec_kernel_func_ptr = spmv_omp_csr_mp_2<IT>;
                 }
                 else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm" || config->kernel_format == "ell_cm"){
@@ -322,6 +325,7 @@ class SpmvKernel {
                     // one_prec_kernel_func_ptr = spmv_gpu_csr<VT, IT>;
 #else
                     one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
 #endif
                 }
                 else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
@@ -482,8 +486,48 @@ class SpmvKernel {
             );
         }
 
+        inline void execute_warmup_spmv(void){
+            one_prec_warmup_kernel_func_ptr(
+                C,
+                n_chunks,
+                chunk_ptrs,
+                chunk_lengths,
+                col_idxs,
+                values,
+                local_x,
+                local_y,
+                my_rank
+            );
+        }
+
         inline void execute_mp_spmv(void){
             two_prec_kernel_func_ptr(
+                hp_n_chunks,
+                hp_C,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                hp_local_x,
+                hp_local_y, 
+                lp_n_chunks,
+                lp_C,
+                lp_chunk_ptrs,
+                lp_chunk_lengths,
+                lp_col_idxs,
+                lp_values,
+                lp_local_x,
+                lp_local_y,
+                my_rank,
+                lp_perm,
+                hp_perm,
+                lp_inv_perm,
+                hp_inv_perm
+            );
+        }
+
+        inline void execute_warmup_mp_spmv(void){
+            two_prec_warmup_kernel_func_ptr(
                 hp_n_chunks,
                 hp_C,
                 hp_chunk_ptrs,
@@ -1183,6 +1227,7 @@ struct Result
     unsigned long total_rows;
 
     double euclid_dist;
+    double mkl_magnitude;
 
     unsigned int size_value_type{};
     unsigned int size_index_type{};

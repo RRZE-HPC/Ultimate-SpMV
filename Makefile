@@ -1,7 +1,7 @@
 #[gcc, icc, icx, nvcc]
 COMPILER = icx
-VECTOR_LENGTH = 1
-DEBUG_MODE = 1
+VECTOR_LENGTH = 4
+DEBUG_MODE = 0
 DEBUG_MODE_FINE = 0
 OUTPUT_SPARSITY = 0
 CPP_VERSION = c++14
@@ -11,7 +11,7 @@ GPGPU_ARCH = a100
 # 0/1 library usage
 USE_MPI = 0
 USE_METIS = 0
-USE_LIKWID = 0
+USE_LIKWID = 1
 
 # Validate Makefile options
 ifneq ($(COMPILER),nvcc)
@@ -163,9 +163,9 @@ endif
 REBUILD_DEPS = $(MAKEFILE_LIST) code/vectors.h code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
-all: uspmv_safe
+all: uspmv_likwid
 
-uspmv_safe: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
+uspmv_likwid: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
 	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 else

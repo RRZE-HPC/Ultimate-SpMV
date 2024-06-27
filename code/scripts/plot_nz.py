@@ -25,7 +25,7 @@ def save_matrix_market_histogram(file_path, output_path):
     plt.close()
 
 # Example usage
-matrix_name = "Fault_639"
+matrix_name = "Flan_1565"
 file_path = '/home/vault/k107ce/k107ce17/bench_matrices/' + matrix_name + '.mtx'
 output_path = matrix_name + '_values_hist.png'
 save_matrix_market_histogram(file_path, output_path)

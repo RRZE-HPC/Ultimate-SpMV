@@ -19,7 +19,22 @@ void compute_euclid_dist(
     for(int i = 0; i < r->total_rows; ++i){
         tmp += (r->total_uspmv_result[i] - (*x)[i]) * (r->total_uspmv_result[i] - (*x)[i]);
     }
+
     r->euclid_dist = std::sqrt(tmp);
+}
+
+template<typename VT, typename IT>
+void compute_euclid_magnitude(
+    Result<VT, IT> *r,
+    std::vector<VT> *x
+){
+    long double tmp = 0; // NOTE: does this need to be VT?
+
+    #pragma omp parallel for reduction(+:tmp)
+    for(int i = 0; i < r->total_rows; ++i){
+        tmp += (*x)[i] * (*x)[i];
+    }
+    r->mkl_magnitude = std::sqrt(tmp);
 }
 
 template<typename VT, typename IT>
@@ -102,7 +117,9 @@ void write_result_to_file(
     int comm_size
 
 ){
+    // Used for assessing error
     compute_euclid_dist<VT, IT>(r, x);
+    compute_euclid_magnitude(r,x);
 
     int width;
     long double relative_diff, max_relative_diff, max_relative_diff_elem_uspmv, max_relative_diff_elem_mkl;
@@ -185,7 +202,8 @@ void write_result_to_file(
                     << std::left << std::setw(width-1) << "mkl abs. elem:"
                     << std::left << std::setw(width) << "uspmv abs. elem:"
                     << std::left << std::setw(width) << "MAX abs. diff:"
-                    << std::left << std::setw(width) << "||mkl - uspmv||_2"
+                    << std::left << std::setw(width+4) << "||mkl - uspmv||_2"
+                    << std::left << std::setw(width+4) << "||mkl - uspmv||/||mkl||_2"
                     << std::endl;
 
         working_file 
@@ -195,7 +213,8 @@ void write_result_to_file(
                     << std::left << std::setw(width-1) << "-------------"
                     << std::left << std::setw(width) << "---------------"
                     << std::left << std::setw(width) << "-------------" 
-                    << std::left << std::setw(width) << "-----------------" << std::endl;
+                    << std::left << std::setw(width+4) << "-----------------"
+                    << std::left << std::setw(width+4) << "-------------------------" << std::endl;
     }
     for(int i = 0; i < r->total_uspmv_result.size(); ++i){
         relative_diff = std::abs( ((*x)[i] - r->total_uspmv_result[i]) /(*x)[i]);
@@ -253,7 +272,8 @@ void write_result_to_file(
                     << std::left << std::setw(width) << max_absolute_diff_elem_mkl
                     << std::left << std::setw(width) << max_absolute_diff_elem_uspmv
                     << std::left << std::setw(width) << max_absolute_diff
-                    << std::left  << std::setw(width) << r->euclid_dist;
+                    << std::left  << std::setw(width+6) << r->euclid_dist
+                    << std::left  << std::setw(width+6) << r->euclid_dist / r->mkl_magnitude;
                          
         if(((std::abs(max_relative_diff) > .01) || std::isnan(max_relative_diff) || std::isinf(max_relative_diff))
         ||  (std::isnan(max_absolute_diff) || std::isinf(max_absolute_diff))){

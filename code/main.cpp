@@ -345,12 +345,13 @@ void bench_spmv(
                     }
                 }
 #else
+            // TODO: Is this #if-else correct with mpi? I don't think it is.
             if(config->value_type == "mp"){
-                spmv_kernel.execute_mp_spmv();
+                spmv_kernel.execute_warmup_mp_spmv();
                 spmv_kernel.swap_local_mp_vectors();
             }
             else{
-                spmv_kernel.execute_spmv();
+                spmv_kernel.execute_warmup_spmv();
                 spmv_kernel.swap_local_vectors();
             }
 #endif
@@ -370,6 +371,7 @@ void bench_spmv(
         end_warm_up_loop_time = MPI_Wtime();
 #else
         end_warm_up_loop_time = getTimeStamp();
+        std::cout << "warm up time: " << end_warm_up_loop_time - begin_warm_up_loop_time << std::endl;
 #endif
 #endif
 
@@ -384,7 +386,32 @@ void bench_spmv(
 
         // Initialize number of repetitions for actual benchmark
         // Only relevant for very very large matrices really..
-        int n_iter = 10;
+        int n_iter = 5000;
+
+#ifdef USE_LIKWID
+            // Init parallel region
+            #pragma omp parallel
+            {
+                if(config->kernel_format == "crs"){
+                    if(config->value_type == "mp"){
+                        LIKWID_MARKER_REGISTER("spmv_ap_crs_benchmark");
+                    }
+                    else{
+                        LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
+                    }
+                }
+                else if(config->kernel_format == "scs"){
+                    if(config->value_type == "mp"){
+                        // TODO: update kernel
+                        LIKWID_MARKER_REGISTER("spmv_ap_scs_benchmark");
+                    }
+                    else{
+                        LIKWID_MARKER_REGISTER("spmv_scs_benchmark");
+                    }
+                }
+
+            }
+#endif
 
         if(config->comm_halos){
 #ifdef USE_MPI
@@ -507,6 +534,7 @@ void bench_spmv(
 #else
         r->duration_total_s = runtime;
 #endif
+        std::cout << "r->n_calls = " << r->n_calls << std::endl; 
         r->duration_kernel_s = r->duration_total_s/ r->n_calls;
         r->perf_gflops = (double)local_context->total_nnz * 2.0
                             / r->duration_kernel_s
@@ -947,6 +975,16 @@ void compute_result(
     local_x.init(config, 'x');
     local_y.init(config, 'y');
 
+    // printf("x = \n");
+    // for(int i = 0; i < (local_x.vec).size(); ++i){
+    //     printf("%f\n", (local_x.vec)[i]);
+    // }
+    // printf("y = \n");
+    // for(int i = 0; i < (local_y.vec).size(); ++i){
+    //     printf("%f\n", (local_y.vec)[i]);
+    // }
+    // exit(1);
+
     // TODO: wrap in method or something
     if(config->value_type == "mp"){
         for(int i = 0; i < (local_x.vec).size(); ++i){
@@ -1082,9 +1120,9 @@ int my_rank = 0, comm_size = 1;
 #endif
                     std::vector<double> mkl_dp_result;
                     if(config.jacobi_scale){
-                        std::vector<double> diagonal(total_mtx.n_cols);
-                        extract_diagonal<double, int>(&total_mtx, &diagonal);
-                        scale_w_jacobi<double, int>(&total_mtx, &diagonal);
+                        std::vector<double> largest_elems(total_mtx.n_cols);
+                        extract_largest_elems<double, int>(&total_mtx, &largest_elems);
+                        scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
                     }
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
 #ifdef DEBUG_MODE
@@ -1139,9 +1177,9 @@ int my_rank = 0, comm_size = 1;
 #endif
                     std::vector<float> mkl_sp_result;
                     if(config.jacobi_scale){
-                        std::vector<float> diagonal(total_mtx.n_cols);
-                        extract_diagonal<float, int>(&total_mtx, &diagonal);
-                        scale_w_jacobi<float, int>(&total_mtx, &diagonal);
+                        std::vector<float> largest_elems(total_mtx.n_cols);
+                        extract_largest_elems<float, int>(&total_mtx, &largest_elems);
+                        scale_w_jacobi<float, int>(&total_mtx, &largest_elems);
                     }
                     validate_sp_result(&total_mtx, &config, &r, &mkl_sp_result);
 #ifdef DEBUG_MODE
@@ -1198,9 +1236,9 @@ int my_rank = 0, comm_size = 1;
 #endif
                     std::vector<double> mkl_dp_result;
                     if(config.jacobi_scale){
-                        std::vector<double> diagonal(total_mtx.n_cols);
-                        extract_diagonal<double, int>(&total_mtx, &diagonal);
-                        scale_w_jacobi<double, int>(&total_mtx, &diagonal);
+                        std::vector<double> largest_elems(total_mtx.n_cols);
+                        extract_largest_elems<double, int>(&total_mtx, &largest_elems);
+                        scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
                     }
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
 #ifdef DEBUG_MODE

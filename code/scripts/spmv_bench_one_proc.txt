@@ -1,7 +1,0 @@
-../../matrices/FDM-2d-16.mtx with 1 MPI processes, and 36 thread(s) per proc
-kernel: scs, C: 1 sigma: 2, revisions: 1048576, seg_method: seg-rows
-
-Total Gflops:                   Total Walltime:                 
--------------                   -------------                   
-0.4766495417537229              10.60598649550229               
-
