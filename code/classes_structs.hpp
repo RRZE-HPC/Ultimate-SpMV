@@ -182,10 +182,6 @@ struct TwoPrecKernelArgs
     float * RESTRICT lp_values;
     float * RESTRICT lp_local_x;
     float * RESTRICT lp_local_y;
-    IT * lp_perm;
-    IT * hp_perm;
-    IT * lp_inv_perm;
-    IT * hp_inv_perm;
 };
 
 template <typename VT, typename IT>
@@ -220,11 +216,7 @@ class SpmvKernel {
             const float * RESTRICT, // lp_values
             float * RESTRICT, // lp_x
             float * RESTRICT, // lp_y
-            int,
-            IT *,
-            IT *,
-            IT *,
-            IT *
+            int
         )> TwoPrecFuncPtr;
 
         OnePrecFuncPtr one_prec_kernel_func_ptr;
@@ -261,10 +253,11 @@ class SpmvKernel {
         const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
         const float * RESTRICT lp_values = two_prec_kernel_args_decoded->lp_values; 
 
-        IT* lp_perm = two_prec_kernel_args_decoded->lp_perm;
-        IT* hp_perm = two_prec_kernel_args_decoded->hp_perm;
-        IT* lp_inv_perm = two_prec_kernel_args_decoded->lp_inv_perm;
-        IT* hp_inv_perm = two_prec_kernel_args_decoded->hp_inv_perm;
+        // Not a good direction
+        // IT* lp_perm = two_prec_kernel_args_decoded->lp_perm;
+        // IT* hp_perm = two_prec_kernel_args_decoded->hp_perm;
+        // IT* lp_inv_perm = two_prec_kernel_args_decoded->lp_inv_perm;
+        // IT* hp_inv_perm = two_prec_kernel_args_decoded->hp_inv_perm;
 
         // Decode comm args
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
@@ -308,8 +301,8 @@ class SpmvKernel {
                 else if (config->kernel_format == "scs"){
                     if(my_rank == 0){printf("MP SCS kernel selected\n");}
 
-                    two_prec_kernel_func_ptr = spmv_omp_scs_mp_1<IT>;
-                    // two_prec_kernel_func_ptr = spmv_omp_scs_mp_2<IT>;
+                    two_prec_kernel_func_ptr = spmv_omp_scs_mp<IT>;
+                    two_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs_mp<IT>;
                 } // NOTE: Advanced kernels are not investigated
                 else {
                     std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
@@ -360,6 +353,7 @@ class SpmvKernel {
                     // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
 #else
                     one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs<VT, IT>;
 #endif
                 }
                 else if (config->kernel_format == "scs"){
@@ -369,7 +363,10 @@ class SpmvKernel {
                     // TODO: Integrate with func pointers to device kernels
                     // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
 #else
-                    one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                    // TODO: Update
+                    // one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs<VT, IT>;
 #endif
                 }
                 else {
@@ -518,11 +515,7 @@ class SpmvKernel {
                 lp_values,
                 lp_local_x,
                 lp_local_y,
-                my_rank,
-                lp_perm,
-                hp_perm,
-                lp_inv_perm,
-                hp_inv_perm
+                my_rank
             );
         }
 
@@ -544,11 +537,7 @@ class SpmvKernel {
                 lp_values,
                 lp_local_x,
                 lp_local_y,
-                my_rank,
-                lp_perm,
-                hp_perm,
-                lp_inv_perm,
-                hp_inv_perm
+                my_rank
             );
         }
 
@@ -1134,51 +1123,25 @@ void ScsData<VT, IT>::write_to_mtx_file(
     int my_rank,
     std::string file_out_name)
 {
-    // NOTE: will write all scs matrices as double precision. Doesn't matter now, but might in the future
-    // Convert csr back to coo for mtx format printing
-    // TODO: Haven't quite figured out for SCS, C>1
-    // std::vector<int> temp_rows(n_elements);
-    // std::vector<int> temp_cols(n_elements);
-    // std::vector<double> temp_values(n_elements);
+    //Convert csr back to coo for mtx format printing
+    std::vector<int> temp_rows(n_elements);
+    std::vector<int> temp_cols(n_elements);
+    std::vector<double> temp_values(n_elements);
 
-    ST n_scs_elements = chunk_ptrs[n_chunks - 1]
-                        + chunk_lengths[n_chunks - 1] * C;
-
-    std::vector<int> temp_rows(n_scs_elements);
-    std::vector<int> temp_cols(n_scs_elements);
-    std::vector<double> temp_values(n_scs_elements);
-
-    int tmp_row_cntr = 0;
-    int line_cntr = 0;
-    int elems_in_row = 0;
-    for(int chunk_idx = 0; chunk_idx < n_chunks; ++chunk_idx){ // for each chunk
-        int elems_in_chunk = chunk_ptrs[chunk_idx + 1] - chunk_ptrs[chunk_idx];
-        for(int chunk_elem = 0; chunk_elem < elems_in_chunk; ++chunk_elem){ 
-            // scan each element in this chunk
-            temp_rows[tmp_row_cntr] = line_cntr + 1;
-            ++elems_in_row;
-           
-            if(elems_in_row * C == elems_in_chunk){
-                // If we reach the end of the row in this chunk
-                ++line_cntr;
-                elems_in_row = 0;
-            }
-            ++tmp_row_cntr;
+    int elem_num = 0;
+    for(int row = 0; row < n_rows; ++row){
+        for(int idx = chunk_ptrs[row]; idx < chunk_ptrs[row + 1]; ++idx){
+            temp_rows[elem_num] = row + 1; // +1 to adjust for 1 based indexing in mm-format
+            temp_cols[elem_num] = col_idxs[idx] + 1;
+            temp_values[elem_num] = values[idx];
+            ++elem_num;
         }
-        ++line_cntr;
     }
 
-    // TODO: temp_cols and temp_values should only have n_elements, not n_scs_elements...?
-    // or should they actually be n_scs_elements?
-    for(int idx = 0; idx < n_scs_elements; ++idx){
-        temp_cols[idx] = col_idxs[idx] + 1;
-        temp_values[idx] = values[idx]; // Just keep as doubles for writing to mtx file
-    }
-
-    std::string out_file_name = file_out_name + "_rank_" + std::to_string(my_rank) + ".mtx"; 
+    std::string file_name = file_out_name + "_out_matrix_rank_" + std::to_string(my_rank) + ".mtx"; 
 
     mm_write_mtx_crd(
-        &out_file_name[0], 
+        &file_name[0], 
         n_rows, 
         n_cols, 
         n_elements, 
@@ -1261,6 +1224,8 @@ struct Result
     double mem_y_mb{};
 
     double beta{};
+    double hp_beta{};
+    double lp_beta{};
 
     double cb_a_0{};
     double cb_a_nzc{};

@@ -1,5 +1,5 @@
 
-with open('spmv_bench_hp_x_hp_x.txt') as file:
+with open('spmv_bench_AP_32_1024.txt') as file:
     Lines=file.readlines()
     line_count = 0
     for line in Lines:

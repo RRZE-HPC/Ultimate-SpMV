@@ -66,7 +66,7 @@ if mode!=0:
     print("done")
 
 
-spyfig.spy(matrix, marker='*', color='black',markersize=2)
+spyfig.spy(matrix, marker='*', color='black',markersize=0.01)
 #ticks = np.arange(0, 32768, 1000)
 spyfig.get_xaxis().set_visible(True)#False)
 spyfig.get_yaxis().set_visible(True)#False)

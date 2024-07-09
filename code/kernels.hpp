@@ -136,6 +136,45 @@ spmv_omp_ell_cm(
     }
 }
 
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+template <typename VT, typename IT>
+static void
+spmv_warmup_omp_scs(const ST C,
+             const ST n_chunks,
+             const IT * RESTRICT chunk_ptrs,
+             const IT * RESTRICT chunk_lengths,
+             const IT * RESTRICT col_idxs,
+             const VT * RESTRICT values,
+             VT * RESTRICT x,
+             VT * RESTRICT y,
+             int my_rank)
+{
+    #pragma omp parallel 
+    {
+        #pragma omp for schedule(static)
+        for (ST c = 0; c < n_chunks; ++c) {
+            VT tmp[C];
+            for (ST i = 0; i < C; ++i) {
+                tmp[i] = VT{};
+            }
+
+            IT cs = chunk_ptrs[c];
+
+            // TODO: use IT wherever possible
+            for (IT j = 0; j < chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < (IT)C; ++i) {
+                    tmp[i] += values[cs + j * (IT)C + i] * x[col_idxs[cs + j * (IT)C + i]];
+                }
+            }
+
+            for (ST i = 0; i < C; ++i) {
+                y[c * C + i] = tmp[i];
+            }
+        }
+    }
+}
 
 /**
  * Kernel for Sell-C-Sigma. Supports all Cs > 0.
@@ -277,11 +316,7 @@ spmv_warmup_omp_csr_mp_1(
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
-    int my_rank,
-    IT *lp_perm,
-    IT *hp_perm,
-    IT *lp_inv_perm,
-    IT *hp_inv_perm
+    int my_rank
     )
 {
     // if(my_rank == 1){
@@ -350,11 +385,7 @@ spmv_omp_csr_mp_1(
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
-    int my_rank,
-    IT *lp_perm,
-    IT *hp_perm,
-    IT *lp_inv_perm,
-    IT *hp_inv_perm
+    int my_rank
     )
 {
     // if(my_rank == 1){
@@ -493,6 +524,133 @@ spmv_omp_csr_mp_2(
  */
 template <typename IT>
 static void
+spmv_warmup_omp_scs_mp(
+    const ST hp_n_chunks, // n_chunks (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_n_chunks, // n_chunks (same for both)
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank
+)
+{
+    #pragma omp parallel
+    {
+        #pragma omp for schedule(static)
+        for (ST c = 0; c < hp_n_chunks; ++c) {
+            double hp_tmp[hp_C];
+            double lp_tmp[hp_C];
+
+            for (ST i = 0; i < hp_C; ++i) {
+                hp_tmp[i] = 0.0;
+            }
+            for (ST i = 0; i < hp_C; ++i) {
+                lp_tmp[i] = 0.0f;
+            }
+
+            IT hp_cs = hp_chunk_ptrs[c];
+            IT lp_cs = lp_chunk_ptrs[c];
+
+            for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < hp_C; ++i) {
+                    hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
+                }
+            }
+            for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < hp_C; ++i) {
+                    lp_tmp[i] += lp_values[lp_cs + j * hp_C + i] * lp_x[lp_col_idxs[lp_cs + j * hp_C + i]];
+                }
+            }
+
+            for (IT i = 0; i < hp_C; ++i) {
+                hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
+            }
+        }
+    }
+}
+
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+template <typename IT>
+static void
+spmv_omp_scs_mp(
+    const ST hp_n_chunks, // n_chunks (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_n_chunks, // n_chunks (same for both)
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank
+)
+{
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("spmv_ap_scs_benchmark");
+#endif
+        #pragma omp for schedule(static)
+        for (ST c = 0; c < hp_n_chunks; ++c) {
+            double hp_tmp[hp_C];
+            double lp_tmp[hp_C];
+
+            for (ST i = 0; i < hp_C; ++i) {
+                hp_tmp[i] = 0.0;
+            }
+            for (ST i = 0; i < hp_C; ++i) {
+                lp_tmp[i] = 0.0f;
+            }
+
+            IT hp_cs = hp_chunk_ptrs[c];
+            IT lp_cs = lp_chunk_ptrs[c];
+
+            for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < hp_C; ++i) {
+                    hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
+                }
+            }
+            for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < hp_C; ++i) {
+                    lp_tmp[i] += lp_values[lp_cs + j * hp_C + i] * lp_x[lp_col_idxs[lp_cs + j * hp_C + i]];
+                }
+            }
+
+            for (IT i = 0; i < hp_C; ++i) {
+                hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
+            }
+        }
+#ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_ap_scs_benchmark");
+#endif
+    }
+}
+
+
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+template <typename IT>
+static void
 spmv_omp_scs_mp_1(
     const ST hp_n_chunks, // n_chunks (same for both)
     const ST hp_C, // 1
@@ -519,51 +677,10 @@ spmv_omp_scs_mp_1(
 {
     std::vector<double> sum_arr(hp_n_chunks*hp_C,0);
 
-    // std::vector<IT> lp_old_chunk_lengths(hp_n_chunks,0);
-    // // apply_permutation<IT, IT>(&(lp_old_chunk_lengths)[0], lp_chunk_lengths, lp_perm, hp_n_chunks);
-    // for(int i = 0; i < hp_n_chunks; ++i){
-    //     lp_old_chunk_lengths[i] = lp_chunk_lengths[lp_perm[i]];
-    //     // std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
-    // }
-    // std::vector<IT> hp_old_chunk_lengths(hp_n_chunks,0);
-    // // apply_permutation<IT, IT>(&(hp_old_chunk_lengths)[0], hp_chunk_lengths, hp_perm, hp_n_chunks);
-    // for(int i = 0; i < hp_n_chunks; ++i){
-    //     hp_old_chunk_lengths[i] = hp_chunk_lengths[hp_perm[i]];
-    //     // std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
-    // }
-
-    // std::vector<IT> lp_old_chunk_ptrs(hp_n_chunks+1,0);
-    // for(int i = 0; i < hp_n_chunks; ++i){
-    //     lp_old_chunk_ptrs[i+1] = lp_chunk_ptrs[lp_perm[i+1]];
-    // }
-
-    // std::vector<IT> hp_old_chunk_ptrs(hp_n_chunks+1,0);
-    // for(int i = 0; i < hp_n_chunks; ++i){
-    //     hp_old_chunk_ptrs[i+1] = hp_chunk_ptrs[hp_perm[i+1]];
-    // }
-
-    // std::cout << "hp_old_to_new: " << std::endl;
-    // for(int i = 0; i < hp_n_chunks*hp_C; ++i){
-    //     std::cout << hp_perm[i] << std::endl;
-    // }
-    // std::cout << "hp_new_to_old: " << std::endl;
-    // for(int i = 0; i < hp_n_chunks*hp_C; ++i){
-    //     std::cout << hp_inv_perm[i] << std::endl;
-    // }
-
-    // std::cout << "lp_old_to_new: " << std::endl;
-    // for(int i = 0; i < hp_n_chunks*hp_C; ++i){
-    //     std::cout << lp_perm[i] << std::endl;
-    // }
-    // std::cout << "lp_new_to_old: " << std::endl;
-    // for(int i = 0; i < hp_n_chunks*hp_C; ++i){
-    //     std::cout << lp_inv_perm[i] << std::endl;
-    // }
-
     #pragma omp parallel
     {
 #ifdef USE_LIKWID
-        LIKWID_MARKER_START("spmv_benchmark");
+        LIKWID_MARKER_START("spmv_ap_scs_benchmark");
 #endif
         #pragma omp for schedule(static)
         for (ST c = 0; c < hp_n_chunks; ++c) {
@@ -675,7 +792,7 @@ spmv_omp_scs_mp_1(
             }
         }
 #ifdef USE_LIKWID
-        LIKWID_MARKER_STOP("spmv_benchmark");
+        LIKWID_MARKER_STOP("spmv_ap_scs_benchmark");
 #endif
     }
 

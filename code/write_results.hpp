@@ -69,6 +69,12 @@ void write_bench_to_file(
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
+        if(config->value_type == "mp"){
+            working_file << std::fixed << std::setprecision(2) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
+        }
+        else{
+            working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
+        }
     }
     if (config->value_type == "mp"){
         working_file << ", data_type: mp" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % hp elems: " << r->total_hp_percent << ", % lp elems: " << r->total_lp_percent;    
@@ -161,7 +167,13 @@ void write_result_to_file(
     working_file << num_omp_threads << " thread(s) per proc" << std::endl; 
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
-        working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
+        working_file << ", C: " << config->chunk_size << ", sigma: " << config->sigma;
+        if(config->value_type == "mp"){
+            working_file << std::fixed << std::setprecision(2) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
+        }
+        else{
+            working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
+        }
     }
     if(config->value_type == "dp"){
         working_file << ", data_type: " << "dp";

@@ -1244,9 +1244,9 @@ void parse_cli_inputs(
         if(my_rank == 0){fprintf(stderr, "ERROR: kernel format not recognized.\n");exit(1);}
     }
 
-    if((*value_type == "mp" && *kernel_format != "crs") || (*value_type == "mp" && *kernel_format != "crs")){
-        if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
-    }
+    // if((*value_type == "mp" && *kernel_format != "crs") || (*value_type == "mp" && *kernel_format != "crs")){
+    //     if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
+    // }
 }
 
 template <typename IT>
@@ -1256,7 +1256,9 @@ void generate_inv_perm(
     int perm_len
 ){
     for(int i = 0; i < perm_len; ++i){
+        // std::cout << "perm[" << i << "] = " << perm[i] << " <? " << perm_len << " = " << (perm[i] < perm_len) << std::endl;
         inv_perm[perm[i]] = i;
+        // std::cout << "inv_perm[" << i << "] = " << inv_perm[perm[i]] << " <? " << perm_len << " = " << (inv_perm[perm[i]] < perm_len) << std::endl;
     }
 }
 
@@ -1391,10 +1393,10 @@ void convert_to_scs(
                         : &n_els_per_row[scs->n_rows_padded];
 
         std::sort(begin, end,
-                  // sort longer rows first
-                  [](const auto & a, const auto & b) {
+                // sort longer rows first
+                [](const auto & a, const auto & b) {
                     return a.second > b.second;
-                  });
+                });
     }
 
     // determine chunk_ptrs and chunk_lengths
@@ -1489,26 +1491,18 @@ void convert_to_scs(
         col_idx_in_row[row]++;
     }
 
+    // Guess there is an issue here
     // Sort inverse permutation vector, based on scs->old_to_new_idx
     std::vector<int> inv_perm(scs->n_rows);
-    std::vector<int> inv_perm_temp(scs->n_rows);
+    std::vector<int> inv_perm_temp(scs->n_rows + scs->sigma); // TODO: Now I'm sus about this... should not need to be larger
     std::iota(std::begin(inv_perm_temp), std::end(inv_perm_temp), 0); // Fill with 0, 1, ..., scs->n_rows.
 
-    generate_inv_perm<IT>(scs->old_to_new_idx.data(), &inv_perm[0],  scs->n_rows);
+    // TODO: Come back to this!! Needed for code correctness
+    // generate_inv_perm<IT>(scs->old_to_new_idx.data(), &inv_perm[0], scs->n_rows);
 
     scs->new_to_old_idx = inv_perm;
 
-    scs->n_elements = n_scs_elements;
-
-    // Experimental 2024_02_01, I do not want the rows permuted yet... so permute back
-    // if sigma > C, I can see this being a problem
-    // for (ST i = 0; i < scs->n_rows_padded; ++i) {
-    //     IT old_row_idx = n_els_per_row[i].first;
-
-    //     if (old_row_idx < scs->n_rows) {
-    //         scs->old_to_new_idx[old_row_idx] = i;
-    //     }
-    // }    
+    scs->n_elements = n_scs_elements; 
 
     // return true;
 }

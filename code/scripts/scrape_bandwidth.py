@@ -3,7 +3,7 @@ import pprint
 bandwidths = {}
 data_vols = {}
 
-with open('data_movement_tests/ap_data_movement_Emilia.txt') as file:
+with open('../../data_movement_tests/georg_bump_tests/compact/yplusequals_CRS_SP_LC_data_vol_test.txt') as file:
     Lines=file.readlines()
     line_count = 0
     for line in Lines:
@@ -21,7 +21,7 @@ with open('data_movement_tests/ap_data_movement_Emilia.txt') as file:
                 data_vols[thread_count].append("Fill manually") 
         line_count += 1
 
-# print("bandwidths")
-# pprint.pprint(bandwidths)
+print("bandwidths")
+pprint.pprint(bandwidths)
 print("Data volume")
 pprint.pprint(data_vols)

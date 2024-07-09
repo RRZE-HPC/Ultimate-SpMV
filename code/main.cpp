@@ -86,8 +86,9 @@ void bench_spmv(
     apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
     if(config->value_type == "mp"){
+        // Currently, we fix one sigma. That is, we permute lp and hp exactly the same
         apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
-        apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(lp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+        apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
     }
 
 #ifndef __CUDACC
@@ -218,10 +219,11 @@ void bench_spmv(
         two_prec_kernel_args_encoded->lp_local_x = &(lp_local_x_permuted)[0];
         two_prec_kernel_args_encoded->lp_local_y = &(*lp_local_y)[0];
 
-        two_prec_kernel_args_encoded->lp_perm = &(lp_local_scs->old_to_new_idx)[0];
-        two_prec_kernel_args_encoded->hp_perm = &(hp_local_scs->old_to_new_idx)[0];
-        two_prec_kernel_args_encoded->lp_inv_perm = &(lp_local_scs->new_to_old_idx)[0];
-        two_prec_kernel_args_encoded->hp_inv_perm = &(hp_local_scs->new_to_old_idx)[0];
+        // Not a good direction
+        // two_prec_kernel_args_encoded->lp_perm = &(lp_local_scs->old_to_new_idx)[0];
+        // two_prec_kernel_args_encoded->hp_perm = &(hp_local_scs->old_to_new_idx)[0];
+        // two_prec_kernel_args_encoded->lp_inv_perm = &(lp_local_scs->new_to_old_idx)[0];
+        // two_prec_kernel_args_encoded->hp_inv_perm = &(hp_local_scs->new_to_old_idx)[0];
 
         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
     }
@@ -385,8 +387,7 @@ void bench_spmv(
         float runtime = 0.0;
 
         // Initialize number of repetitions for actual benchmark
-        // Only relevant for very very large matrices really..
-        int n_iter = 5000;
+        int n_iter = 2;
 
 #ifdef USE_LIKWID
             // Init parallel region
@@ -687,10 +688,13 @@ void bench_spmv(
     r->fill_in_percent = ((double)local_scs->n_elements / local_scs->nnz - 1.0) * 100.0;
     r->C               = local_scs->C;
     r->sigma           = local_scs->sigma;
+    r->beta = (double)local_scs->nnz / local_scs->n_elements;
 
     // Only relevant for mp
     r->hp_nnz = hp_local_scs->nnz;
     r->lp_nnz = lp_local_scs->nnz;
+    r->hp_beta = (double)hp_local_scs->nnz / hp_local_scs->n_elements;
+    r->lp_beta = (double)lp_local_scs->nnz / lp_local_scs->n_elements;
 
 #ifdef USE_MPI
     delete[] recv_requests;

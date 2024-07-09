@@ -610,6 +610,50 @@ spmv_omp_scs(const ST C,
     }
 }
 
+template <typename IT>
+static void
+spmv_omp_csr_mp(
+    const ST hp_n_rows, // TODO: (same for both)
+    const ST hp_C, // 1
+    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST lp_n_rows, // TODO: (same for both)
+    const ST lp_C, // 1
+    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_row_lengths, // unused for now
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    int my_rank
+    )
+{
+    #pragma omp parallel for schedule(static)
+    for (ST row = 0; row < hp_n_rows; ++row) {
+        double hp_sum{};
+        #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
+        for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row+1]; ++j) {
+            hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+        }
+        
+
+        double lp_sum{};
+        // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+        #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:lp_sum)
+        for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
+            // lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+            lp_sum += lp_values[j] * hp_x[lp_col_idxs[j]];
+
+        }
+
+        hp_y[row] = hp_sum + lp_sum; // implicit conversion to double
+    }
+}
+
 template <typename VT, typename IT>
 void apply_permutation(
     VT *permuted_vec,
@@ -655,5 +699,99 @@ void permute_scs_cols(
         scs->col_idxs[i] = col_perm_idxs[i];
     }
 
+}
+
+/**
+    @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into hp and lp sub-structs
+    @param *local_mtx : Process-local coo matrix, received on this process from an earlier routine
+    @param *hp_local_mtx : Process-local "higher precision" coo matrix
+    @param *lp_local_mtx : Process-local "lower precision" coo matrix
+*/
+template <typename VT, typename IT>
+void seperate_lp_from_hp( 
+    Config *config,
+    MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
+    MtxData<double, int> *hp_local_mtx, 
+    MtxData<float, int> *lp_local_mtx,
+    std::vector<VT> *largest_elems, // <- to adjust for jacobi scaling
+    int my_rank = NULL)
+{
+    long double threshold = config->bucket_size;
+
+    hp_local_mtx->is_sorted = local_mtx->is_sorted;
+    hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    hp_local_mtx->n_rows = local_mtx->n_rows;
+    hp_local_mtx->n_cols = local_mtx->n_cols;
+
+    lp_local_mtx->is_sorted = local_mtx->is_sorted;
+    lp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    lp_local_mtx->n_rows = local_mtx->n_rows;
+    lp_local_mtx->n_cols = local_mtx->n_cols;
+
+    int lp_elem_ctr = 0;
+    int hp_elem_ctr = 0;
+
+    std::vector<int> hp_local_I;
+    std::vector<int> hp_local_J;
+    std::vector<double> hp_local_vals;
+    hp_local_mtx->I = hp_local_I;
+    hp_local_mtx->J = hp_local_J;
+    hp_local_mtx->values = hp_local_vals;
+
+    std::vector<int> lp_local_I;
+    std::vector<int> lp_local_J;
+    std::vector<float> lp_local_vals;
+    lp_local_mtx->I = lp_local_I;
+    lp_local_mtx->J = lp_local_J;
+    lp_local_mtx->values = lp_local_vals;
+
+    // Scan local_mtx
+    // TODO: If this is a bottleneck:
+    // 1. Scan in parallel 
+    // 2. Allocate space
+    // 3. Assign in parallel
+    for(int i = 0; i < local_mtx->nnz; ++i){
+        // If element value below threshold, place in hp_local_mtx
+        if(config->jacobi_scale){
+            if(std::abs(local_mtx->values[i]) >= std::abs((long double) threshold / (*largest_elems)[local_mtx->I[i]])){   
+                hp_local_mtx->values.push_back(local_mtx->values[i]);
+                hp_local_mtx->I.push_back(local_mtx->I[i]);
+                hp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++hp_elem_ctr;
+            }
+            else{
+                // else, place in lp_local_mtx 
+                lp_local_mtx->values.push_back(local_mtx->values[i]);
+                lp_local_mtx->I.push_back(local_mtx->I[i]);
+                lp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++lp_elem_ctr;
+            }
+        }
+        else{
+            if(std::abs(local_mtx->values[i]) >= (long double) threshold){   
+                hp_local_mtx->values.push_back(local_mtx->values[i]);
+                hp_local_mtx->I.push_back(local_mtx->I[i]);
+                hp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++hp_elem_ctr;
+            }
+            else{
+                // else, place in lp_local_mtx 
+                lp_local_mtx->values.push_back(local_mtx->values[i]);
+                lp_local_mtx->I.push_back(local_mtx->I[i]);
+                lp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++lp_elem_ctr;
+            } 
+        }
+
+    }
+
+    hp_local_mtx->nnz = hp_elem_ctr;
+    lp_local_mtx->nnz = lp_elem_ctr;
+
+    if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
+        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when seperating \
+        into lp and hp structs on rank: %i.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr), my_rank);
+        exit(1);
+    }
 }
 #endif /*INTERFACE_H*/

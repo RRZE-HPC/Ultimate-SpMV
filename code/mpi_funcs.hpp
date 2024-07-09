@@ -993,26 +993,10 @@ void init_local_structs(
 
         if(config->jacobi_scale){
             extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
-            // printf("Before scale:\n");
-            // for (int nz_idx = 0; nz_idx < local_mtx->nnz; ++nz_idx){
-            //     std::cout << local_mtx->values[nz_idx] << std::endl;
-            // }
             scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
         }
-        // printf("After scale:\n");
-        // for (int nz_idx = 0; nz_idx < local_mtx->nnz; ++nz_idx){
-        //     std::cout << local_mtx->values[nz_idx] << std::endl;
-        // }
-        // exit(0);
-        seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_elems, my_rank);
 
-        // Only after other precisions are scaled, do we scale the complete local_mtx
-        // Mainly just for statistics, but not necessary
-        // std::vector<VT> diagonal(local_mtx->n_cols);
-        // extract_diagonal<VT, IT>(local_mtx, &diagonal);
-        // scale_w_jacobi<VT, IT>(local_mtx, &diagonal);
-        // extract_matrix_min_mean_max(local_mtx, config);
-        //////////////////////////////////////////////
+        seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_elems, my_rank);
 
         convert_to_scs<double, IT>(config->bucket_size, hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
         convert_to_scs<float, IT>(config->bucket_size, lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
@@ -1092,7 +1076,7 @@ void init_local_structs(
     // For symmetric permutation of matrix data
     permute_scs_cols(local_scs, &(local_scs->old_to_new_idx)[0]);
 
-    // TODO: How to permute columns here?
+    // TODO: How to permute columns with here?
     // if (config->value_type == "mp"){
     //     // Permute column indices the same as the original scs struct
     //     // But rows are permuted differently (i.e. within the convert_to_scs routine)
