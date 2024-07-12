@@ -598,15 +598,13 @@ void permute_scs_cols(
 */
 template <typename VT, typename IT>
 void seperate_lp_from_hp( 
-    Config *config,
     MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
     MtxData<double, int> *hp_local_mtx, 
     MtxData<float, int> *lp_local_mtx,
     std::vector<VT> *largest_elems, // <- to adjust for jacobi scaling
-    int my_rank = NULL)
+    long double threshold,
+    bool is_row_scaled)
 {
-    long double threshold = config->bucket_size;
-
     hp_local_mtx->is_sorted = local_mtx->is_sorted;
     hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
     hp_local_mtx->n_rows = local_mtx->n_rows;
@@ -641,7 +639,7 @@ void seperate_lp_from_hp(
     // 3. Assign in parallel
     for(int i = 0; i < local_mtx->nnz; ++i){
         // If element value below threshold, place in hp_local_mtx
-        if(config->jacobi_scale){
+        if(is_row_scaled){
             if(std::abs(local_mtx->values[i]) >= std::abs((long double) threshold / (*largest_elems)[local_mtx->I[i]])){   
                 hp_local_mtx->values.push_back(local_mtx->values[i]);
                 hp_local_mtx->I.push_back(local_mtx->I[i]);
@@ -679,7 +677,7 @@ void seperate_lp_from_hp(
 
     if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
         printf("seperate_lp_from_hp ERROR: %i Elements have been lost when seperating \
-        into lp and hp structs on rank: %i.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr), my_rank);
+        into lp and hp structs.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr));
         exit(1);
     }
 }
