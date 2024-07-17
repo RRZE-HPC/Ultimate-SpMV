@@ -879,7 +879,7 @@ void seperate_lp_from_hp(
     // 3. Assign in parallel
     for(int i = 0; i < local_mtx->nnz; ++i){
         // If element value below threshold, place in hp_local_mtx
-        if(config->jacobi_scale){
+        if(config->equilibrate){
             if(std::abs(local_mtx->values[i]) >= std::abs((long double) threshold / (*largest_elems)[local_mtx->I[i]])){   
                 hp_local_mtx->values.push_back(local_mtx->values[i]);
                 hp_local_mtx->I.push_back(local_mtx->I[i]);
@@ -970,10 +970,11 @@ void init_local_structs(
 #endif
 
     // Scale the one-precision matrix
-    if(config->value_type != "mp" && config->jacobi_scale){
-        std::vector<VT> largest_elems(local_mtx->n_cols);
-        extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
-        scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
+    if(config->value_type != "mp" && config->equilibrate){
+        equilibrate_matrix<VT, IT>(local_mtx);
+        // std::vector<VT> largest_elems(local_mtx->n_cols);
+        // extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
+        // scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
     }
 
     // extract matrix (and give to x-vector if option chosen at cli)
@@ -991,9 +992,10 @@ void init_local_structs(
         // Initialize to 1s just for
         std::vector<VT> largest_elems(local_mtx->n_cols, 0.0);
 
-        if(config->jacobi_scale){
-            extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
-            scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
+        if(config->equilibrate){
+            equilibrate_matrix<VT, IT>(local_mtx);
+            // extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
+            // scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
         }
 
         seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_elems, my_rank);

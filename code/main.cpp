@@ -535,7 +535,6 @@ void bench_spmv(
 #else
         r->duration_total_s = runtime;
 #endif
-        std::cout << "r->n_calls = " << r->n_calls << std::endl; 
         r->duration_kernel_s = r->duration_total_s/ r->n_calls;
         r->perf_gflops = (double)local_context->total_nnz * 2.0
                             / r->duration_kernel_s
@@ -1123,10 +1122,11 @@ int my_rank = 0, comm_size = 1;
     if(my_rank == 0){printf("Validating results.\n");}
 #endif
                     std::vector<double> mkl_dp_result;
-                    if(config.jacobi_scale){
-                        std::vector<double> largest_elems(total_mtx.n_cols);
-                        extract_largest_elems<double, int>(&total_mtx, &largest_elems);
-                        scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
+                    if(config.equilibrate){
+                        equilibrate_matrix<double, int>(&total_mtx);
+                        // std::vector<double> largest_elems(total_mtx.n_cols);
+                        // extract_largest_elems<double, int>(&total_mtx, &largest_elems);
+                        // scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
                     }
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
 #ifdef DEBUG_MODE
@@ -1180,10 +1180,11 @@ int my_rank = 0, comm_size = 1;
     if(my_rank == 0){printf("Validating results.\n");}
 #endif
                     std::vector<float> mkl_sp_result;
-                    if(config.jacobi_scale){
-                        std::vector<float> largest_elems(total_mtx.n_cols);
-                        extract_largest_elems<float, int>(&total_mtx, &largest_elems);
-                        scale_w_jacobi<float, int>(&total_mtx, &largest_elems);
+                    if(config.equilibrate){
+                        equilibrate_matrix<float, int>(&total_mtx);
+                        // std::vector<float> largest_elems(total_mtx.n_cols);
+                        // extract_largest_elems<float, int>(&total_mtx, &largest_elems);
+                        // scale_w_jacobi<float, int>(&total_mtx, &largest_elems);
                     }
                     validate_sp_result(&total_mtx, &config, &r, &mkl_sp_result);
 #ifdef DEBUG_MODE
@@ -1239,10 +1240,11 @@ int my_rank = 0, comm_size = 1;
     if(my_rank == 0){printf("Validating results.\n");}
 #endif
                     std::vector<double> mkl_dp_result;
-                    if(config.jacobi_scale){
-                        std::vector<double> largest_elems(total_mtx.n_cols);
-                        extract_largest_elems<double, int>(&total_mtx, &largest_elems);
-                        scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
+                    if(config.equilibrate){
+                        equilibrate_matrix<double, int>(&total_mtx);
+                        // std::vector<double> largest_elems(total_mtx.n_cols);
+                        // extract_largest_elems<double, int>(&total_mtx, &largest_elems);
+                        // scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
                     }
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
 #ifdef DEBUG_MODE

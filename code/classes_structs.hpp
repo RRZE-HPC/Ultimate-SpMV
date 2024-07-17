@@ -30,7 +30,7 @@ struct Config
     long sigma{1};         // sell-c-sigma
 
     // Initialize rhs vector with random numbers.
-    char random_init_x = '1';
+    char random_init_x = '0';
 
     // Scale elements in row by diagonal element, useful for matrices with high condition number
     int jacobi_scale = 0;
@@ -70,6 +70,9 @@ struct Config
 
     // Pack contiguous elements for MPI_Isend in parallel
     int par_pack = 0;
+
+    // Scale rows and column of matrix
+    int equilibrate = 0;
 
     // Configures if the code will be executed in bench mode (b) or solve mode (s)
     char mode = 'b'; 
