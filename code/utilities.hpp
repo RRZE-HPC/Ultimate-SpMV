@@ -967,7 +967,7 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], , -bucket_size [%Lf], -equilibrate [%i]\n",
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%Lf], -equilibrate [%i]\n",
                             argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size, config->equilibrate);
                     
 }

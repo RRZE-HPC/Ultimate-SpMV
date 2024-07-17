@@ -840,7 +840,8 @@ void seperate_lp_from_hp(
     MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
     MtxData<double, int> *hp_local_mtx, 
     MtxData<float, int> *lp_local_mtx,
-    std::vector<VT> *largest_elems, // <- to adjust for jacobi scaling
+    std::vector<VT> *largest_row_elems, // <- to adjust for jacobi scaling
+    std::vector<VT> *largest_col_elems,
     int my_rank = NULL)
 {
     long double threshold = config->bucket_size;
@@ -880,7 +881,7 @@ void seperate_lp_from_hp(
     for(int i = 0; i < local_mtx->nnz; ++i){
         // If element value below threshold, place in hp_local_mtx
         if(config->equilibrate){
-            if(std::abs(local_mtx->values[i]) >= std::abs((long double) threshold / (*largest_elems)[local_mtx->I[i]])){   
+            if(std::abs(local_mtx->values[i]) >= (long double) threshold / ( (*largest_col_elems)[local_mtx->J[i]] * (*largest_row_elems)[local_mtx->I[i]])) {   
                 hp_local_mtx->values.push_back(local_mtx->values[i]);
                 hp_local_mtx->I.push_back(local_mtx->I[i]);
                 hp_local_mtx->J.push_back(local_mtx->J[i]);
@@ -988,17 +989,18 @@ void init_local_structs(
     MtxData<float, int> *lp_local_mtx = new MtxData<float, int>;
 
     if (config->value_type == "mp"){
-
-        // Initialize to 1s just for
-        std::vector<VT> largest_elems(local_mtx->n_cols, 0.0);
+        std::vector<VT> largest_row_elems(local_mtx->n_cols, 0.0);
+        std::vector<VT> largest_col_elems(local_mtx->n_cols, 0.0);
 
         if(config->equilibrate){
-            equilibrate_matrix<VT, IT>(local_mtx);
-            // extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
-            // scale_w_jacobi<VT, IT>(local_mtx, &largest_elems);
+            extract_largest_row_elems<VT, IT>(local_mtx, &largest_row_elems);
+            scale_matrix_rows<VT, IT>(local_mtx, &largest_row_elems);
+
+            extract_largest_col_elems<VT, IT>(local_mtx, &largest_col_elems);
+            scale_matrix_cols<VT, IT>(local_mtx, &largest_col_elems);
         }
 
-        seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_elems, my_rank);
+        seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_row_elems, &largest_col_elems, my_rank);
 
         convert_to_scs<double, IT>(config->bucket_size, hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
         convert_to_scs<float, IT>(config->bucket_size, lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
