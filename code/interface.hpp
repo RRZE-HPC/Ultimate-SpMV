@@ -6,6 +6,10 @@
 #include <limits>
 #include <algorithm>
 
+#ifdef USE_LIKWID
+#include <likwid-marker.h>
+#endif
+
 #define RESTRICT				__restrict__
 
 
@@ -590,20 +594,16 @@ void permute_scs_cols(
 
 }
 
-/**
-    @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into hp and lp sub-structs
-    @param *local_mtx : Process-local coo matrix, received on this process from an earlier routine
-    @param *hp_local_mtx : Process-local "higher precision" coo matrix
-    @param *lp_local_mtx : Process-local "lower precision" coo matrix
-*/
 template <typename VT, typename IT>
 void seperate_lp_from_hp( 
     MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
     MtxData<double, int> *hp_local_mtx, 
     MtxData<float, int> *lp_local_mtx,
-    std::vector<VT> *largest_elems, // <- to adjust for jacobi scaling
+    // MtxData<double, int> *lp_local_mtx,
+    std::vector<VT> *largest_row_elems, // <- to adjust for jacobi scaling
+    std::vector<VT> *largest_col_elems,
     long double threshold,
-    bool is_row_scaled)
+    bool is_equilibrated)
 {
     hp_local_mtx->is_sorted = local_mtx->is_sorted;
     hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
@@ -628,6 +628,7 @@ void seperate_lp_from_hp(
     std::vector<int> lp_local_I;
     std::vector<int> lp_local_J;
     std::vector<float> lp_local_vals;
+    // std::vector<double> lp_local_vals;
     lp_local_mtx->I = lp_local_I;
     lp_local_mtx->J = lp_local_J;
     lp_local_mtx->values = lp_local_vals;
@@ -639,8 +640,8 @@ void seperate_lp_from_hp(
     // 3. Assign in parallel
     for(int i = 0; i < local_mtx->nnz; ++i){
         // If element value below threshold, place in hp_local_mtx
-        if(is_row_scaled){
-            if(std::abs(local_mtx->values[i]) >= std::abs((long double) threshold / (*largest_elems)[local_mtx->I[i]])){   
+        if(is_equilibrated){
+            if(std::abs(local_mtx->values[i]) >= (long double) threshold / ( (*largest_col_elems)[local_mtx->J[i]] * (*largest_row_elems)[local_mtx->I[i]])) {   
                 hp_local_mtx->values.push_back(local_mtx->values[i]);
                 hp_local_mtx->I.push_back(local_mtx->I[i]);
                 hp_local_mtx->J.push_back(local_mtx->J[i]);
@@ -674,12 +675,6 @@ void seperate_lp_from_hp(
 
     hp_local_mtx->nnz = hp_elem_ctr;
     lp_local_mtx->nnz = lp_elem_ctr;
-
-    if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
-        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when seperating \
-        into lp and hp structs.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr));
-        exit(1);
-    }
 }
 
 ////////////////////////////// CPU Kernels ////////////////////////////// 
@@ -701,15 +696,24 @@ uspmv_omp_csr_cpu(const ST C, // 1
              VT * RESTRICT x,
              VT * RESTRICT y)
 {
-    #pragma omp parallel for schedule(static)
-    for (ST row = 0; row < num_rows; ++row) {
-        VT sum{};
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("uspmv_crs_benchmark");
+#endif
+        #pragma omp for schedule(static)
+        for (ST row = 0; row < num_rows; ++row) {
+            VT sum{};
 
-        // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
-        for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
-            sum += values[j] * x[col_idxs[j]];
+            // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
+            for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
+                sum += values[j] * x[col_idxs[j]];
+            }
+            y[row] = sum;
         }
-        y[row] = sum;
+#ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("uspmv_crs_benchmark");
+#endif
     }
 }
 
@@ -840,30 +844,41 @@ uspmv_omp_csr_ap_cpu(
     const IT * RESTRICT lp_row_lengths, // unused for now
     const IT * RESTRICT lp_col_idxs,
     const float * RESTRICT lp_values
+    // const double * RESTRICT lp_values
     // float * RESTRICT lp_x,
     // float * RESTRICT lp_y, // unused
     // int my_rank
     )
 {
-    #pragma omp parallel for schedule(static)
-    for (ST row = 0; row < hp_n_rows; ++row) {
-        double hp_sum{};
-        // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
-        for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row+1]; ++j) {
-            hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+    // #pragma omp parallel for schedule(static)
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("uspmv_ap_crs_benchmark");
+#endif
+        #pragma omp for schedule(static)
+        for (ST row = 0; row < hp_n_rows; ++row) {
+            double hp_sum{};
+            #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
+            for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row+1]; ++j) {
+                hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+            }
+            
+
+            double lp_sum{};
+            #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
+            for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
+                // lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
+                lp_sum += lp_values[j] * hp_x[lp_col_idxs[j]];
+
+            }
+
+            hp_y[row] = hp_sum + lp_sum; // implicit conversion to double
         }
-        
 
-        double lp_sum{};
-        // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
-        // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:lp_sum)
-        for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
-            // lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
-            lp_sum += lp_values[j] * hp_x[lp_col_idxs[j]];
-
-        }
-
-        hp_y[row] = hp_sum + lp_sum; // implicit conversion to double
+#ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("uspmv_ap_crs_benchmark");
+#endif
     }
 }
 
