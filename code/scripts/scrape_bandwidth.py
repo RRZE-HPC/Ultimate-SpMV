@@ -3,7 +3,7 @@ import pprint
 bandwidths = {}
 data_vols = {}
 
-with open('../../data_movement_tests/georg_bump_tests/compact/yplusequals_CRS_SP_LC_data_vol_test.txt') as file:
+with open('/home/hpc/k107ce/k107ce17/linking_it_solve/iterative_solvers/ML_Geer_data_vol_tests_dffix/AP_ML_Geer_epsilon_53.txt') as file:
     Lines=file.readlines()
     line_count = 0
     for line in Lines:

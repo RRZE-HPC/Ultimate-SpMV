@@ -353,6 +353,21 @@ bool will_add_overflow(T a, T b)
     return std::numeric_limits<T>::max() - a < b;
 }
 
+template <typename VT, typename IT>
+void apply_permutation(
+    VT *permuted_vec,
+    VT *vec_to_permute,
+    IT *perm,
+    int num_elems_to_permute
+){
+    #pragma omp parallel for
+    for(int i = 0; i < num_elems_to_permute; ++i){
+        permuted_vec[i] = vec_to_permute[perm[i]];
+        // std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
+    }
+    // printf("\n");
+}
+
 /**
     @brief Convert mtx struct to sell-c-sigma data structures.
     @param *local_mtx : process local mtx data structure, that was populated by  
@@ -360,12 +375,13 @@ bool will_add_overflow(T a, T b)
     @param sigma : sorting scope
     @param *scs : The ScsData struct to populate with data
 */
-template <typename VT, typename IT>
+template <typename MT, typename VT, typename IT>
 void convert_to_scs(
-    const MtxData<VT, IT> *local_mtx,
+    const MtxData<MT, IT> *local_mtx,
     ST C,
     ST sigma,
-    ScsData<VT, IT> *scs
+    ScsData<VT, IT> *scs,
+    int *fixed_permutation = NULL
     // int *work_sharing_arr = nullptr,
     // int my_rank = 0
     )
@@ -427,19 +443,39 @@ void convert_to_scs(
         // return false;
     }
 
-    for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
-        auto begin = &n_els_per_row[i];
-        auto end   = (i + scs->sigma) < scs->n_rows_padded
-                        ? &n_els_per_row[i + scs->sigma]
-                        : &n_els_per_row[scs->n_rows_padded];
-
-        std::sort(begin, end,
-                  // sort longer rows first
-                  [](const auto & a, const auto & b) {
-                    return a.second > b.second;
-                  });
+    if(fixed_permutation != NULL){
+        std::vector<index_and_els_per_row> n_els_per_row_tmp(scs->n_rows_padded);
+        // NOTE: Permutation vectors are only n_rows long. The padding rows aren't touched
+        for(int i = 0; i < scs->n_rows_padded; ++i){
+            if(i < scs->n_rows){
+                n_els_per_row_tmp[i].first = n_els_per_row[i].first;
+                // n_els_per_row_tmp[i].second = n_els_per_row[fixed_permutation[i]].second;
+                n_els_per_row_tmp[fixed_permutation[i]].second = n_els_per_row[i].second;
+            }
+            else{
+                n_els_per_row_tmp[i].first = n_els_per_row[i].first;
+                n_els_per_row_tmp[i].second = n_els_per_row[i].second;
+            }
+        }
+        // for(int i = 0; i < scs->n_rows; ++i){
+        //     n_els_per_row[i] = n_els_per_row_tmp[i];
+        // }
+        n_els_per_row = n_els_per_row_tmp;
     }
+    else{
+        for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
+            auto begin = &n_els_per_row[i];
+            auto end   = (i + scs->sigma) < scs->n_rows_padded
+                            ? &n_els_per_row[i + scs->sigma]
+                            : &n_els_per_row[scs->n_rows_padded];
 
+            std::sort(begin, end,
+                    // sort longer rows first
+                    [](const auto & a, const auto & b) {
+                        return a.second > b.second;
+                    });
+        }
+    }
     // determine chunk_ptrs and chunk_lengths
 
     // TODO: check chunk_ptrs can overflow
@@ -507,8 +543,14 @@ void convert_to_scs(
     // fill values and col_idxs
     for (ST i = 0; i < scs->nnz; ++i) {
         IT row_old = local_mtx->I[i];
+        IT row;
 
-        IT row = scs->old_to_new_idx[row_old];
+        if(fixed_permutation != NULL){
+            row = fixed_permutation[row_old];
+        }
+        else{
+            row = scs->old_to_new_idx[row_old];
+        }
 
         ST chunk_index = row / scs->C;
 
@@ -547,21 +589,6 @@ void convert_to_scs(
     // return true;
 }
 
-template <typename VT, typename IT>
-void apply_permutation(
-    VT *permuted_vec,
-    VT *vec_to_permute,
-    IT *perm,
-    int num_elems_to_permute
-){
-    #pragma omp parallel for
-    for(int i = 0; i < num_elems_to_permute; ++i){
-        permuted_vec[i] = vec_to_permute[perm[i]];
-        // std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
-    }
-    // printf("\n");
-}
-
 // TODO: Validate
 template<typename VT, typename IT>
 void permute_scs_cols(
@@ -596,12 +623,12 @@ void permute_scs_cols(
 
 template <typename VT, typename IT>
 void seperate_lp_from_hp( 
-    MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
+    MtxData<double, IT> *local_mtx, // <- should be scaled when entering this routine 
     MtxData<double, int> *hp_local_mtx, 
     MtxData<float, int> *lp_local_mtx,
     // MtxData<double, int> *lp_local_mtx,
-    std::vector<VT> *largest_row_elems, // <- to adjust for jacobi scaling
-    std::vector<VT> *largest_col_elems,
+    std::vector<double> *largest_row_elems, // <- to adjust for jacobi scaling
+    std::vector<double> *largest_col_elems,
     long double threshold,
     bool is_equilibrated)
 {
@@ -693,8 +720,8 @@ uspmv_omp_csr_cpu(const ST C, // 1
              const IT * RESTRICT row_lengths, // unused
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
-             VT * RESTRICT x,
-             VT * RESTRICT y)
+             double * RESTRICT x,
+             double * RESTRICT y)
 {
     #pragma omp parallel
     {
@@ -704,8 +731,7 @@ uspmv_omp_csr_cpu(const ST C, // 1
         #pragma omp for schedule(static)
         for (ST row = 0; row < num_rows; ++row) {
             VT sum{};
-
-            // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
+            #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
             for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
                 sum += values[j] * x[col_idxs[j]];
             }
@@ -720,29 +746,28 @@ uspmv_omp_csr_cpu(const ST C, // 1
 /**
  * SpMV Kernel for Sell-C-Sigma. Supports all Cs > 0.
  */
-// template <typename VT, typename IT>
+template <typename VT, typename IT>
 static void
-uspmv_omp_scs_cpu(const int C,
-             const int n_chunks,
-             const int * RESTRICT chunk_ptrs,
-             const int * RESTRICT chunk_lengths,
-             const int * RESTRICT col_idxs,
-             const double * RESTRICT values,
-             double * RESTRICT x,
-             double * RESTRICT y)
+uspmv_omp_scs_cpu(const IT C,
+             const IT n_chunks,
+             const IT * RESTRICT chunk_ptrs,
+             const IT * RESTRICT chunk_lengths,
+             const IT * RESTRICT col_idxs,
+             const VT * RESTRICT values,
+             VT * RESTRICT x,
+             VT * RESTRICT y)
 {
-
     #pragma omp parallel for schedule(static)
     for (int c = 0; c < n_chunks; ++c) {
-        double tmp[C];
+        VT tmp[C];
         for (ST i = 0; i < C; ++i) {
-            tmp[i] = double{};
+            tmp[i] = VT{};
         }
 
-        int cs = chunk_ptrs[c];
+        IT cs = chunk_ptrs[c];
 
-        for (int j = 0; j < chunk_lengths[c]; ++j) {
-            for (int i = 0; i < C; ++i) {
+        for (IT j = 0; j < chunk_lengths[c]; ++j) {
+            for (IT i = 0; i < C; ++i) {
                 tmp[i] += values[cs + j * C + i] * x[col_idxs[cs + j * C + i]];
             }
         }
@@ -827,7 +852,7 @@ uspmv_omp_scs_c_cpu(
     }
 }
 
-template <typename IT>
+template <typename VT, typename IT>
 static void
 uspmv_omp_csr_ap_cpu(
     const ST hp_n_rows, // TODO: (same for both)
@@ -836,8 +861,8 @@ uspmv_omp_csr_ap_cpu(
     const IT * RESTRICT hp_row_lengths, // unused for now
     const IT * RESTRICT hp_col_idxs,
     const double * RESTRICT hp_values,
-    double * RESTRICT hp_x,
-    double * RESTRICT hp_y, 
+    VT * RESTRICT hp_x,
+    VT * RESTRICT hp_y, 
     const ST lp_n_rows, // TODO: (same for both)
     const ST lp_C, // 1
     const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
@@ -850,7 +875,6 @@ uspmv_omp_csr_ap_cpu(
     // int my_rank
     )
 {
-    // #pragma omp parallel for schedule(static)
     #pragma omp parallel
     {
 #ifdef USE_LIKWID
@@ -863,7 +887,6 @@ uspmv_omp_csr_ap_cpu(
             for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row+1]; ++j) {
                 hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
             }
-            
 
             double lp_sum{};
             #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
@@ -885,7 +908,7 @@ uspmv_omp_csr_ap_cpu(
 /**
  * Kernel for Sell-C-Sigma. Supports all Cs > 0.
  */
-template <typename IT>
+template <typename VT, typename IT>
 static void
 uspmv_omp_scs_ap_cpu(
     const ST hp_n_chunks, // n_chunks (same for both)
@@ -894,8 +917,8 @@ uspmv_omp_scs_ap_cpu(
     const IT * RESTRICT hp_chunk_lengths, // unused
     const IT * RESTRICT hp_col_idxs,
     const double * RESTRICT hp_values,
-    double * RESTRICT hp_x,
-    double * RESTRICT hp_y, 
+    VT * RESTRICT hp_x,
+    VT * RESTRICT hp_y, 
     const ST lp_n_chunks, // n_chunks (same for both)
     const ST lp_C, // 1
     const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
@@ -907,34 +930,43 @@ uspmv_omp_scs_ap_cpu(
     // int my_rank
 )
 {
-    #pragma omp parallel for schedule(static)
-    for (ST c = 0; c < hp_n_chunks; ++c) {
-        double hp_tmp[hp_C];
-        double lp_tmp[hp_C];
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("uspmv_ap_scs_benchmark");
+#endif
+        #pragma omp for
+        for (ST c = 0; c < hp_n_chunks; ++c) {
+            double hp_tmp[hp_C];
+            double lp_tmp[hp_C];
 
-        for (ST i = 0; i < hp_C; ++i) {
-            hp_tmp[i] = 0.0;
-        }
-        for (ST i = 0; i < hp_C; ++i) {
-            lp_tmp[i] = 0.0f;
-        }
-
-        IT hp_cs = hp_chunk_ptrs[c];
-        IT lp_cs = lp_chunk_ptrs[c];
-
-        for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
-            for (IT i = 0; i < hp_C; ++i) {
-                hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
+            for (ST i = 0; i < hp_C; ++i) {
+                hp_tmp[i] = 0.0;
             }
-        }
-        for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
-            for (IT i = 0; i < hp_C; ++i) {
-                lp_tmp[i] += lp_values[lp_cs + j * hp_C + i] * hp_x[lp_col_idxs[lp_cs + j * hp_C + i]];
+            for (ST i = 0; i < hp_C; ++i) {
+                lp_tmp[i] = 0.0f;
             }
-        }
 
-        for (IT i = 0; i < hp_C; ++i) {
-            hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
+            IT hp_cs = hp_chunk_ptrs[c];
+            IT lp_cs = lp_chunk_ptrs[c];
+
+            for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < hp_C; ++i) {
+                    hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
+                }
+            }
+            for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < hp_C; ++i) {
+                    lp_tmp[i] += lp_values[lp_cs + j * hp_C + i] * hp_x[lp_col_idxs[lp_cs + j * hp_C + i]];
+                }
+            }
+
+            for (IT i = 0; i < hp_C; ++i) {
+                hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
+            }
+#ifdef USE_LIKWID
+            LIKWID_MARKER_STOP("uspmv_ap_scs_benchmark");
+#endif
         }
     }
 }

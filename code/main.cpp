@@ -16,6 +16,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+// #include <float.h>
 
 
 #define WARM_UP_REPS 100
@@ -1045,6 +1046,8 @@ void compute_result(
 }
 
 int main(int argc, char *argv[]){
+
+    // _Float16 a = 1.0;
 
 // Initialize just out of convenience
 int my_rank = 0, comm_size = 1;

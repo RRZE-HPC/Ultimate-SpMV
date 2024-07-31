@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <algorithm>
 #include <map>
+#include <typeinfo>
 
 #define MM_MAX_LINE_LENGTH 1025
 #define MatrixMarketBanner "%%MatrixMarket"

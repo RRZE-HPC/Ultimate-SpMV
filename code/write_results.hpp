@@ -233,10 +233,12 @@ void write_result_to_file(
         absolute_diff = std::abs( (*x)[i] - r->total_uspmv_result[i]);
 
         // Protect against printing 'inf's
+#ifdef DEBUG_MODE
         if (std::abs((*x)[i]) < 1e-25){
             printf("WARNING: At index %i, mkl_result = %f\n", i, (*x)[i]);
             relative_diff = r->total_uspmv_result[i];
         }
+#endif
         
         if(config -> verbose_validation == 1)
         {

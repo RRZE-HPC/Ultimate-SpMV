@@ -1,18 +1,7 @@
-#[gcc, icc, icx, nvcc]
-COMPILER = icx
-VECTOR_LENGTH = 4
-DEBUG_MODE = 0
-DEBUG_MODE_FINE = 0
-OUTPUT_SPARSITY = 0
-CPP_VERSION = c++14
-#[none, a40, a100]
-GPGPU_ARCH = none
+include config.mk
 
-# 0/1 library usage
-USE_MPI = 0
-USE_METIS = 0
-USE_LIKWID = 0
-
+# apply user-defined variables
+CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH) 
 # Validate Makefile options
 ifneq ($(COMPILER),nvcc)
 GPGPU_ARCH = none
@@ -110,16 +99,6 @@ ifeq ($(OUTPUT_SPARSITY),1)
 endif
 
 ifeq ($(USE_METIS),1)
-  # !!! include your own file paths !!!
-  # For example: (I've had better luck with static libraries)
-  # METIS_INC = -I/home/hpc/k107ce/k107ce17/install/include/
-  # METIS_LIB = /home/hpc/k107ce/k107ce17/install/lib/libmetis.a 
-  # GK_INC = -I/home/hpc/k107ce/k107ce17/install/include/
-  # GK_LIB = /home/hpc/k107ce/k107ce17/install/lib/libGKlib.a
-  METIS_INC = 
-  METIS_LIB = 
-  GK_INC = 
-  GK_LIB = 
   ifeq ($(METIS_INC),)
     $(error USE_METIS selected, but no include path given in METIS_INC)
   endif
@@ -133,8 +112,6 @@ endif
 
 ifeq ($(USE_LIKWID),1)
   # !!! include your own file paths !!! (I'm just loading module, which comes with file paths)
-  # LIKWID_INC =
-  # LIKWID_LIB = 
   ifeq ($(LIKWID_INC),)
     $(error USE_LIKWID selected, but no include path given in LIKWID_INC)
   endif
