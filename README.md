@@ -3,8 +3,10 @@
 
 Can be run as a standalone benchmarking harness, or as a library. See API_doc.md for information about the interface.
 
-Example:\
+Examples:\
 	```mpirun -n 4 ./uspmv <matrix_name>.mtx <kernel_format> <options>```
+	```./uspmv <matrix_name>.mtx scs -c 16 -s 512 -mode b```
+	```./uspmv <matrix_name>.mtx crs -mode s -sp -verbose 1```
 
 - kernel_format can be any one of: crs, scs, ell
 

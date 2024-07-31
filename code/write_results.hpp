@@ -324,7 +324,7 @@ void validate_dp_result(
 
     ScsData<double, int> scs;
 
-    convert_to_scs<double, int>(config->bucket_size, total_mtx, 1, 1, &scs);
+    convert_to_scs<double, double, int>(total_mtx, 1, 1, &scs);
 
     V<int, int>row_ptrs(total_mtx->n_rows + 1);
 
@@ -376,7 +376,7 @@ void validate_sp_result(
 
     ScsData<float, int> scs;
 
-    convert_to_scs<float, int>(config->bucket_size, total_mtx, 1, 1, &scs);
+    convert_to_scs<float, float, int>(total_mtx, 1, 1, &scs);
 
     V<int, int>row_ptrs(total_mtx->n_rows + 1);
 

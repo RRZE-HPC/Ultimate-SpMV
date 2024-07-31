@@ -982,7 +982,7 @@ void init_local_structs(
     extract_matrix_min_mean_max(local_mtx, config);
 
     // convert local_mtx to local_scs and permute rows (if sigma > 1)
-    convert_to_scs<VT, IT>(config->bucket_size, local_mtx, config->chunk_size, config->sigma, local_scs, work_sharing_arr, my_rank);
+    convert_to_scs<VT, VT, IT>(local_mtx, config->chunk_size, config->sigma, local_scs, NULL, work_sharing_arr, my_rank);
 
     // Only used for mixed precision
     MtxData<double, int> *hp_local_mtx = new MtxData<double, int>;
@@ -1002,8 +1002,9 @@ void init_local_structs(
 
         seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_row_elems, &largest_col_elems, my_rank);
 
-        convert_to_scs<double, IT>(config->bucket_size, hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, work_sharing_arr, my_rank); 
-        convert_to_scs<float, IT>(config->bucket_size, lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, work_sharing_arr, my_rank);
+        // We permute the lower precision struct in the exact same way as the higher precision one
+        convert_to_scs<double, double, IT>(hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, NULL, work_sharing_arr, my_rank); 
+        convert_to_scs<float, float, IT>(lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, &(hp_local_scs->old_to_new_idx)[0], work_sharing_arr, my_rank);
 
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");

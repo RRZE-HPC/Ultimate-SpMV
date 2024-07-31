@@ -1318,22 +1318,16 @@ template <typename T> inline void sortPerm(T *arr, int *perm, int range_lo, int 
     }
 }
 
-/**
-    @brief Convert mtx struct to sell-c-sigma data structures.
-    @param *local_mtx : process local mtx data structure, that was populated by  
-    @param C : chunk height
-    @param sigma : sorting scope
-    @param *scs : The ScsData struct to populate with data
-*/
-template <typename VT, typename IT>
+template <typename MT, typename VT, typename IT>
 void convert_to_scs(
-    double bucket_size,
-    const MtxData<VT, IT> *local_mtx,
+    const MtxData<MT, IT> *local_mtx,
     ST C,
     ST sigma,
     ScsData<VT, IT> *scs,
+    int *fixed_permutation = NULL,
     int *work_sharing_arr = nullptr,
-    int my_rank = 0)
+    int my_rank = 0
+    )
 {
     scs->nnz    = local_mtx->nnz;
     scs->n_rows = local_mtx->n_rows;
@@ -1344,13 +1338,17 @@ void convert_to_scs(
 
     if (scs->sigma % scs->C != 0 && scs->sigma != 1) {
 #ifdef DEBUG_MODE
-    if(my_rank == 0){fprintf(stderr, "NOTE: sigma is not a multiple of C\n");}
+    // if(my_rank == 0){
+        fprintf(stderr, "NOTE: sigma is not a multiple of C\n");
+        // }
 #endif
     }
 
     if (will_add_overflow(scs->n_rows, scs->C)) {
 #ifdef DEBUG_MODE
-    if(my_rank == 0){fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");}
+    // if(my_rank == 0){
+        fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
+        // }
     exit(1);
 #endif        
         // return false;
@@ -1359,7 +1357,9 @@ void convert_to_scs(
 
     if (will_mult_overflow(scs->n_chunks, scs->C)) {
 #ifdef DEBUG_MODE
-    if(my_rank == 0){fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");}
+    // if(my_rank == 0){
+        fprintf(stderr, "ERROR: no. of padded row exceeds size type.\n");
+        // }
     exit(1);
 #endif   
         // return false;
@@ -1386,19 +1386,39 @@ void convert_to_scs(
         // return false;
     }
 
-    for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
-        auto begin = &n_els_per_row[i];
-        auto end   = (i + scs->sigma) < scs->n_rows_padded
-                        ? &n_els_per_row[i + scs->sigma]
-                        : &n_els_per_row[scs->n_rows_padded];
-
-        std::sort(begin, end,
-                // sort longer rows first
-                [](const auto & a, const auto & b) {
-                    return a.second > b.second;
-                });
+    if(fixed_permutation != NULL){
+        std::vector<index_and_els_per_row> n_els_per_row_tmp(scs->n_rows_padded);
+        // NOTE: Permutation vectors are only n_rows long. The padding rows aren't touched
+        for(int i = 0; i < scs->n_rows_padded; ++i){
+            if(i < scs->n_rows){
+                n_els_per_row_tmp[i].first = n_els_per_row[i].first;
+                // n_els_per_row_tmp[i].second = n_els_per_row[fixed_permutation[i]].second;
+                n_els_per_row_tmp[fixed_permutation[i]].second = n_els_per_row[i].second;
+            }
+            else{
+                n_els_per_row_tmp[i].first = n_els_per_row[i].first;
+                n_els_per_row_tmp[i].second = n_els_per_row[i].second;
+            }
+        }
+        // for(int i = 0; i < scs->n_rows; ++i){
+        //     n_els_per_row[i] = n_els_per_row_tmp[i];
+        // }
+        n_els_per_row = n_els_per_row_tmp;
     }
+    else{
+        for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
+            auto begin = &n_els_per_row[i];
+            auto end   = (i + scs->sigma) < scs->n_rows_padded
+                            ? &n_els_per_row[i + scs->sigma]
+                            : &n_els_per_row[scs->n_rows_padded];
 
+            std::sort(begin, end,
+                    // sort longer rows first
+                    [](const auto & a, const auto & b) {
+                        return a.second > b.second;
+                    });
+        }
+    }
     // determine chunk_ptrs and chunk_lengths
 
     // TODO: check chunk_ptrs can overflow
@@ -1451,13 +1471,9 @@ void convert_to_scs(
 
     IT padded_col_idx = 0;
 
-    if(work_sharing_arr != nullptr){
-        // printf("Padding col_idxs by: %i.\n", work_sharing_arr[my_rank]);
-        padded_col_idx = work_sharing_arr[my_rank];
-    }
-    else{
-        // printf("Not padding col_idxs.\n");
-    }
+    // if(work_sharing_arr != nullptr){
+    //     padded_col_idx = work_sharing_arr[my_rank];
+    // }
 
     for (ST i = 0; i < n_scs_elements; ++i) {
         scs->values[i]   = VT{};
@@ -1470,8 +1486,14 @@ void convert_to_scs(
     // fill values and col_idxs
     for (ST i = 0; i < scs->nnz; ++i) {
         IT row_old = local_mtx->I[i];
+        IT row;
 
-        IT row = scs->old_to_new_idx[row_old];
+        if(fixed_permutation != NULL){
+            row = fixed_permutation[row_old];
+        }
+        else{
+            row = scs->old_to_new_idx[row_old];
+        }
 
         ST chunk_index = row / scs->C;
 
@@ -1481,28 +1503,31 @@ void convert_to_scs(
         IT idx = chunk_start + col_idx_in_row[row] * scs->C + chunk_row;
 
         scs->col_idxs[idx] = local_mtx->J[i];
-
-        if(scs->col_idxs[idx] >= local_mtx->n_cols){
-            printf("ERROR: scs->col_idxs blows up.\n");
-        }
-
         scs->values[idx]   = local_mtx->values[i];
 
         col_idx_in_row[row]++;
     }
 
-    // Guess there is an issue here
     // Sort inverse permutation vector, based on scs->old_to_new_idx
     std::vector<int> inv_perm(scs->n_rows);
-    std::vector<int> inv_perm_temp(scs->n_rows + scs->sigma); // TODO: Now I'm sus about this... should not need to be larger
+    std::vector<int> inv_perm_temp(scs->n_rows);
     std::iota(std::begin(inv_perm_temp), std::end(inv_perm_temp), 0); // Fill with 0, 1, ..., scs->n_rows.
 
-    // TODO: Come back to this!! Needed for code correctness
-    // generate_inv_perm<IT>(scs->old_to_new_idx.data(), &inv_perm[0], scs->n_rows);
+    generate_inv_perm<IT>(scs->old_to_new_idx.data(), &inv_perm[0],  scs->n_rows);
 
     scs->new_to_old_idx = inv_perm;
 
-    scs->n_elements = n_scs_elements; 
+    scs->n_elements = n_scs_elements;
+
+    // Experimental 2024_02_01, I do not want the rows permuted yet... so permute back
+    // if sigma > C, I can see this being a problem
+    // for (ST i = 0; i < scs->n_rows_padded; ++i) {
+    //     IT old_row_idx = n_els_per_row[i].first;
+
+    //     if (old_row_idx < scs->n_rows) {
+    //         scs->old_to_new_idx[old_row_idx] = i;
+    //     }
+    // }    
 
     // return true;
 }
