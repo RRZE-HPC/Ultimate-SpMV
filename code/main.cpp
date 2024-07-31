@@ -20,7 +20,6 @@
 
 
 #define WARM_UP_REPS 100
-#define THREADS_PER_BLOCK 512
 #define MILLI_TO_SEC 0.001
 
 #ifdef _OPENMP
@@ -185,25 +184,25 @@ void bench_spmv(
 
 
     // All args for kernel reside on the device
-    // TODO: Merge function pointer idea with device pointers
-    // one_prec_kernel_args_encoded->C = *d_C;
-    // one_prec_kernel_args_encoded->n_chunks = *d_n_chunks;
+    one_prec_kernel_args_encoded->C = d_C;
+    one_prec_kernel_args_encoded->n_chunks = d_n_chunks;
     // one_prec_kernel_args_encoded->C =             local_scs->C;
     // one_prec_kernel_args_encoded->n_chunks =      local_scs->n_rows_padded;
-    // one_prec_kernel_args_encoded->chunk_ptrs =    d_chunk_ptrs;
-    // one_prec_kernel_args_encoded->chunk_lengths = d_chunk_lengths;
-    // one_prec_kernel_args_encoded->col_idxs =      d_col_idxs;
-    // one_prec_kernel_args_encoded->values =        d_values;
-    // one_prec_kernel_args_encoded->local_x =       d_x;
-    // one_prec_kernel_args_encoded->local_y =       d_y;
-    // kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
+    one_prec_kernel_args_encoded->chunk_ptrs =    d_chunk_ptrs;
+    one_prec_kernel_args_encoded->chunk_lengths = d_chunk_lengths;
+    one_prec_kernel_args_encoded->col_idxs =      d_col_idxs;
+    one_prec_kernel_args_encoded->values =        d_values;
+    one_prec_kernel_args_encoded->local_x =       d_x;
+    one_prec_kernel_args_encoded->local_y =       d_y;
+    one_prec_kernel_args_encoded->n_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
 
 #else
     if(config->value_type == "mp"){
         // Encode kernel args into struct
-        two_prec_kernel_args_encoded->n_chunks = hp_local_scs->n_chunks; //shared for now
+        two_prec_kernel_args_encoded->n_chunks = &hp_local_scs->n_chunks; //shared for now
         // TODO: allow for each struct to have it's own C
-        two_prec_kernel_args_encoded->hp_C = hp_local_scs->C;
+        two_prec_kernel_args_encoded->hp_C = &hp_local_scs->C;
         two_prec_kernel_args_encoded->hp_chunk_ptrs = hp_local_scs->chunk_ptrs.data();
         two_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
         two_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
@@ -211,7 +210,7 @@ void bench_spmv(
         // two_prec_kernel_args_encoded->hp_local_x = &(*hp_local_x)[0];
         two_prec_kernel_args_encoded->hp_local_x = &(hp_local_x_permuted)[0];
         two_prec_kernel_args_encoded->hp_local_y = &(*hp_local_y)[0];
-        two_prec_kernel_args_encoded->lp_C = lp_local_scs->C;
+        two_prec_kernel_args_encoded->lp_C = &lp_local_scs->C;
         two_prec_kernel_args_encoded->lp_chunk_ptrs = lp_local_scs->chunk_ptrs.data();
         two_prec_kernel_args_encoded->lp_chunk_lengths = lp_local_scs->chunk_lengths.data();
         two_prec_kernel_args_encoded->lp_col_idxs = lp_local_scs->col_idxs.data();
@@ -230,8 +229,8 @@ void bench_spmv(
     }
     else{
         // Encode kernel args into struct
-        one_prec_kernel_args_encoded->C = local_scs->C;
-        one_prec_kernel_args_encoded->n_chunks = local_scs->n_chunks;
+        one_prec_kernel_args_encoded->C = &local_scs->C;
+        one_prec_kernel_args_encoded->n_chunks = &local_scs->n_chunks;
         one_prec_kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
         one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
         one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
@@ -268,6 +267,7 @@ void bench_spmv(
     const int num_blocks = (vec_size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     config->num_blocks = num_blocks; // Just for ease of results printing
     config->tpb = THREADS_PER_BLOCK;
+    float warmup_runtime = 0.0;
     cudaEvent_t start, stop, warmup_start, warmup_stop;
     cudaEventCreate(&warmup_start);
     cudaEventCreate(&warmup_stop);
@@ -309,45 +309,6 @@ void bench_spmv(
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
 #endif
-#ifdef __CUDACC__
-            if(config->kernel_format == "crs")
-                spmv_gpu_csr<VT, IT><<<num_blocks, THREADS_PER_BLOCK>>>(
-                    d_C,
-                    d_n_chunks,
-                    d_chunk_ptrs,
-                    d_chunk_lengths,
-                    d_col_idxs,
-                    d_values,
-                    d_x,
-                    d_y
-                );
-                else if(config->kernel_format == "scs"){
-                    if(use_adv_gpu_kernels){
-                        spmv_gpu_scs_adv<VT, IT><<<num_blocks, THREADS_PER_BLOCK>>>(
-                            d_C,
-                            d_n_chunks,
-                            d_chunk_ptrs,
-                            d_chunk_lengths,
-                            d_col_idxs,
-                            d_values,
-                            d_x,
-                            d_y
-                        );
-                    }
-                    else{
-                        spmv_gpu_scs<VT, IT><<<num_blocks, THREADS_PER_BLOCK>>>(
-                            d_C,
-                            d_n_chunks,
-                            d_chunk_ptrs,
-                            d_chunk_lengths,
-                            d_col_idxs,
-                            d_values,
-                            d_x,
-                            d_y
-                        );
-                    }
-                }
-#else
             // TODO: Is this #if-else correct with mpi? I don't think it is.
             if(config->value_type == "mp"){
                 spmv_kernel.execute_warmup_mp_spmv();
@@ -355,9 +316,8 @@ void bench_spmv(
             }
             else{
                 spmv_kernel.execute_warmup_spmv();
-                spmv_kernel.swap_local_vectors();
+                // spmv_kernel.swap_local_vectors();
             }
-#endif
 
 #ifdef USE_MPI
             if(config->ba_synch)
@@ -368,15 +328,20 @@ void bench_spmv(
 #ifdef __CUDACC__
         cudaEventRecord(warmup_stop);
         cudaEventSynchronize(warmup_stop);
+        cudaEventElapsedTime(&warmup_runtime, warmup_start, warmup_stop);
+        std::cout << "warm up time: " << warmup_runtime/1000.0 << std::endl;
 #else
 
 #ifdef USE_MPI
         end_warm_up_loop_time = MPI_Wtime();
 #else
         end_warm_up_loop_time = getTimeStamp();
-        std::cout << "warm up time: " << end_warm_up_loop_time - begin_warm_up_loop_time << std::endl;
 #endif
+        std::cout << "warm up time: " << end_warm_up_loop_time - begin_warm_up_loop_time << std::endl;  
 #endif
+
+    
+
 
 #ifdef __CUDACC__
     cudaEventCreate(&start);
@@ -454,45 +419,6 @@ void bench_spmv(
 #endif
                 
                 for(int k=0; k<n_iter; ++k) {
-#ifdef __CUDACC__
-                    if(config->kernel_format == "crs")
-                        spmv_gpu_csr<VT, IT><<<num_blocks, THREADS_PER_BLOCK>>>(
-                            d_C,
-                            d_n_chunks,
-                            d_chunk_ptrs,
-                            d_chunk_lengths,
-                            d_col_idxs,
-                            d_values,
-                            d_x,
-                            d_y
-                        );
-                    else if(config->kernel_format == "scs"){
-                        if(use_adv_gpu_kernels){
-                            spmv_gpu_scs_adv<VT, IT><<<num_blocks, THREADS_PER_BLOCK>>>(
-                                d_C,
-                                d_n_chunks,
-                                d_chunk_ptrs,
-                                d_chunk_lengths,
-                                d_col_idxs,
-                                d_values,
-                                d_x,
-                                d_y
-                            );
-                        }
-                        else{
-                            spmv_gpu_scs<VT, IT><<<num_blocks, THREADS_PER_BLOCK>>>(
-                                d_C,
-                                d_n_chunks,
-                                d_chunk_ptrs,
-                                d_chunk_lengths,
-                                d_col_idxs,
-                                d_values,
-                                d_x,
-                                d_y
-                            );
-                        }
-                    }
-#else
                     if(config->value_type == "mp"){
                         spmv_kernel.execute_mp_spmv();
                         spmv_kernel.swap_local_mp_vectors();
@@ -501,7 +427,6 @@ void bench_spmv(
                         spmv_kernel.execute_spmv();
                         spmv_kernel.swap_local_vectors();
                     }
-#endif
 #ifdef USE_MPI
                     if(config->ba_synch)
                         MPI_Barrier(MPI_COMM_WORLD);
@@ -545,11 +470,6 @@ void bench_spmv(
         // Selects the first (n_rows)-many elements of a sorted y vector, and chops off padding
         std::vector<VT> sorted_local_y(local_y->size(), 0);
         std::vector<double> sorted_hp_local_y(local_y->size(), 0);
-
-#ifdef __CUDACC__
-        printf("Solve mode not yet enabled for GPU. Please switch to solve mode.");
-        exit(1);
-#endif
 
         for (int i = 0; i < config->n_repetitions; ++i)
         {
@@ -625,7 +545,23 @@ void bench_spmv(
 #endif
         }
 
+        // Copy results to local_x
+#ifdef __CUDACC__
+        if(config->value_type == "dp"){
+            cudaMemcpy(&(*local_x)[0], spmv_kernel.local_x, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+        }
+        else if(config->value_type == "sp"){
+            cudaMemcpy(&(*local_x)[0], spmv_kernel.local_x, local_scs->n_rows_padded*sizeof(float), cudaMemcpyDeviceToHost);
+        }
+#else
+        // local_x = spmv_kernel.local_x;
+        for(int i = 0; i < local_scs->n_rows_padded; ++i){
+            (*local_x)[i] = (spmv_kernel.local_x)[i];
+        }
+#endif  
+
         if(config->value_type == "mp"){
+            // TODO: Update!!
             apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
         
             // // Give result to local_y for results output
@@ -639,7 +575,7 @@ void bench_spmv(
             // }
         }
         else{
-            apply_permutation<VT, IT>(&(sorted_local_y)[0], &(spmv_kernel.local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+            apply_permutation<VT, IT>(&(sorted_local_y)[0], &(*local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
             
             // Give result to local_y for results output
             for(int i = 0; i < local_y->size(); ++i){

@@ -50,10 +50,14 @@ void write_bench_to_file(
 
     int num_omp_threads;
 
+#ifndef __CUDACC__
     #pragma omp parallel
     {
         num_omp_threads = omp_get_num_threads();
     }
+#endif
+
+
 
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
@@ -143,10 +147,12 @@ void write_result_to_file(
     std::cout.precision(16);
     int num_omp_threads;
 
+#ifndef __CUDACC__
     #pragma omp parallel
     {
         num_omp_threads = omp_get_num_threads();
     }
+#endif
 
     // Print parameters
     std::string output_filename;
@@ -279,7 +285,7 @@ void write_result_to_file(
     }
     if(config->verbose_validation == 0)
     {
-        working_file 
+        working_file << std::scientific
                     << std::left << std::setw(width) << max_relative_diff_elem_mkl
                     << std::left << std::setw(width) << max_relative_diff_elem_uspmv
                     << std::left << std::setw(width) << 100 * max_relative_diff
@@ -316,15 +322,22 @@ void validate_dp_result(
     Result<double, int> *r,
     std::vector<double> *mkl_dp_result
 ){    
+#ifdef __CUDACC__
+    long num_rows = total_mtx->n_rows;
+    long num_cols = total_mtx->n_cols;
+    long chunk_size = 1;
+#else
     int num_rows = total_mtx->n_rows;
     int num_cols = total_mtx->n_cols;
+    int chunk_size = 1;
+#endif
 
     mkl_dp_result->resize(num_rows, 0);
     std::vector<double> y(num_rows, 0);
 
-    ScsData<double, int> scs;
+    ScsData<double, int> *scs = new ScsData<double, int>;
 
-    convert_to_scs<double, double, int>(total_mtx, 1, 1, &scs);
+    convert_to_scs<double, double, int>(total_mtx, 1, 1, scs);
 
     V<int, int>row_ptrs(total_mtx->n_rows + 1);
 
@@ -350,9 +363,16 @@ void validate_dp_result(
     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
     for(int i = 0; i < config->n_repetitions; ++i){
-        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs.values.data(), scs.col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
+#ifdef __CUDACC__
+        // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
+        spmv_omp_csr<double, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_dp_result)[0], &y[0]);
+#else
+        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
+#endif
         std::swap(*mkl_dp_result, y);
     }
+
+    delete scs;
 }
 
 /**
@@ -367,16 +387,23 @@ void validate_sp_result(
     Config *config,
     Result<float, int> *r,
     std::vector<float> *mkl_sp_result
-){    
+){
+#ifdef __CUDACC__
+    long num_rows = total_mtx->n_rows;
+    long num_cols = total_mtx->n_cols;
+    long chunk_size = 1;
+#else
     int num_rows = total_mtx->n_rows;
     int num_cols = total_mtx->n_cols;
+    int chunk_size = 1;
+#endif
 
     mkl_sp_result->resize(num_rows, 0);
     std::vector<float> y(num_rows, 0);
 
-    ScsData<float, int> scs;
+    ScsData<float, int> *scs = new ScsData<float, int>;
 
-    convert_to_scs<float, float, int>(total_mtx, 1, 1, &scs);
+    convert_to_scs<float, float, int>(total_mtx, 1, 1, scs);
 
     V<int, int>row_ptrs(total_mtx->n_rows + 1);
 
@@ -402,8 +429,15 @@ void validate_sp_result(
     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
     for(int i = 0; i < config->n_repetitions; ++i){
-        mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs.values.data(), scs.col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
+#ifdef __CUDACC__
+        // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
+        spmv_omp_csr<float, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_sp_result)[0], &y[0]);
+#else
+        mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
+#endif
         std::swap(*mkl_sp_result, y);
     }
+
+    delete scs;
 }
 #endif

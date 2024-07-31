@@ -157,28 +157,31 @@ struct CommArgs
 template <typename VT, typename IT>
 struct OnePrecKernelArgs
 {
-    ST C;
-    ST n_chunks;
+    ST * C;
+    ST * n_chunks;
     IT * RESTRICT chunk_ptrs;
     IT * RESTRICT chunk_lengths;
     IT * RESTRICT col_idxs;
     VT * RESTRICT values;
     VT * RESTRICT local_x;
     VT * RESTRICT local_y;
+#ifdef __CUDACC__
+    ST n_blocks;
+#endif
 };
 
 template <typename IT>
 struct TwoPrecKernelArgs
 {
-    ST n_chunks; // (same for both)
-    ST hp_C;
+    ST * n_chunks; // (same for both)
+    ST * hp_C;
     IT * RESTRICT hp_chunk_ptrs;
     IT * RESTRICT hp_chunk_lengths;
     IT * RESTRICT hp_col_idxs;
     double * RESTRICT hp_values;
     double * RESTRICT hp_local_x;
     double * RESTRICT hp_local_y;
-    ST lp_C;
+    ST * lp_C;
     IT * RESTRICT lp_chunk_ptrs;
     IT * RESTRICT lp_chunk_lengths;
     IT * RESTRICT lp_col_idxs;
@@ -190,36 +193,43 @@ struct TwoPrecKernelArgs
 template <typename VT, typename IT>
 class SpmvKernel {
     private:
+
         typedef std::function<void(
-            const ST, // C
-            const ST, // n_chunks
+            const ST *, // C
+            const ST *, // n_chunks
             const IT *, // chunk_ptrs
             const IT *, // chunk_lengths
             const IT *, // col_idxs
             const VT *, // values
             VT *, // x
             VT *, //y
-            int // my_rank
+#ifdef __CUDACC__
+            const ST *, // n_blocks
+#endif
+            const int * // my_rank
         )> OnePrecFuncPtr;
 
         typedef std::function<void(
-            const ST, // hp_n_chunks // TODO same, for now.
-            const ST, // hp_C
+            const ST *, // hp_n_chunks // TODO same, for now.
+            const ST *, // hp_C
             const IT * RESTRICT, // hp_chunk_ptrs
             const IT * RESTRICT, // hp_chunk_lengths
             const IT * RESTRICT, // hp_col_idxs
             const double * RESTRICT, // hp_values
             double * RESTRICT, // hp_x
             double * RESTRICT, // hp_y
-            const ST, // lp_n_chunks // TODO same, for now.
-            const ST, // lp_C
+            const ST *, // lp_n_chunks // TODO same, for now.
+            const ST *, // lp_C
             const IT * RESTRICT, // lp_chunk_ptrs
             const IT * RESTRICT, // lp_chunk_lengths
             const IT * RESTRICT, // lp_col_idxs
             const float * RESTRICT, // lp_values
             float * RESTRICT, // lp_x
             float * RESTRICT, // lp_y
-            int
+#ifdef __CUDACC__
+            const ST *, // n_blocks
+#endif
+            const int *
         )> TwoPrecFuncPtr;
 
         OnePrecFuncPtr one_prec_kernel_func_ptr;
@@ -235,22 +245,25 @@ class SpmvKernel {
         OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_decoded = (OnePrecKernelArgs<VT, IT>*) kernel_args_encoded;
         TwoPrecKernelArgs<IT> *two_prec_kernel_args_decoded = (TwoPrecKernelArgs<IT>*) kernel_args_encoded;
 
-        const ST C = one_prec_kernel_args_decoded->C;
-        const ST n_chunks = one_prec_kernel_args_decoded->n_chunks;
+        const ST * C = one_prec_kernel_args_decoded->C;
+        const ST * n_chunks = one_prec_kernel_args_decoded->n_chunks;
         const IT * RESTRICT chunk_ptrs = one_prec_kernel_args_decoded->chunk_ptrs;
         const IT * RESTRICT chunk_lengths = one_prec_kernel_args_decoded->chunk_lengths;
         const IT * RESTRICT col_idxs = one_prec_kernel_args_decoded->col_idxs;
         const VT * RESTRICT values = one_prec_kernel_args_decoded->values;
+#ifdef __CUDACC__
+        const ST n_blocks = one_prec_kernel_args_decoded->n_blocks;
+#endif
 
         // Just need different names on all of unpacked args
-        const ST hp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
-        const ST hp_C = two_prec_kernel_args_decoded->hp_C;
+        const ST * hp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
+        const ST * hp_C = two_prec_kernel_args_decoded->hp_C;
         const IT * RESTRICT hp_chunk_ptrs = two_prec_kernel_args_decoded->hp_chunk_ptrs;
         const IT * RESTRICT hp_chunk_lengths = two_prec_kernel_args_decoded->hp_chunk_lengths;
         const IT * RESTRICT hp_col_idxs = two_prec_kernel_args_decoded->hp_col_idxs;
         const double * RESTRICT hp_values = two_prec_kernel_args_decoded->hp_values;
-        const ST lp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
-        const ST lp_C = two_prec_kernel_args_decoded->lp_C;
+        const ST * lp_n_chunks = two_prec_kernel_args_decoded->n_chunks; // TODO same, for now.
+        const ST * lp_C = two_prec_kernel_args_decoded->lp_C;
         const IT * RESTRICT lp_chunk_ptrs = two_prec_kernel_args_decoded->lp_chunk_ptrs;
         const IT * RESTRICT lp_chunk_lengths = two_prec_kernel_args_decoded->lp_chunk_lengths;
         const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
@@ -292,10 +305,12 @@ class SpmvKernel {
             if(config->value_type == "mp"){
                 if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                     if(my_rank == 0){printf("MP-CRS kernel selected\n");}
-
+#ifndef __CUDACC__
                     two_prec_kernel_func_ptr = spmv_omp_csr_mp_1<IT>;
                     two_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr_mp_1<IT>;
-                    // two_prec_kernel_func_ptr = spmv_omp_csr_mp_2<IT>;
+#else
+
+#endif
                 }
                 else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm" || config->kernel_format == "ell_cm"){
                     if(my_rank == 0){printf("Currently no mixed precision support for ELL kernel\n");}
@@ -303,9 +318,12 @@ class SpmvKernel {
                 }
                 else if (config->kernel_format == "scs"){
                     if(my_rank == 0){printf("MP SCS kernel selected\n");}
-
+#ifndef __CUDACC__
                     two_prec_kernel_func_ptr = spmv_omp_scs_mp<IT>;
                     two_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs_mp<IT>;
+#else
+
+#endif
                 } // NOTE: Advanced kernels are not investigated
                 else {
                     std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
@@ -316,12 +334,13 @@ class SpmvKernel {
                 if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                     if(my_rank == 0){printf("CRS kernel selected\n");}
                     // TODO: More performant to just instantiate template here?
-#ifdef __CUDACC__
-                    // TODO: Integrate with func pointers to device kernels
-                    // one_prec_kernel_func_ptr = spmv_gpu_csr<VT, IT>;
-#else
+#ifndef __CUDACC__
                     one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
+
+#else
+                    one_prec_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;         
 #endif
                 }
                 else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
@@ -352,8 +371,8 @@ class SpmvKernel {
                     && config->chunk_size != 64){
                     if(my_rank == 0){printf("SCS kernel selected\n");}
 #ifdef __CUDACC__
-                    // TODO: Integrate with func pointers to device kernels
-                    // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
 #else
                     one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs<VT, IT>;
@@ -364,11 +383,11 @@ class SpmvKernel {
                     if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
 #ifdef __CUDACC__
                     // TODO: Integrate with func pointers to device kernels
-                    // one_prec_kernel_func_ptr = spmv_gpu_scs<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
 #else
-                    // TODO: Update
-                    // one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
-                    one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                    // one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs<VT, IT>;
 #endif
                 }
@@ -482,7 +501,10 @@ class SpmvKernel {
                 values,
                 local_x,
                 local_y,
-                my_rank
+#ifdef __CUDACC__
+                &n_blocks,
+#endif
+                &my_rank
             );
         }
 
@@ -496,7 +518,10 @@ class SpmvKernel {
                 values,
                 local_x,
                 local_y,
-                my_rank
+#ifdef __CUDACC__
+                &n_blocks,
+#endif
+                &my_rank
             );
         }
 
@@ -518,7 +543,10 @@ class SpmvKernel {
                 lp_values,
                 lp_local_x,
                 lp_local_y,
-                my_rank
+#ifdef __CUDACC__
+                &n_blocks,
+#endif
+                &my_rank
             );
         }
 
@@ -540,11 +568,14 @@ class SpmvKernel {
                 lp_values,
                 lp_local_x,
                 lp_local_y,
-                my_rank
+#ifdef __CUDACC__
+                &n_blocks,
+#endif
+                &my_rank
             );
         }
 
-        // TODO: How to swap with GPU?
+        // NOTE: Should also work with GPUs?
         inline void swap_local_vectors(){
             std::swap(local_x, local_y);
         }

@@ -1,8 +1,10 @@
 include config.mk
 
 # apply user-defined variables
-CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH) 
-# Validate Makefile options
+CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH) -DTHREADS_PER_BLOCK=$(THREADS_PER_BLOCK)
+
+
+# Validate Makefile options (sanity checks)
 ifneq ($(COMPILER),nvcc)
 GPGPU_ARCH = none
 endif
@@ -31,18 +33,6 @@ ifeq ($(COMPILER),nvcc)
 ifeq ($(USE_MPI),1)
 $(error MPI is not currently supported for GPUs)
 endif
-endif
-
-ifneq ($(GPGPU_ARCH),none)
-ifeq ($(GPGPU_ARCH),a40)
-	GPGPU_ARCH_FLAGS += -gencode arch=compute_86,code=sm_86 -Xcompiler -fopenmp
-endif
-ifeq ($(GPGPU_ARCH),a100)
-	GPGPU_ARCH_FLAGS += -gencode arch=compute_80,code=sm_80 -Xcompiler -fopenmp
-endif
-
-MKL = -I${MKLROOT}/include -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
-CXXFLAGS += $(MKL)
 endif
 
 # compiler options
@@ -76,6 +66,19 @@ ifeq ($(COMPILER),icx)
   AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
 
   CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(AVX512_fix) $(OPT_ARCH)
+endif
+
+ifeq ($(COMPILER),nvcc)
+	ifneq ($(GPGPU_ARCH),none)
+		ifeq ($(GPGPU_ARCH),a40)
+			GPGPU_ARCH_FLAGS += -gencode arch=compute_86,code=sm_86 -Xcompiler -fopenmp
+		endif
+		ifeq ($(GPGPU_ARCH),a100)
+			GPGPU_ARCH_FLAGS += -gencode arch=compute_80,code=sm_80 -Xcompiler -fopenmp
+		endif
+	endif
+	MKL += -I${MKLROOT}/include -L${MKLROOT}/lib/intel64 -lmkl_intel_ilp64 -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl
+	CXXFLAGS += $(MKL)
 endif
 
 CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH)
