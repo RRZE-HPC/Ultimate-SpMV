@@ -299,7 +299,7 @@ spmv_omp_scs_adv(
 
 template <typename IT>
 static void
-spmv_warmup_omp_csr_mp_1(
+spmv_warmup_omp_csr_mp(
     const ST * hp_n_rows, // TODO: (same for both)
     const ST * hp_C, // 1
     const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
@@ -367,7 +367,7 @@ spmv_warmup_omp_csr_mp_1(
 
 template <typename IT>
 static void
-spmv_omp_csr_mp_1(
+spmv_omp_csr_mp(
     const ST * hp_n_rows, // TODO: (same for both)
     const ST * hp_C, // 1
     const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
@@ -441,81 +441,6 @@ spmv_omp_csr_mp_1(
         LIKWID_MARKER_STOP("spmv_ap_crs_benchmark");
     #endif
         }
-}
-
-template <typename IT>
-static void
-spmv_omp_csr_mp_2(
-    const ST * hp_n_rows, // TODO: (same for both)
-    const ST * hp_C, // 1
-    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
-    const IT * RESTRICT hp_row_lengths, // unused for now
-    const IT * RESTRICT hp_col_idxs,
-    const double * RESTRICT hp_values,
-    double * RESTRICT hp_x,
-    double * RESTRICT hp_y, 
-    const ST * lp_n_rows, // TODO: (same for both)
-    const ST * lp_C, // 1
-    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
-    const IT * RESTRICT lp_row_lengths, // unused for now
-    const IT * RESTRICT lp_col_idxs,
-    const float * RESTRICT lp_values,
-    float * RESTRICT lp_x,
-    float * RESTRICT lp_y, // unused
-    const int * my_rank
-    )
-{
-
-//     #pragma omp parallel for schedule(static)
-//     for (ST row = 0; row < hp_n_rows; ++row) {
-
-//         double hp_sum{};
-//         float lp_sum{};
-
-//         IT hp_rs = hp_row_ptrs[row];
-//         IT lp_rs = lp_row_ptrs[row];
-
-//         // Should have stored beforehand?
-//         IT hp_row_length = hp_row_ptrs[row+1] - hp_row_ptrs[row];
-//         IT lp_row_length = lp_row_ptrs[row+1] - lp_row_ptrs[row];
-
-//         IT combined_row = hp_row_length + lp_row_length;
-
-//         #pragma omp simd reduction(+:hp_sum,lp_sum)
-//         for (IT j = 0; j < combined_row; ++j) {
-//             if(j < hp_row_length){
-//                 hp_sum += hp_values[hp_rs + j] * hp_x[hp_col_idxs[hp_rs + j]];
-// #ifdef DEBUG_MODE_FINE
-//             if(my_rank == 0){
-//                 printf("j = %i, hp_col_idxs[j] = %i, hp_x[hp_col_idxs[j]] = %f\n", j ,hp_col_idxs[j], hp_x[hp_col_idxs[j]]);
-//                 printf("hp_sum += %f * %f\n", hp_values[j], hp_x[hp_col_idxs[j]]);
-//             }
-// #endif
-//             }
-//             else{
-//                 IT lp_shift_j = j - hp_row_length;
-// #ifdef DEBUG_MODE_FINE
-//             if(my_rank == 0){
-//                 printf("lp_rs + lp_shift_j = %i\n", lp_rs + lp_shift_j);
-//                 printf("lp_col_idxs[lp_rs + lp_shift_j] = %i\n", lp_col_idxs[lp_rs + lp_shift_j]);
-//                 printf("lp_x[lp_col_idxs[lp_rs + lp_shift_j]] = %f\n", lp_x[lp_col_idxs[lp_rs + lp_shift_j]]);
-//                 printf("lp_values[lp_rs + lp_shift_j] = %f\n", lp_values[lp_rs + lp_shift_j]);
-//             }
-// #endif
-//                 lp_sum += lp_values[lp_rs + lp_shift_j] * lp_x[lp_col_idxs[lp_rs + lp_shift_j]];
-// #ifdef DEBUG_MODE_FINE
-//             if(my_rank == 0){
-//                 printf("lp_rs + lp_shift_j = %i, lp_col_idxs[lp_rs + lp_shift_j] = %i, lp_x[lp_col_idxs[lp_rs + lp_shift_j]] = %f\n", lp_rs + lp_shift_j, lp_col_idxs[lp_rs + lp_shift_j], lp_x[lp_col_idxs[lp_rs + lp_shift_j]]);
-//                 printf("lp_sum += %f * %f\n", lp_values[lp_rs + lp_shift_j], lp_x[lp_col_idxs[lp_rs + lp_shift_j]]);
-
-//             }
-// #endif
-//             }
-//         }
-//         // ^ at this point, it's basically just SCS, C=1...
-
-//         hp_y[row] = hp_sum + lp_sum;
-//     }
 }
 
 /**
@@ -615,9 +540,7 @@ spmv_omp_scs_mp(
 
             for (ST i = 0; i < *hp_C; ++i) {
                 hp_tmp[i] = 0.0;
-            }
-            for (ST i = 0; i < *hp_C; ++i) {
-                lp_tmp[i] = 0.0f;
+                lp_tmp[i] = 0.0;
             }
 
             IT hp_cs = hp_chunk_ptrs[c];
@@ -642,217 +565,6 @@ spmv_omp_scs_mp(
         LIKWID_MARKER_STOP("spmv_ap_scs_benchmark");
 #endif
     }
-}
-
-
-/**
- * Kernel for Sell-C-Sigma. Supports all Cs > 0.
- */
-template <typename IT>
-static void
-spmv_omp_scs_mp_1(
-    const ST * hp_n_chunks, // n_chunks (same for both)
-    const ST * hp_C, // 1
-    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
-    const IT * RESTRICT hp_chunk_lengths, // unused
-    const IT * RESTRICT hp_col_idxs,
-    const double * RESTRICT hp_values,
-    double * RESTRICT hp_x,
-    double * RESTRICT hp_y, 
-    const ST * lp_n_chunks, // n_chunks (same for both)
-    const ST * lp_C, // 1
-    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
-    const IT * RESTRICT lp_chunk_lengths, // unused
-    const IT * RESTRICT lp_col_idxs,
-    const float * RESTRICT lp_values,
-    float * RESTRICT lp_x,
-    float * RESTRICT lp_y, // unused
-    const int * my_rank
-)
-{
-//     std::vector<double> sum_arr(hp_n_chunks*hp_C,0);
-
-//     #pragma omp parallel
-//     {
-// #ifdef USE_LIKWID
-//         LIKWID_MARKER_START("spmv_ap_scs_benchmark");
-// #endif
-//         #pragma omp for schedule(static)
-//         for (ST c = 0; c < hp_n_chunks; ++c) {
-//             double hp_tmp[hp_C];
-//             float lp_tmp[hp_C];
-
-//             for (ST i = 0; i < hp_C; ++i) {
-//                 hp_tmp[i] = 0.0;
-//             }
-//             for (ST i = 0; i < hp_C; ++i) {
-//                 lp_tmp[i] = 0.0f;
-//             }
-
-//             IT hp_cs = hp_chunk_ptrs[c];
-//             IT lp_cs = lp_chunk_ptrs[c];
-
-//             for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
-//                 for (IT i = 0; i < hp_C; ++i) {
-
-//                     hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
-// #ifdef DEBUG_MODE_FINE
-//                     if(my_rank == 0){                    
-//                         printf("hp_cs = %i, \
-//                             j = %i, \
-//                             hp_cs + j * hp_C + i = %i, \
-//                             hp_chunk_lengths[c] = %i, \
-//                             j * hp_C = %i, \
-//                             hp_cs + j * hp_C + i = %i, \
-//                             hp_values[hp_cs + j * hp_C + i] = %f, \
-//                             hp_col_idxs[hp_cs + j * hp_C + i] = %i, \
-//                             hp_x[hp_col_idxs[hp_cs + j * hp_C + i]] = %f\n", \
-//                             hp_cs, \
-//                             j, \
-//                             hp_cs + j * hp_C + i, \
-//                             hp_chunk_lengths[c], \
-//                             j * hp_C, \
-//                             hp_cs + j * hp_C + i, \
-//                             hp_values[hp_cs + j * hp_C + i], \
-//                             hp_col_idxs[hp_cs + j * hp_C + i], \
-//                             hp_x[hp_col_idxs[hp_cs + j * hp_C + i]]);
-
-//                         printf("lp_tmp[i]: %f += %f * %f\n", \
-//                             hp_tmp[i], hp_values[hp_cs + j * hp_C + i], hp_x[hp_col_idxs[hp_cs + j * hp_C + i]]);
-//                     }
-// #endif
-//                 }
-//             }
-//             for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
-//                 for (IT i = 0; i < hp_C; ++i) {
-
-//                     lp_tmp[i] += lp_values[lp_cs + j * hp_C + i] * lp_x[lp_col_idxs[lp_cs + j * hp_C + i]];
-// #ifdef DEBUG_MODE_FINE
-//                     if(my_rank == 0){                    
-//                         printf("lp_cs = %i, \
-//                             j = %i, \
-//                             lp_cs + j * hp_C + i = %i, \
-//                             lp_chunk_lengths[c] = %i, \
-//                             j * hp_C = %i, \
-//                             lp_cs + j * hp_C + i = %i, \
-//                             lp_values[lp_cs + j * hp_C + i] = %f, \
-//                             lp_col_idxs[lp_cs + j * hp_C + i] = %i, \
-//                             lp_x[lp_col_idxs[lp_cs + j * hp_C + i]] = %f\n", \
-//                             lp_cs, \
-//                             j, \
-//                             lp_cs + j * hp_C + i, \
-//                             lp_chunk_lengths[c], \
-//                             lp_cs + j * hp_C + i, \
-//                             lp_values[lp_cs + j * hp_C + i], \
-//                             lp_col_idxs[lp_cs + j * hp_C + i], \
-//                             lp_x[lp_col_idxs[lp_cs + j * hp_C + i]]);
-
-//                         printf("lp_tmp[i]: %f += %f * %f\n", \
-//                             lp_tmp[i], lp_values[lp_cs + j * hp_C + i], lp_x[lp_col_idxs[lp_cs + j * hp_C + i]]);
-//                     }
-// #endif
-//                 }
-//             }
-
-//             // This needs to stay the same, for race condition reasons
-//             for (ST i = 0; i < hp_C; ++i) {
-//                 // hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
-//                 // hp_y[c * hp_C + i] = hp_tmp[i]; // permmed according to hp reordering
-//                 // lp_y[hp_perm[lp_inv_perm[c * hp_C + i]]] = lp_tmp[i]; // permmed according to lp reordering
-//                 // lp_y[c * hp_C + i] = lp_tmp[i];
-// #ifdef DEBUG_MODE_FINE
-//                 if(my_rank == 0){
-//                     printf("y[%i] = %f\n", c * hp_C + i, hp_tmp[i] + lp_tmp[i]);
-//                 }
-// #endif
-//                 sum_arr[c * hp_C + i] += hp_tmp[i];
-//                 sum_arr[hp_perm[lp_inv_perm[c * hp_C + i]]] += lp_tmp[i]; //implicit conversion to double
-
-//                 // hp_y[c * hp_C + i] += sum_arr[c * hp_C + i];
-//                 // lp_y[c * hp_C + i] += sum_arr[hp_perm[lp_inv_perm[c * hp_C + i]]];
-//             }
-            
-//         }
-
-//         // Combine results
-//         // // TODO: bandaid, should be a swap
-
-//         // nowait?
-//         #pragma omp for schedule(static)
-//         for (ST c = 0; c < hp_n_chunks; ++c) {
-//             for (IT i = 0; i < hp_C; ++i) {
-//                 hp_y[c * hp_C + i] = sum_arr[c * hp_C + i];
-//                 // lp_y[c * hp_C + i] = sum_arr[c * hp_C + i];
-//                 lp_y[c * hp_C + i] = sum_arr[hp_perm[lp_inv_perm[c * hp_C + i]]]; // <- cant work
-//             }
-//         }
-// #ifdef USE_LIKWID
-//         LIKWID_MARKER_STOP("spmv_ap_scs_benchmark");
-// #endif
-//     }
-
-}
-
-/**
- * Kernel for Sell-C-Sigma. Supports all Cs > 0.
- */
-template <typename IT>
-static void
-spmv_omp_scs_mp_2(
-    const ST * hp_n_chunks, // n_chunks (same for both)
-    const ST * hp_C, // 1
-    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
-    const IT * RESTRICT hp_chunk_lengths, // unused
-    const IT * RESTRICT hp_col_idxs,
-    const double * RESTRICT hp_values,
-    double * RESTRICT hp_x,
-    double * RESTRICT hp_y, 
-    const ST * lp_n_chunks, // n_chunks (same for both)
-    const ST * lp_C, // 1
-    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
-    const IT * RESTRICT lp_chunk_lengths, // unused
-    const IT * RESTRICT lp_col_idxs,
-    const float * RESTRICT lp_values,
-    float * RESTRICT lp_x,
-    float * RESTRICT lp_y, // unused
-    const int * my_rank
-)
-{
-    // #pragma omp parallel for schedule(static)
-    // for (ST c = 0; c < hp_n_chunks; ++c) {
-    //     double hp_tmp[hp_C];
-    //     float lp_tmp[hp_C];
-
-    //     for (ST i = 0; i < hp_C; ++i) {
-    //         hp_tmp[i] = 0.0;
-    //     }
-    //     for (ST i = 0; i < hp_C; ++i) {
-    //         lp_tmp[i] = 0.0f;
-    //     }
-
-    //     IT hp_cs = hp_chunk_ptrs[c];
-    //     IT lp_cs = lp_chunk_ptrs[c];
-
-    //     IT combined_chunk = hp_chunk_lengths[c]+lp_chunk_lengths[c];
-
-    //     for (IT j = 0; j < combined_chunk; ++j) {
-    //         if(j < hp_chunk_lengths[c]){
-    //             for (IT i = 0; i < hp_C; ++i) {
-    //                 hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
-    //             }  
-    //         }
-    //         else{
-    //             IT lp_shift_j = j - hp_chunk_lengths[c];
-    //             for (IT i = 0; i < hp_C; ++i) {
-    //                 lp_tmp[i] += lp_values[lp_cs + lp_shift_j * hp_C + i] * lp_x[lp_col_idxs[lp_cs + lp_shift_j * hp_C + i]];
-    //             }
-    //         }
-    //     }
-
-    //     for (ST i = 0; i < hp_C; ++i) {
-    //         hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
-    //     }
-    // }
 }
 
 #ifdef __CUDACC__
@@ -898,14 +610,96 @@ void spmv_gpu_scs_launcher(
     const ST * n_blocks,
     const int * my_rank = NULL
 ){
-    // int num_blocks = (*num_rows + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    // std::cout << "*n_blocks = " << *n_blocks << std::endl;
-    // std::cout << "(*num_rows + THREADS_PER_BLOCK - 1) = " << (*num_rows + THREADS_PER_BLOCK - 1) << std::endl;
-    // std::cout << "num_blocks = " << (*num_rows + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK << std::endl;
     spmv_gpu_scs<<<*n_blocks, THREADS_PER_BLOCK>>>(
         C, num_rows, row_ptrs, row_lengths, col_idxs, values, x, y
     );
-    // exit(1);
+}
+
+template <typename IT>
+__global__ void
+spmv_gpu_mp_scs(
+    const ST * hp_C, // 1
+    const ST * hp_n_chunks, // n_chunks (same for both)
+    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST * lp_C, // 1
+    const ST * lp_n_chunks, // n_chunks (same for both)
+    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    const int * my_rank
+)
+{
+    long row = threadIdx.x + blockDim.x * blockIdx.x;
+    int c   = row / (*hp_C);  // the no. of the chunk
+    int idx = row % (*hp_C);  // index inside the chunk
+
+    if (row < *hp_n_chunks * (*hp_C)) {
+        double hp_tmp{};
+        double lp_tmp{};
+
+        int hp_cs = hp_chunk_ptrs[c];
+        int lp_cs = lp_chunk_ptrs[c];
+
+        for (int j = 0; j < hp_chunk_lengths[c]; ++j) {
+            hp_tmp += hp_values[hp_cs + j * (*hp_C) + idx] * hp_x[hp_col_idxs[hp_cs + j * (*hp_C) + idx]];
+        }
+        for (int j = 0; j < lp_chunk_lengths[c]; ++j) {
+            lp_tmp += lp_values[lp_cs + j * (*lp_C) + idx] * lp_x[lp_col_idxs[lp_cs + j * (*lp_C) + idx]];
+            // lp_tmp += lp_values[lp_cs + j * (*lp_C) + idx] * hp_x[lp_col_idxs[lp_cs + j * (*lp_C) + idx]];
+        }
+
+        hp_y[row] = hp_tmp + lp_tmp;
+    }
+}
+
+template <typename IT>
+void spmv_gpu_mp_scs_launcher(
+    const ST * hp_C, // 1
+    const ST * hp_n_chunks, // n_chunks (same for both)
+    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST * lp_C, // 1
+    const ST * lp_n_chunks, // n_chunks (same for both)
+    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_chunk_lengths, // unused
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    const ST * n_blocks,
+    const int * my_rank
+){
+    spmv_gpu_mp_scs<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
+        hp_C,
+        hp_n_chunks,
+        hp_chunk_ptrs,
+        hp_chunk_lengths,
+        hp_col_idxs,
+        hp_values,
+        hp_x,
+        hp_y,
+        lp_C,
+        lp_n_chunks,
+        lp_chunk_ptrs,
+        lp_chunk_lengths,
+        lp_col_idxs,
+        lp_values,
+        lp_x,
+        lp_y,
+        my_rank
+    );
 }
 
 template <typename VT, typename IT>
@@ -951,14 +745,92 @@ void spmv_gpu_csr_launcher(
     const ST * n_blocks,
     const int * my_rank = NULL
 ){
-    // int num_blocks = (*num_rows + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    // std::cout << "*n_blocks = " << *n_blocks << std::endl;
-    // std::cout << "(*num_rows + THREADS_PER_BLOCK - 1) = " << (*num_rows + THREADS_PER_BLOCK - 1) << std::endl;
-    // std::cout << "num_blocks = " << (*num_rows + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK << std::endl;
     spmv_gpu_csr<<<*n_blocks, THREADS_PER_BLOCK>>>(
         C, num_rows, row_ptrs, row_lengths, col_idxs, values, x, y
     );
-    // exit(1);
+}
+
+template <typename IT>
+__global__ void 
+spmv_gpu_mp_csr(
+    const ST * hp_C, // 1
+    const ST * hp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST * lp_C, // 1
+    const ST * lp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_row_lengths, // unused for now
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    const int * my_rank = NULL
+    )
+{   
+    // Idea is for each thread to be responsible for one row
+    int thread_idx_in_block = threadIdx.x;
+    int block_offset = blockIdx.x*blockDim.x;
+    int thread_idx = block_offset + thread_idx_in_block;
+    double hp_sum{};
+    float lp_sum{};
+
+    if(thread_idx < *hp_n_rows){
+        for(int nz_idx = hp_row_ptrs[thread_idx]; nz_idx < hp_row_ptrs[thread_idx+1]; ++nz_idx){
+            hp_sum += hp_values[nz_idx] * hp_x[hp_col_idxs[nz_idx]];
+        }
+        for(int nz_idx = lp_row_ptrs[thread_idx]; nz_idx < lp_row_ptrs[thread_idx+1]; ++nz_idx){
+            // lp_sum += lp_values[nz_idx] * lp_x[lp_col_idxs[nz_idx]];
+            lp_sum += lp_values[nz_idx] * hp_x[lp_col_idxs[nz_idx]];
+        }
+
+        hp_y[thread_idx] = hp_sum + lp_sum;
+    }
+}
+
+template <typename IT>
+void spmv_gpu_mp_csr_launcher(
+    const ST * hp_C, // 1
+    const ST * hp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const double * RESTRICT hp_values,
+    double * RESTRICT hp_x,
+    double * RESTRICT hp_y, 
+    const ST * lp_C, // 1
+    const ST * lp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT lp_row_lengths, // unused for now
+    const IT * RESTRICT lp_col_idxs,
+    const float * RESTRICT lp_values,
+    float * RESTRICT lp_x,
+    float * RESTRICT lp_y, // unused
+    const ST * n_blocks,
+    const int * my_rank = NULL
+){
+    spmv_gpu_mp_csr<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
+        hp_C,  
+        hp_n_rows,
+        hp_row_ptrs, 
+        hp_row_lengths, 
+        hp_col_idxs, 
+        hp_values, 
+        hp_x, 
+        hp_y,
+        lp_C, 
+        lp_n_rows, 
+        lp_row_ptrs, 
+        lp_row_lengths, 
+        lp_col_idxs, 
+        lp_values, 
+        lp_x, 
+        lp_y
+    );
 }
 
 // Advanced SpMV kernels for computing  y = A * x, where A is a sparse matrix
@@ -1049,14 +921,9 @@ void spmv_gpu_scs_adv_launcher(
     const ST * n_blocks,
     const int * my_rank = NULL
 ){
-    // int num_blocks = (*num_rows + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    // std::cout << "*n_blocks = " << *n_blocks << std::endl;
-    // std::cout << "(*num_rows + THREADS_PER_BLOCK - 1) = " << (*num_rows + THREADS_PER_BLOCK - 1) << std::endl;
-    // std::cout << "num_blocks = " << (*num_rows + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK << std::endl;
     spmv_gpu_scs_adv<<<*n_blocks, THREADS_PER_BLOCK>>>(
         C, num_rows, row_ptrs, row_lengths, col_idxs, values, x, y
     );
-    // exit(1);
 }
 
 #endif

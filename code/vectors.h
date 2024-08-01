@@ -45,7 +45,7 @@ public:
         return *this;
     }
 
-    virtual ~BaseVector() = default;
+    // virtual ~BaseVector() = default;
 
     IT n_rows{};
 
@@ -104,11 +104,11 @@ public:
 
 
 
-    virtual ~Vector()
-    {
-        if (this->data())
-            free(this->data());
-    }
+    // virtual ~Vector()
+    // {
+    //     if (this->data())
+    //         free(this->data());
+    // }
 
     inline       VT & operator()(IT r)       { return this->data()[r]; }
     inline const VT & operator()(IT r) const { return this->data()[r]; }
@@ -176,7 +176,6 @@ private:
     }
 };
 
-// TODO: Why would one need this?
 // template<typename VT, typename IT>
 // class VectorGpu : public BaseVector<VT, IT>
 // {
@@ -185,10 +184,11 @@ private:
 //     explicit VectorGpu(const Vector<VT, IT> & dv)
 //     : BaseVector<VT, IT>(dv.n_rows)
 //     {
-// #ifdef __NVCC__
+// // #ifdef __NVCC__
+// #ifdef __CUDACC__
 //         size_t n_bytes_to_alloc = sizeof(VT) * this->n_rows;
 
-//         double t_start = get_time();
+//         // double t_start = get_time();
 
 //         VT * memory;
 //         assert_gpu(cudaMalloc(&memory, n_bytes_to_alloc));
@@ -196,7 +196,7 @@ private:
 
 //         assert_gpu(cudaMemcpy(this->data(), dv.data(), n_bytes_to_alloc, cudaMemcpyHostToDevice));
 
-//         double duration = get_time() - t_start;
+//         // double duration = get_time() - t_start;
 
 //         // log("VectorGpu: copy host -> device:  %9e MB   %9e MB/s   %e s\n",
 //         //     n_bytes_to_alloc / 1e6, n_bytes_to_alloc / 1e6 / duration, duration);
@@ -227,15 +227,16 @@ private:
 //     copy_from_device()
 //     {
 //         Vector<VT, IT> dv(this->n_rows);
-// #ifdef __NVCC__
-//         double t_start = get_time();
+// // #ifdef __NVCC__
+// #ifdef __CUDACC__
+//         // double t_start = get_time();
 
 //         assert_gpu(cudaMemcpy(dv.data(),
 //                               this->data(),
 //                               sizeof(VT) * this->n_rows,
 //                               cudaMemcpyDeviceToHost));
 
-//         double duration = get_time() - t_start;
+//         // double duration = get_time() - t_start;
 
 //         size_t n_bytes_to_alloc = sizeof(VT) * this->n_rows;
 //         // log("VectorGpu: copy device -> host:  %9e MB   %9e MB/s   %e s\n",

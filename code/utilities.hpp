@@ -1155,10 +1155,10 @@ void parse_cli_inputs(
         {
             config->bucket_size = atof(argv[++i]); // i.e. grab the NEXT
 
-            if (config->bucket_size <= 0)
+            if (config->bucket_size < 0)
             {
                 if(my_rank == 0){
-                    fprintf(stderr, "ERROR: bucket_size must be > 0.\n");
+                    fprintf(stderr, "ERROR: bucket_size must be nonnegative.\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }
@@ -1216,10 +1216,6 @@ void parse_cli_inputs(
     if (*seg_method == "seg-metis"){
         if(my_rank == 0){fprintf(stderr, "ERROR: seg-metis selected, but USE_METIS not defined in Makefile.\n");exit(1);}
     }
-#endif
-
-#ifdef __CUDACC__
-    if(*value_type == "mp"){fprintf(stderr, "ERROR: Mixed precision with GPUs is not supported at this time.\n");exit(1);}
 #endif
 
 #ifndef USE_MPI
@@ -1320,7 +1316,7 @@ template <typename T> inline void sortPerm(T *arr, int *perm, int range_lo, int 
 
 template <typename MT, typename VT, typename IT>
 void convert_to_scs(
-    const MtxData<MT, IT> *local_mtx,
+    MtxData<MT, IT> *local_mtx,
     ST C,
     ST sigma,
     ScsData<VT, IT> *scs,
@@ -1400,10 +1396,10 @@ void convert_to_scs(
                 n_els_per_row_tmp[i].second = n_els_per_row[i].second;
             }
         }
-        // for(int i = 0; i < scs->n_rows; ++i){
-        //     n_els_per_row[i] = n_els_per_row_tmp[i];
-        // }
-        n_els_per_row = n_els_per_row_tmp;
+        for(int i = 0; i < scs->n_rows; ++i){
+            n_els_per_row[i] = n_els_per_row_tmp[i];
+        }
+        // n_els_per_row = n_els_per_row_tmp;
     }
     else{
         for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
@@ -1509,11 +1505,18 @@ void convert_to_scs(
     }
 
     // Sort inverse permutation vector, based on scs->old_to_new_idx
-    std::vector<int> inv_perm(scs->n_rows);
-    std::vector<int> inv_perm_temp(scs->n_rows);
-    std::iota(std::begin(inv_perm_temp), std::end(inv_perm_temp), 0); // Fill with 0, 1, ..., scs->n_rows.
+    // std::vector<int> inv_perm(scs->n_rows);
+    // std::vector<int> inv_perm_temp(scs->n_rows);
+    // std::iota(std::begin(inv_perm_temp), std::end(inv_perm_temp), 0); // Fill with 0, 1, ..., scs->n_rows.
+    // generate_inv_perm<IT>(scs->old_to_new_idx.data(), &(inv_perm)[0],  scs->n_rows);
 
-    generate_inv_perm<IT>(scs->old_to_new_idx.data(), &inv_perm[0],  scs->n_rows);
+
+    int *inv_perm = new int[scs->n_rows];
+    int *inv_perm_temp = new int[scs->n_rows];
+    for(int i = 0; i < scs->n_rows; ++i){
+        inv_perm_temp[i] = i;
+    }
+    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm,  scs->n_rows);
 
     scs->new_to_old_idx = inv_perm;
 
@@ -1840,10 +1843,11 @@ void extract_matrix_min_mean_max(
     config->matrix_max = max_val;
     config->matrix_min = min_val;
 
+#ifdef DEBUG_MODE
     printf("matrix_min = %f\n", config->matrix_min);
     printf("matrix_mean = %f\n", config->matrix_mean);
     printf("matrix_max = %f\n", config->matrix_max);
-
+#endif
 };
 
 // template <typename VT, typename IT>

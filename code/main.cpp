@@ -103,128 +103,225 @@ void bench_spmv(
 #ifdef __CUDACC__
     // If using cuda compiler, move data to device and assign device pointers
     printf("Moving data to device...\n");
-    // Move data to device
-    VT *d_x;
-    VT *d_y;
-
-    ST *d_C;
-    ST *d_n_chunks;
-    IT *d_chunk_ptrs;
-    IT *d_chunk_lengths;
-    IT *d_col_idxs;
-    VT *d_values;
-    // IT *d_old_to_new_idx;
-    // IT *d_new_to_old_idx;
-
+    long n_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     int vec_size = local_scs->n_rows_padded;
-    long n_scs_elements = local_scs->chunk_ptrs[local_scs->n_chunks - 1]
-                + local_scs->chunk_lengths[local_scs->n_chunks - 1] * local_scs->C;
-
-    if(config->value_type == "dp"){
-        cudaMalloc(&d_values, n_scs_elements*sizeof(double));
-        cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(double), cudaMemcpyHostToDevice);
-    }
-    else if(config->value_type == "sp"){
-        cudaMalloc(&d_values, n_scs_elements*sizeof(float));
-        cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(float), cudaMemcpyHostToDevice);
-    }
+    config->num_blocks = n_blocks; // Just for ease of results printing later
+    config->tpb = THREADS_PER_BLOCK;
     
-    cudaMalloc(&d_C, sizeof(long));
-    cudaMalloc(&d_n_chunks, sizeof(long));
-    cudaMalloc(&d_chunk_ptrs, (local_scs->n_chunks + 1)*sizeof(int));
-    cudaMalloc(&d_chunk_lengths, local_scs->n_chunks*sizeof(int));
-    cudaMalloc(&d_col_idxs, n_scs_elements*sizeof(int));
+    VT *d_x = new VT;
+    VT *d_y = new VT;
+    ST *d_C = new ST;
+    ST *d_n_chunks = new ST;
+    IT *d_chunk_ptrs = new IT;
+    IT *d_chunk_lengths = new IT;
+    IT *d_col_idxs = new IT;
+    VT *d_values = new VT;
+    ST *d_n_blocks = new ST;
 
-    cudaMemcpy(d_chunk_ptrs, &(local_scs->chunk_ptrs)[0], (local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_chunk_lengths, &(local_scs->chunk_lengths)[0], local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_col_idxs, &(local_scs->col_idxs)[0], n_scs_elements*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_C, &local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_n_chunks, &local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+    double *d_x_hp = new double;
+    double *d_y_hp = new double;
+    ST *d_C_hp = new ST;
+    ST *d_n_chunks_hp = new ST;
+    IT *d_chunk_ptrs_hp = new IT;
+    IT *d_chunk_lengths_hp = new IT;
+    IT *d_col_idxs_hp = new IT;
+    double *d_values_hp = new double;
+    float *d_x_lp = new float;
+    float *d_y_lp = new float;
+    ST *d_C_lp = new ST;
+    ST *d_n_chunks_lp = new ST;
+    IT *d_chunk_ptrs_lp = new IT;
+    IT *d_chunk_lengths_lp = new IT;
+    IT *d_col_idxs_lp = new IT;
+    float *d_values_lp = new float;
 
-    if(config->value_type == "dp"){
-        // Make type-specific copy to send to device
-        double *local_x_hardcopy = new double[vec_size];
-        double *local_y_hardcopy = new double[vec_size];
+    if(config->value_type == "mp"){
+        // Allocate space for MP structs on device
+        
+        long n_scs_elements_hp = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
+                    + hp_local_scs->chunk_lengths[hp_local_scs->n_chunks - 1] * hp_local_scs->C;
+        long n_scs_elements_lp = lp_local_scs->chunk_ptrs[lp_local_scs->n_chunks - 1]
+                    + lp_local_scs->chunk_lengths[lp_local_scs->n_chunks - 1] * lp_local_scs->C;
+        cudaMalloc(&d_values_hp, n_scs_elements_hp*sizeof(double));
+        cudaMalloc(&d_values_lp, n_scs_elements_lp*sizeof(float));
+        cudaMemcpy(d_values_hp, &(hp_local_scs->values)[0], n_scs_elements_hp*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_values_lp, &(lp_local_scs->values)[0], n_scs_elements_lp*sizeof(float), cudaMemcpyHostToDevice);
+
+        cudaMalloc(&d_C_hp, sizeof(long));
+        cudaMalloc(&d_n_chunks_hp, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs_hp, (hp_local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths_hp, hp_local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs_hp, n_scs_elements_hp*sizeof(int));
+        cudaMalloc(&d_C_lp, sizeof(long));
+        cudaMalloc(&d_n_chunks_lp, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs_lp, (lp_local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths_lp, lp_local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs_lp, n_scs_elements_lp*sizeof(int));
+
+        // Copy matrix data to device
+        cudaMemcpy(d_chunk_ptrs_hp, &(hp_local_scs->chunk_ptrs)[0], (hp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths_hp, &(hp_local_scs->chunk_lengths)[0], hp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs_hp, &(hp_local_scs->col_idxs)[0], n_scs_elements_hp*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C_hp, &hp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks_hp, &hp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+
+        cudaMemcpy(d_chunk_ptrs_lp, &(lp_local_scs->chunk_ptrs)[0], (lp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths_lp, &(lp_local_scs->chunk_lengths)[0], lp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs_lp, &(lp_local_scs->col_idxs)[0], n_scs_elements_lp*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C_lp, &lp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks_lp, &lp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+
+        // Copy x and y data to device
+        double *local_x_hp_hardcopy = new double[vec_size];
+        double *local_y_hp_hardcopy = new double[vec_size];
+        float *local_x_lp_hardcopy = new float[vec_size];
+        float *local_y_lp_hardcopy = new float[vec_size];
 
         #pragma omp parallel for
         for(int i = 0; i < vec_size; ++i){
-            local_x_hardcopy[i] = local_x_permuted[i];
-            local_y_hardcopy[i] = (*local_y)[i];
+            local_x_hp_hardcopy[i] = hp_local_x_permuted[i];
+            local_y_hp_hardcopy[i] = (*hp_local_y)[i];
+            local_x_lp_hardcopy[i] = lp_local_x_permuted[i];
+            local_y_lp_hardcopy[i] = (*lp_local_y)[i];
         }
 
-        cudaMalloc(&d_x, vec_size*sizeof(double));
-        cudaMalloc(&d_y, vec_size*sizeof(double));
+        cudaMalloc(&d_x_hp, vec_size*sizeof(double));
+        cudaMalloc(&d_y_hp, vec_size*sizeof(double));
+        cudaMalloc(&d_x_lp, vec_size*sizeof(float));
+        cudaMalloc(&d_y_lp, vec_size*sizeof(float));
 
-        cudaMemcpy(d_x, local_x_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y, local_y_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_x_hp, local_x_hp_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_hp, local_y_hp_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_x_lp, local_x_lp_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_lp, local_y_lp_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);
 
-        delete local_x_hardcopy;
-        delete local_y_hardcopy;
+        delete local_x_hp_hardcopy;
+        delete local_y_hp_hardcopy;
+        delete local_x_lp_hardcopy;
+        delete local_y_lp_hardcopy;
+
+        // Pack pointers into struct 
+        // TODO: allow for each struct to have it's own C
+        two_prec_kernel_args_encoded->hp_C =             d_C_hp;
+        two_prec_kernel_args_encoded->hp_n_chunks =      d_n_chunks_hp; //shared for now
+        two_prec_kernel_args_encoded->hp_chunk_ptrs =    d_chunk_ptrs_hp;
+        two_prec_kernel_args_encoded->hp_chunk_lengths = d_chunk_lengths_hp;
+        two_prec_kernel_args_encoded->hp_col_idxs =      d_col_idxs_hp;
+        two_prec_kernel_args_encoded->hp_values =        d_values_hp;
+        two_prec_kernel_args_encoded->hp_local_x =       d_x_hp;
+        two_prec_kernel_args_encoded->hp_local_y =       d_y_hp;
+        two_prec_kernel_args_encoded->lp_C =             d_C_hp; // shared
+        two_prec_kernel_args_encoded->lp_n_chunks =      d_n_chunks_hp; //shared for now
+        two_prec_kernel_args_encoded->lp_chunk_ptrs =    d_chunk_ptrs_lp;
+        two_prec_kernel_args_encoded->lp_chunk_lengths = d_chunk_lengths_lp;
+        two_prec_kernel_args_encoded->lp_col_idxs =      d_col_idxs_lp;
+        two_prec_kernel_args_encoded->lp_values =        d_values_lp;
+        two_prec_kernel_args_encoded->lp_local_x =       d_x_lp;
+        two_prec_kernel_args_encoded->lp_local_y =       d_y_lp;
+        two_prec_kernel_args_encoded->n_blocks =         &n_blocks;
+        kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
+
     }
-    else if (config->value_type == "sp"){
-        // Make type-specific copy to send to device
-        float *local_x_hardcopy = new float[vec_size];
-        float *local_y_hardcopy = new float[vec_size];
+    else{
+        long n_scs_elements = local_scs->chunk_ptrs[local_scs->n_chunks - 1]
+                    + local_scs->chunk_lengths[local_scs->n_chunks - 1] * local_scs->C;
 
-        #pragma omp parallel for
-        for(int i = 0; i < vec_size; ++i){
-            local_x_hardcopy[i] = local_x_permuted[i];
-            local_y_hardcopy[i] = (*local_y)[i];
+        if(config->value_type == "dp"){
+            cudaMalloc(&d_values, n_scs_elements*sizeof(double));
+            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(double), cudaMemcpyHostToDevice);
+        }
+        else if(config->value_type == "sp"){
+            cudaMalloc(&d_values, n_scs_elements*sizeof(float));
+            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(float), cudaMemcpyHostToDevice);
+        }
+        
+        cudaMalloc(&d_C, sizeof(long));
+        cudaMalloc(&d_n_chunks, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs, (local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths, local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs, n_scs_elements*sizeof(int));
+
+        cudaMemcpy(d_chunk_ptrs, &(local_scs->chunk_ptrs)[0], (local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths, &(local_scs->chunk_lengths)[0], local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs, &(local_scs->col_idxs)[0], n_scs_elements*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C, &local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks, &local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+
+        if(config->value_type == "dp"){
+            // Make type-specific copy to send to device
+            double *local_x_hardcopy = new double[vec_size];
+            double *local_y_hardcopy = new double[vec_size];
+
+            #pragma omp parallel for
+            for(int i = 0; i < vec_size; ++i){
+                local_x_hardcopy[i] = local_x_permuted[i];
+                local_y_hardcopy[i] = (*local_y)[i];
+            }
+
+            cudaMalloc(&d_x, vec_size*sizeof(double));
+            cudaMalloc(&d_y, vec_size*sizeof(double));
+
+            cudaMemcpy(d_x, local_x_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_y, local_y_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
+
+            delete local_x_hardcopy;
+            delete local_y_hardcopy;
+        }
+        else if (config->value_type == "sp"){
+            // Make type-specific copy to send to device
+            float *local_x_hardcopy = new float[vec_size];
+            float *local_y_hardcopy = new float[vec_size];
+
+            #pragma omp parallel for
+            for(int i = 0; i < vec_size; ++i){
+                local_x_hardcopy[i] = local_x_permuted[i];
+                local_y_hardcopy[i] = (*local_y)[i];
+            }
+
+            cudaMalloc(&d_x, vec_size*sizeof(float));
+            cudaMalloc(&d_y, vec_size*sizeof(float));
+
+            cudaMemcpy(d_x, local_x_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_y, local_y_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);   
+
+            delete local_x_hardcopy;
+            delete local_y_hardcopy;
         }
 
-        cudaMalloc(&d_x, vec_size*sizeof(float));
-        cudaMalloc(&d_y, vec_size*sizeof(float));
 
-        cudaMemcpy(d_x, local_x_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y, local_y_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);   
-
-        delete local_x_hardcopy;
-        delete local_y_hardcopy;
+        // All args for kernel reside on the device
+        one_prec_kernel_args_encoded->C =             d_C;
+        one_prec_kernel_args_encoded->n_chunks =      d_n_chunks;
+        one_prec_kernel_args_encoded->chunk_ptrs =    d_chunk_ptrs;
+        one_prec_kernel_args_encoded->chunk_lengths = d_chunk_lengths;
+        one_prec_kernel_args_encoded->col_idxs =      d_col_idxs;
+        one_prec_kernel_args_encoded->values =        d_values;
+        one_prec_kernel_args_encoded->local_x =       d_x;
+        one_prec_kernel_args_encoded->local_y =       d_y;
+        one_prec_kernel_args_encoded->n_blocks =      &n_blocks;
+        kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
     }
-
-
-    // All args for kernel reside on the device
-    one_prec_kernel_args_encoded->C = d_C;
-    one_prec_kernel_args_encoded->n_chunks = d_n_chunks;
-    // one_prec_kernel_args_encoded->C =             local_scs->C;
-    // one_prec_kernel_args_encoded->n_chunks =      local_scs->n_rows_padded;
-    one_prec_kernel_args_encoded->chunk_ptrs =    d_chunk_ptrs;
-    one_prec_kernel_args_encoded->chunk_lengths = d_chunk_lengths;
-    one_prec_kernel_args_encoded->col_idxs =      d_col_idxs;
-    one_prec_kernel_args_encoded->values =        d_values;
-    one_prec_kernel_args_encoded->local_x =       d_x;
-    one_prec_kernel_args_encoded->local_y =       d_y;
-    one_prec_kernel_args_encoded->n_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
-
 #else
     if(config->value_type == "mp"){
         // Encode kernel args into struct
-        two_prec_kernel_args_encoded->n_chunks = &hp_local_scs->n_chunks; //shared for now
+        
         // TODO: allow for each struct to have it's own C
         two_prec_kernel_args_encoded->hp_C = &hp_local_scs->C;
+        two_prec_kernel_args_encoded->hp_n_chunks = &hp_local_scs->n_chunks; //shared for now
         two_prec_kernel_args_encoded->hp_chunk_ptrs = hp_local_scs->chunk_ptrs.data();
         two_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
         two_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
         two_prec_kernel_args_encoded->hp_values = hp_local_scs->values.data();
-        // two_prec_kernel_args_encoded->hp_local_x = &(*hp_local_x)[0];
         two_prec_kernel_args_encoded->hp_local_x = &(hp_local_x_permuted)[0];
         two_prec_kernel_args_encoded->hp_local_y = &(*hp_local_y)[0];
         two_prec_kernel_args_encoded->lp_C = &lp_local_scs->C;
+        two_prec_kernel_args_encoded->lp_n_chunks = &hp_local_scs->n_chunks; //shared for now
         two_prec_kernel_args_encoded->lp_chunk_ptrs = lp_local_scs->chunk_ptrs.data();
         two_prec_kernel_args_encoded->lp_chunk_lengths = lp_local_scs->chunk_lengths.data();
         two_prec_kernel_args_encoded->lp_col_idxs = lp_local_scs->col_idxs.data();
         two_prec_kernel_args_encoded->lp_values = lp_local_scs->values.data();
-        // two_prec_kernel_args_encoded->lp_local_x = &(*lp_local_x)[0];
         two_prec_kernel_args_encoded->lp_local_x = &(lp_local_x_permuted)[0];
         two_prec_kernel_args_encoded->lp_local_y = &(*lp_local_y)[0];
-
-        // Not a good direction
-        // two_prec_kernel_args_encoded->lp_perm = &(lp_local_scs->old_to_new_idx)[0];
-        // two_prec_kernel_args_encoded->hp_perm = &(hp_local_scs->old_to_new_idx)[0];
-        // two_prec_kernel_args_encoded->lp_inv_perm = &(lp_local_scs->new_to_old_idx)[0];
-        // two_prec_kernel_args_encoded->hp_inv_perm = &(hp_local_scs->new_to_old_idx)[0];
-
         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
     }
     else{
@@ -264,27 +361,10 @@ void bench_spmv(
     // Enter main COMM-SPMV-SWAP loop, bench mode
     if(config->mode == 'b'){
 #ifdef __CUDACC__
-    const int num_blocks = (vec_size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    config->num_blocks = num_blocks; // Just for ease of results printing
-    config->tpb = THREADS_PER_BLOCK;
     float warmup_runtime = 0.0;
     cudaEvent_t start, stop, warmup_start, warmup_stop;
     cudaEventCreate(&warmup_start);
     cudaEventCreate(&warmup_stop);
-
-    // Hacky way to call advanced SCS
-    int use_adv_gpu_kernels = 0;
-    if(
-        local_scs->C == 2 || 
-        local_scs->C == 4 ||
-        local_scs->C == 8 ||
-        local_scs->C == 16 ||
-        local_scs->C == 32 ||
-        local_scs->C == 64 ||
-        local_scs->C == 128
-    ){
-        use_adv_gpu_kernels = 1;
-    }
 #endif
 
 #ifdef USE_MPI
@@ -339,9 +419,6 @@ void bench_spmv(
 #endif
         std::cout << "warm up time: " << end_warm_up_loop_time - begin_warm_up_loop_time << std::endl;  
 #endif
-
-    
-
 
 #ifdef __CUDACC__
     cudaEventCreate(&start);
@@ -545,42 +622,49 @@ void bench_spmv(
 #endif
         }
 
-        // Copy results to local_x
+// Copy permuted results back into local_x
 #ifdef __CUDACC__
-        if(config->value_type == "dp"){
+        if(config->value_type == "mp"){
+            cudaMemcpy(&(*hp_local_x)[0], spmv_kernel.hp_local_x, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+        }
+        else if(config->value_type == "dp"){
             cudaMemcpy(&(*local_x)[0], spmv_kernel.local_x, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
         }
         else if(config->value_type == "sp"){
             cudaMemcpy(&(*local_x)[0], spmv_kernel.local_x, local_scs->n_rows_padded*sizeof(float), cudaMemcpyDeviceToHost);
         }
 #else
-        // local_x = spmv_kernel.local_x;
-        for(int i = 0; i < local_scs->n_rows_padded; ++i){
-            (*local_x)[i] = (spmv_kernel.local_x)[i];
-        }
-#endif  
-
         if(config->value_type == "mp"){
-            // TODO: Update!!
-            apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(spmv_kernel.hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
+            for(int i = 0; i < local_scs->n_rows_padded; ++i){
+                (*hp_local_x)[i] = (spmv_kernel.hp_local_x)[i];
+            }
+        }
+        else{
+            for(int i = 0; i < local_scs->n_rows_padded; ++i){
+                (*local_x)[i] = (spmv_kernel.local_x)[i];
+            }
+        }
+#endif
+
+        // TODO: Clean up!
+        if(config->value_type == "mp"){
+            
+            apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(*hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
         
-            // // Give result to local_y for results output
+            // Give result to local_y for results output
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = (sorted_hp_local_y)[i];
             }
-        
-            // Give result to local_y for results output
-            // for(int i = 0; i < local_y->size(); ++i){
-            //     (*local_y)[i] = (spmv_kernel.hp_local_x)[i];
-            // }
         }
         else{
+
             apply_permutation<VT, IT>(&(sorted_local_y)[0], &(*local_x)[0], &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-            
+                
             // Give result to local_y for results output
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = (sorted_local_y)[i];
             }
+
         }
 
         // Manually resize for ease later on (and I don't see a better way)
@@ -618,6 +702,7 @@ void bench_spmv(
     r->value_type_size = sizeof(VT);
     r->index_type_size = sizeof(IT);
 
+    // TODO: ????
     // r->was_matrix_sorted = local_scs->is_sorted;
     r->was_matrix_sorted = 1;
 
@@ -629,26 +714,48 @@ void bench_spmv(
     // Only relevant for mp
     r->hp_nnz = hp_local_scs->nnz;
     r->lp_nnz = lp_local_scs->nnz;
+
     r->hp_beta = (double)hp_local_scs->nnz / hp_local_scs->n_elements;
+    if(hp_local_scs->n_elements == 0)
+        r->hp_beta = 0;
     r->lp_beta = (double)lp_local_scs->nnz / lp_local_scs->n_elements;
+    if(lp_local_scs->n_elements == 0)
+        r->lp_beta = 0;
 
 #ifdef USE_MPI
     delete[] recv_requests;
     delete[] send_requests;
 #endif
 
-#ifdef __CUDACC__
-    cudaFree(d_x);
-    cudaFree(d_y);
-
-    cudaFree(d_C);
-    cudaFree(d_n_chunks);
-    cudaFree(d_chunk_ptrs);
-    cudaFree(d_chunk_lengths);
-    cudaFree(d_col_idxs);
-    cudaFree(d_values);
-
-#endif
+// TODO: Memcheck doesn't like this for some reason
+// #ifdef __CUDACC__
+//     if(config->value_type == "mp"){
+//         cudaFree(d_x_hp);
+//         cudaFree(d_y_hp);
+//         cudaFree(d_C_hp);
+//         cudaFree(d_n_chunks_hp);
+//         cudaFree(d_chunk_ptrs_hp);
+//         cudaFree(d_chunk_lengths_hp);
+//         cudaFree(d_col_idxs_hp);
+//         cudaFree(d_values_hp);
+//         cudaFree(d_x_lp);
+//         cudaFree(d_y_lp);
+//         cudaFree(d_C_lp);
+//         cudaFree(d_n_chunks_lp);
+//         cudaFree(d_chunk_ptrs_lp);
+//         cudaFree(d_chunk_lengths_lp);
+//         cudaFree(d_col_idxs_lp);
+//         cudaFree(d_values_lp);
+//     }
+//         cudaFree(d_x);
+//         cudaFree(d_y);
+//         cudaFree(d_C);
+//         cudaFree(d_n_chunks);
+//         cudaFree(d_chunk_ptrs);
+//         cudaFree(d_chunk_lengths);
+//         cudaFree(d_col_idxs);
+//         cudaFree(d_values);
+// #endif
 
     delete comm_args_encoded;
     delete one_prec_kernel_args_encoded;

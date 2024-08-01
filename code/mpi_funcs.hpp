@@ -859,15 +859,15 @@ void seperate_lp_from_hp(
     int lp_elem_ctr = 0;
     int hp_elem_ctr = 0;
 
-    std::vector<int> hp_local_I;
-    std::vector<int> hp_local_J;
+    std::vector<IT> hp_local_I;
+    std::vector<IT> hp_local_J;
     std::vector<double> hp_local_vals;
     hp_local_mtx->I = hp_local_I;
     hp_local_mtx->J = hp_local_J;
     hp_local_mtx->values = hp_local_vals;
 
-    std::vector<int> lp_local_I;
-    std::vector<int> lp_local_J;
+    std::vector<IT> lp_local_I;
+    std::vector<IT> lp_local_J;
     std::vector<float> lp_local_vals;
     lp_local_mtx->I = lp_local_I;
     lp_local_mtx->J = lp_local_J;
@@ -902,13 +902,17 @@ void seperate_lp_from_hp(
                 hp_local_mtx->J.push_back(local_mtx->J[i]);
                 ++hp_elem_ctr;
             }
-            else{
+            else if (std::abs(local_mtx->values[i]) < (long double) threshold){
                 // else, place in lp_local_mtx 
                 lp_local_mtx->values.push_back(local_mtx->values[i]);
                 lp_local_mtx->I.push_back(local_mtx->I[i]);
                 lp_local_mtx->J.push_back(local_mtx->J[i]);
                 ++lp_elem_ctr;
-            } 
+            }
+            else{
+                printf("seperate_lp_from_hp ERROR: Element %i does not fit into either struct.\n", i);
+                exit(1);
+            }
         }
 
     }
@@ -981,7 +985,7 @@ void init_local_structs(
     // extract matrix (and give to x-vector if option chosen at cli)
     extract_matrix_min_mean_max(local_mtx, config);
 
-    // convert local_mtx to local_scs and permute rows (if sigma > 1)
+    // convert local_mtx to local_scs (and permute rows if sigma > 1)
     convert_to_scs<VT, VT, IT>(local_mtx, config->chunk_size, config->sigma, local_scs, NULL, work_sharing_arr, my_rank);
 
     // Only used for mixed precision
