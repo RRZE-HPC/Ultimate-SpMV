@@ -7,6 +7,10 @@
 #include <functional> 
 #include <ctime>
 
+#ifdef USE_CUSPARSE
+#include <cusparse.h> 
+#endif
+
 #ifdef USE_MPI
 #include <mpi.h>
 #endif
@@ -194,10 +198,26 @@ struct TwoPrecKernelArgs
 #endif
 };
 
+#ifdef USE_CUSPARSE
+// template <typename VT, typename IT> Dont need templating?
+struct CuSparseArgs
+{
+    cusparseHandle_t          handle;
+    cusparseOperation_t       opA;
+    const void*               alpha;
+    cusparseConstSpMatDescr_t matA;  // non-const descriptor supported
+    cusparseConstDnVecDescr_t vecX;  // non-const descriptor supported
+    const void*               beta;
+    cusparseDnVecDescr_t      vecY;
+    cudaDataType              computeType;
+    cusparseSpMVAlg_t         alg;
+    void*                     externalBuffer;
+};
+#endif
+
 template <typename VT, typename IT>
 class SpmvKernel {
     private:
-
         typedef std::function<void(
             const ST *, // C
             const ST *, // n_chunks
@@ -243,11 +263,15 @@ class SpmvKernel {
 
         void *kernel_args_encoded;
         void *comm_args_encoded;
+        void *cusparse_args_encoded;
         Config *config;
 
         // Decode kernel args
         OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_decoded = (OnePrecKernelArgs<VT, IT>*) kernel_args_encoded;
         TwoPrecKernelArgs<IT> *two_prec_kernel_args_decoded = (TwoPrecKernelArgs<IT>*) kernel_args_encoded;
+#ifdef USE_CUSPARSE
+        CuSparseArgs *cusparse_args_decoded = (CuSparseArgs*) cusparse_args_encoded;
+#endif
 
         const ST * C = one_prec_kernel_args_decoded->C;
         const ST * n_chunks = one_prec_kernel_args_decoded->n_chunks;
@@ -276,6 +300,19 @@ class SpmvKernel {
         const ST * n_blocks_2 = two_prec_kernel_args_decoded->n_blocks;
 #endif
 
+#ifdef USE_CUSPARSE
+        cusparseHandle_t          handle = cusparse_args_decoded->handle;
+        cusparseOperation_t       opA = cusparse_args_decoded->opA;
+        const void*               alpha = cusparse_args_decoded->alpha;
+        cusparseConstSpMatDescr_t matA = cusparse_args_decoded->matA;
+        cusparseConstDnVecDescr_t vecX = cusparse_args_decoded->vecX;
+        const void*               beta = cusparse_args_decoded->beta;
+        cusparseDnVecDescr_t      vecY = cusparse_args_decoded->vecY;
+        cudaDataType              computeType = cusparse_args_decoded->computeType;
+        cusparseSpMVAlg_t         alg = cusparse_args_decoded->alg;
+        void*                     externalBuffer = cusparse_args_decoded->externalBuffer;
+#endif
+
         // Decode comm args
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
 #ifdef USE_MPI
@@ -302,7 +339,17 @@ class SpmvKernel {
         float * RESTRICT lp_local_y = two_prec_kernel_args_decoded->lp_local_y;
         
 
-        SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
+        SpmvKernel(
+            Config *config_, 
+            void *kernel_args_encoded_,
+            void *cusparse_args_encoded_,
+            void *comm_args_encoded_
+        ): 
+        config(config_), 
+        kernel_args_encoded(kernel_args_encoded_), 
+        cusparse_args_encoded(cusparse_args_encoded_),
+        comm_args_encoded(comm_args_encoded_){
+        // SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
             if(config->value_type == "mp"){
                 if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                     if(my_rank == 0){printf("MP-CRS kernel selected\n");}
@@ -319,28 +366,56 @@ class SpmvKernel {
                     exit(1);
                 }
                 else if (config->kernel_format == "scs"){
-                    if(my_rank == 0){printf("MP SCS kernel selected\n");}
+                    if(
+                        config->chunk_size != 1
+                        && config->chunk_size != 2 
+                        && config->chunk_size != 4
+                        && config->chunk_size != 8
+                        && config->chunk_size != 16
+                        && config->chunk_size != 32
+                        && config->chunk_size != 64
+                        && config->chunk_size != 128
+                        && config->chunk_size != 256)
+                    {
+                        if(my_rank == 0){printf("MP SCS kernel selected\n");}
 #ifdef __CUDACC__
-                    two_prec_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
-                    two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
+                        two_prec_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
+                        two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
 #else
-                    two_prec_kernel_func_ptr = spmv_omp_scs_mp<IT>;
-                    two_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs_mp<IT>;
+                        two_prec_kernel_func_ptr = spmv_omp_scs_mp<IT>;
+                        two_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs_mp<IT>;
 #endif
-                } // NOTE: Advanced kernels are not investigated
-                else {
-                    std::cout << "SpmvKernel Class ERROR: Format not recognized" << std::endl;
-                    exit(1);
+                    } // NOTE: Advanced kernels are not investigated
+                    else{
+                        if(my_rank == 0){
+                            printf("C = %i => Advanced MP SCS kernel selected\n", config->chunk_size);
+                        }
+#ifdef __CUDACC__
+                        // TODO: Performance issue with advanced MP gpu kernel
+                        // two_prec_kernel_func_ptr = spmv_gpu_mp_scs_adv_launcher<IT>;
+                        // two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_adv_launcher<IT>;
+                        two_prec_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
+                        two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
+#else
+                        // NOTE: Maybe include proper warmup kernel later
+                        two_prec_kernel_func_ptr = spmv_omp_scs_mp_adv<IT>;
+                        two_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs_mp<IT>;
+#endif
+                    }
                 }
             }
-            else{
+            else{ // Using only one precision
                 if (config->kernel_format == "crs" || config->kernel_format == "csr"){
+#ifdef USE_CUSPARSE
+                    if(my_rank == 0){printf("CUSPARSE CRS kernel selected\n");}
+#else
                     if(my_rank == 0){printf("CRS kernel selected\n");}
-                    // TODO: More performant to just instantiate template here?
+#endif
 #ifdef __CUDACC__
                     one_prec_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
 #else
+                    if(my_rank == 0){printf("CRS kernel selected\n");}
                     one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
 #endif
@@ -370,7 +445,9 @@ class SpmvKernel {
                     && config->chunk_size != 8
                     && config->chunk_size != 16
                     && config->chunk_size != 32
-                    && config->chunk_size != 64){
+                    && config->chunk_size != 64
+                    && config->chunk_size != 128
+                    && config->chunk_size != 256){
                     if(my_rank == 0){printf("SCS kernel selected\n");}
 #ifdef __CUDACC__
                     one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
@@ -381,20 +458,17 @@ class SpmvKernel {
 #endif
                 }
                 else if (config->kernel_format == "scs"){
-                    // NOTE: if C in (1,2,4,8,16,32,64), then advanced SCS kernel invoked
                     if(my_rank == 0){
                         printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);
-                        printf("(Basic SCS kernel selected, advanced kernels temporarily disabled).\n");
                     }
 #ifdef __CUDACC__
-                    // one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
-                    // one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
-                    one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
-                    one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
+                    // one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
+                    // one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
 #else
-                    // one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
-                    one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
-                    one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs<VT, IT>;
+                    one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                    one_prec_warmup_kernel_func_ptr = spmv_omp_scs<VT, IT>;
 #endif
                 }
                 else {
@@ -498,6 +572,20 @@ class SpmvKernel {
         }
 
         inline void execute_spmv(void){
+#ifdef USE_CUSPARSE
+            cusparseSpMV(
+                handle,
+                opA,
+                alpha,
+                matA,
+                vecX,
+                beta,
+                vecY,
+                computeType,
+                alg,
+                externalBuffer
+            );
+#else
             one_prec_kernel_func_ptr(
                 C,
                 n_chunks,
@@ -512,6 +600,7 @@ class SpmvKernel {
 #endif
                 &my_rank
             );
+#endif
 
 #ifdef __CUDACC__
             cudaDeviceSynchronize();
@@ -519,6 +608,20 @@ class SpmvKernel {
         }
 
         inline void execute_warmup_spmv(void){
+#ifdef USE_CUSPARSE
+            cusparseSpMV(
+                handle,
+                opA,
+                alpha,
+                matA,
+                vecX,
+                beta,
+                vecY,
+                computeType,
+                alg,
+                externalBuffer
+            );
+#else
             one_prec_warmup_kernel_func_ptr(
                 C,
                 n_chunks,
@@ -533,6 +636,7 @@ class SpmvKernel {
 #endif
                 &my_rank
             );
+#endif
 
 #ifdef __CUDACC__
             cudaDeviceSynchronize();
@@ -599,7 +703,12 @@ class SpmvKernel {
 
         // NOTE: Should also work with GPUs?
         inline void swap_local_vectors(){
+#ifdef USE_CUSPARSE
+            // TODO
+            // std::swap(&vecX, &vecY);
+#else
             std::swap(local_x, local_y);
+#endif
         }
 
         inline void swap_local_mp_vectors(){

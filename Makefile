@@ -81,8 +81,6 @@ ifeq ($(COMPILER),nvcc)
 	CXXFLAGS += $(MKL)
 endif
 
-CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH)
-
 ifeq ($(DEBUG_MODE),1)
 	DEBUGFLAGS += -g -DDEBUG_MODE
 ifneq ($(GPGPU_ARCH),none)
@@ -122,6 +120,13 @@ ifeq ($(USE_LIKWID),1)
     $(error USE_LIKWID selected, but no library path given in LIKWID_LIB)
   endif
   CXXFLAGS  += -DUSE_LIKWID -DLIKWID_PERFMON $(LIKWID_INC) $(LIKWID_LIB) -llikwid
+endif
+
+ifeq ($(USE_CUSPARSE),1)
+	CUDA_TOOLKIT=$(shell dirname $$(command -v nvcc))/..
+	CUSPARSE_FLAGS += -I$(CUDA_TOOLKIT)/include
+	GPGPU_ARCH_FLAGS += -lcusparse -DUSE_CUSPARSE
+  CXXFLAGS += $(CUSPARSE_FLAGS) #$(NVJITPATH)
 endif
 
 ifeq ($(USE_MPI),1)

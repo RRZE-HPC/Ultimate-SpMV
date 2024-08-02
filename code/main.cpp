@@ -26,10 +26,6 @@
 #include <omp.h>
 #endif
 
-#ifdef USE_LIKWID
-#include <likwid-marker.h>
-#endif
-
 /**
     @brief Perform SPMV kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
@@ -58,6 +54,75 @@ void bench_spmv(
     int my_rank,
     int comm_size)
 {
+    // Permute x, in order to match the permutation which was done to the columns
+    std::vector<VT> local_x_permuted(local_x->size(), 0);
+    std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
+    std::vector<float> lp_local_x_permuted(hp_local_x->size(), 0);
+
+    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+
+    if(config->value_type == "mp"){
+        // Currently, we fix one sigma. That is, we permute lp and hp exactly the same
+        apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+        apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    }
+
+    OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded = new OnePrecKernelArgs<VT, IT>;
+    TwoPrecKernelArgs<IT> *two_prec_kernel_args_encoded = new TwoPrecKernelArgs<IT>;
+    void *comm_args_void_ptr;
+    void *kernel_args_void_ptr;
+    void *cusparse_args_void_ptr;
+#ifdef USE_CUSPARSE
+    CuSparseArgs *cusparse_args_encoded = new CuSparseArgs;
+#endif
+    CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
+
+//     allocate_data<VT, IT>(
+//         config,
+//         local_scs,
+//         hp_local_scs,
+//         lp_local_scs,
+//         local_context,
+//         local_y,
+//         hp_local_y,
+//         lp_local_y,
+//         local_x,
+//         &local_x_permuted,
+//         hp_local_x,
+//         &hp_local_x_permuted,
+//         lp_local_x,
+//         &lp_local_x_permuted,
+//         one_prec_kernel_args_encoded,
+//         two_prec_kernel_args_encoded,
+// #ifdef USE_CUSPARSE
+//         cusparse_args_encoded,
+//         // cusparse_args_void_ptr,
+// #endif
+//         comm_args_encoded,
+//         // comm_args_void_ptr,
+//         // kernel_args_void_ptr,
+//         comm_size,
+//         my_rank
+//     );
+
+    // void *comm_args_void_ptr;
+//     comm_args_void_ptr = (void*) comm_args_encoded;
+
+//     void *kernel_args_void_ptr;
+//     if(config->value_type == "mp"){
+//         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
+//     }
+//     else{
+//         kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
+//     }
+    
+//     void *cusparse_args_void_ptr;
+// #ifdef USE_CUSPARSE
+//     cusparse_args_void_ptr = (void*) cusparse_args_encoded;
+// #endif
+
+// TODO: move allocation into subroutine
+///////////////////////////////////////////////////////////////////////////////////////////
 
 #ifdef USE_MPI
     // Allocate a send buffer for each process we're sending a message to
@@ -78,33 +143,11 @@ void bench_spmv(
     MPI_Request *send_requests = new MPI_Request[local_context->non_zero_receivers.size()];
 #endif
 
-    // Permute x, in order to match the permutation which was done to the columns
-    std::vector<VT> local_x_permuted(local_x->size(), 0);
-    std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
-    std::vector<float> lp_local_x_permuted(hp_local_x->size(), 0);
-
-    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
-
-    if(config->value_type == "mp"){
-        // Currently, we fix one sigma. That is, we permute lp and hp exactly the same
-        apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
-        apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
-    }
-
-#ifndef __CUDACC
-    void *comm_args_void_ptr;
-    void *kernel_args_void_ptr;
-
-    OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded = new OnePrecKernelArgs<VT, IT>;
-    TwoPrecKernelArgs<IT> *two_prec_kernel_args_encoded = new TwoPrecKernelArgs<IT>;
-    CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
-#endif
-
 #ifdef __CUDACC__
     // If using cuda compiler, move data to device and assign device pointers
     printf("Moving data to device...\n");
     long n_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    int vec_size = local_scs->n_rows_padded;
+    
     config->num_blocks = n_blocks; // Just for ease of results printing later
     config->tpb = THREADS_PER_BLOCK;
     
@@ -172,28 +215,28 @@ void bench_spmv(
         cudaMemcpy(d_n_chunks_lp, &lp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
 
         // Copy x and y data to device
-        double *local_x_hp_hardcopy = new double[vec_size];
-        double *local_y_hp_hardcopy = new double[vec_size];
-        float *local_x_lp_hardcopy = new float[vec_size];
-        float *local_y_lp_hardcopy = new float[vec_size];
+        double *local_x_hp_hardcopy = new double[local_scs->n_rows_padded];
+        double *local_y_hp_hardcopy = new double[local_scs->n_rows_padded];
+        float *local_x_lp_hardcopy = new float[local_scs->n_rows_padded];
+        float *local_y_lp_hardcopy = new float[local_scs->n_rows_padded];
 
         #pragma omp parallel for
-        for(int i = 0; i < vec_size; ++i){
+        for(int i = 0; i < local_scs->n_rows_padded; ++i){
             local_x_hp_hardcopy[i] = hp_local_x_permuted[i];
             local_y_hp_hardcopy[i] = (*hp_local_y)[i];
             local_x_lp_hardcopy[i] = lp_local_x_permuted[i];
             local_y_lp_hardcopy[i] = (*lp_local_y)[i];
         }
 
-        cudaMalloc(&d_x_hp, vec_size*sizeof(double));
-        cudaMalloc(&d_y_hp, vec_size*sizeof(double));
-        cudaMalloc(&d_x_lp, vec_size*sizeof(float));
-        cudaMalloc(&d_y_lp, vec_size*sizeof(float));
+        cudaMalloc(&d_x_hp, local_scs->n_rows_padded*sizeof(double));
+        cudaMalloc(&d_y_hp, local_scs->n_rows_padded*sizeof(double));
+        cudaMalloc(&d_x_lp, local_scs->n_rows_padded*sizeof(float));
+        cudaMalloc(&d_y_lp, local_scs->n_rows_padded*sizeof(float));
 
-        cudaMemcpy(d_x_hp, local_x_hp_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y_hp, local_y_hp_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_x_lp, local_x_lp_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y_lp, local_y_lp_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_x_hp, local_x_hp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_hp, local_y_hp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_x_lp, local_x_lp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_lp, local_y_lp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
 
         delete local_x_hp_hardcopy;
         delete local_y_hp_hardcopy;
@@ -249,40 +292,40 @@ void bench_spmv(
 
         if(config->value_type == "dp"){
             // Make type-specific copy to send to device
-            double *local_x_hardcopy = new double[vec_size];
-            double *local_y_hardcopy = new double[vec_size];
+            double *local_x_hardcopy = new double[local_scs->n_rows_padded];
+            double *local_y_hardcopy = new double[local_scs->n_rows_padded];
 
             #pragma omp parallel for
-            for(int i = 0; i < vec_size; ++i){
+            for(int i = 0; i < local_scs->n_rows_padded; ++i){
                 local_x_hardcopy[i] = local_x_permuted[i];
                 local_y_hardcopy[i] = (*local_y)[i];
             }
 
-            cudaMalloc(&d_x, vec_size*sizeof(double));
-            cudaMalloc(&d_y, vec_size*sizeof(double));
+            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(double));
+            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(double));
 
-            cudaMemcpy(d_x, local_x_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_y, local_y_hardcopy, vec_size*sizeof(double), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
 
             delete local_x_hardcopy;
             delete local_y_hardcopy;
         }
         else if (config->value_type == "sp"){
             // Make type-specific copy to send to device
-            float *local_x_hardcopy = new float[vec_size];
-            float *local_y_hardcopy = new float[vec_size];
+            float *local_x_hardcopy = new float[local_scs->n_rows_padded];
+            float *local_y_hardcopy = new float[local_scs->n_rows_padded];
 
             #pragma omp parallel for
-            for(int i = 0; i < vec_size; ++i){
+            for(int i = 0; i < local_scs->n_rows_padded; ++i){
                 local_x_hardcopy[i] = local_x_permuted[i];
                 local_y_hardcopy[i] = (*local_y)[i];
             }
 
-            cudaMalloc(&d_x, vec_size*sizeof(float));
-            cudaMalloc(&d_y, vec_size*sizeof(float));
+            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(float));
+            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(float));
 
-            cudaMemcpy(d_x, local_x_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_y, local_y_hardcopy, vec_size*sizeof(float), cudaMemcpyHostToDevice);   
+            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);   
 
             delete local_x_hardcopy;
             delete local_y_hardcopy;
@@ -301,6 +344,97 @@ void bench_spmv(
         one_prec_kernel_args_encoded->n_blocks =      &n_blocks;
         kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
     }
+#ifdef USE_CUSPARSE
+    cusparseHandle_t     handle = NULL;
+    cusparseSpMatDescr_t matA;
+    cusparseDnVecDescr_t vecX, vecY;
+    void*                dBuffer    = NULL;
+    size_t               bufferSize = 0;
+    float     alpha           = 1.0f;
+    float     beta            = 0.0f;
+
+    cusparseCreate(&handle);
+
+    if (config->kernel_format == "crs"){
+        if(config->value_type == "dp"){
+            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+                d_chunk_ptrs, d_col_idxs, d_values,
+                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F
+            );
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F);
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F);
+
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else if(config->value_type == "sp"){
+            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+                d_chunk_ptrs, d_col_idxs, d_values,
+                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F);
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F);
+
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else{
+            printf("CuSparse SpMV only enabled iwth CRS format in DP or SP\n");
+            exit(1);
+        }
+
+    }
+    else{
+        // Waiting on CUDA 12.6...
+        // cusparseCreateSlicedELL(
+        //     &matA, 
+        //     local_scs->n_rows, 
+        //     local_scs->n_cols, 
+        //     local_scs->nnz,
+        //     local_scs->n_elements,
+        //     local_scs->C,
+        //     d_chunk_ptrs,
+        //     d_col_idxs,
+        //     d_values,
+        //     CUSPARSE_INDEX_32I, 
+        //     CUSPARSE_INDEX_32I,
+        //     CUSPARSE_INDEX_BASE_ZERO, 
+        //     CUDA_R_64F
+        // );
+        // // Create dense vector X
+        // cusparseCreateDnVec(&vecX, local_scs->n_rows_padded, d_x, CUDA_R_64F);
+        // // Create dense vector y
+        // cusparseCreateDnVec(&vecY, local_scs->n_rows_padded, d_y, CUDA_R_64F);
+        // // allocate an external buffer if needed
+    }
+
+    cudaMalloc(&dBuffer, bufferSize);
+
+    
+    cusparse_args_encoded->handle = handle;
+    cusparse_args_encoded->opA = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    cusparse_args_encoded->alpha = &alpha;
+    cusparse_args_encoded->matA = matA;
+    cusparse_args_encoded->vecX = vecX;
+    cusparse_args_encoded->beta = &beta;
+    cusparse_args_encoded->vecY = vecY;
+    if(config->value_type == "dp"){
+        cusparse_args_encoded->computeType = CUDA_R_64F;
+    }
+    else if(config->value_type == "sp"){
+        cusparse_args_encoded->computeType = CUDA_R_32F;
+    }
+    cusparse_args_encoded->alg = CUSPARSE_SPMV_ALG_DEFAULT;
+    cusparse_args_encoded->externalBuffer = dBuffer;
+    cusparse_args_void_ptr = (void*) cusparse_args_encoded;
+#endif
 #else
     if(config->value_type == "mp"){
         // Encode kernel args into struct
@@ -354,9 +488,15 @@ void bench_spmv(
     comm_args_encoded->my_rank = &my_rank;
     comm_args_encoded->comm_size = &comm_size;
     comm_args_void_ptr = (void*) comm_args_encoded;
+/////////////////////////////////////////////////////////////////////////////////////////////////////
 
     // Pass args to construct spmv_kernel object
-    SpmvKernel<VT, IT> spmv_kernel(config, kernel_args_void_ptr, comm_args_void_ptr);
+    SpmvKernel<VT, IT> spmv_kernel(
+        config, 
+        kernel_args_void_ptr, 
+        cusparse_args_void_ptr,
+        comm_args_void_ptr
+    );
 
     // Enter main COMM-SPMV-SWAP loop, bench mode
     if(config->mode == 'b'){
@@ -396,7 +536,7 @@ void bench_spmv(
             }
             else{
                 spmv_kernel.execute_warmup_spmv();
-                // spmv_kernel.swap_local_vectors();
+                spmv_kernel.swap_local_vectors();
             }
 
 #ifdef USE_MPI
@@ -432,29 +572,10 @@ void bench_spmv(
         // Initialize number of repetitions for actual benchmark
         int n_iter = 2;
 
+#ifndef __CUDACC__
 #ifdef USE_LIKWID
-            // Init parallel region
-            #pragma omp parallel
-            {
-                if(config->kernel_format == "crs"){
-                    if(config->value_type == "mp"){
-                        LIKWID_MARKER_REGISTER("spmv_ap_crs_benchmark");
-                    }
-                    else{
-                        LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
-                    }
-                }
-                else if(config->kernel_format == "scs"){
-                    if(config->value_type == "mp"){
-                        // TODO: update kernel
-                        LIKWID_MARKER_REGISTER("spmv_ap_scs_benchmark");
-                    }
-                    else{
-                        LIKWID_MARKER_REGISTER("spmv_scs_benchmark");
-                    }
-                }
-
-            }
+        register_likwid_markers(config);
+#endif
 #endif
 
         if(config->comm_halos){
@@ -722,10 +843,19 @@ void bench_spmv(
     if(lp_local_scs->n_elements == 0)
         r->lp_beta = 0;
 
-#ifdef USE_MPI
-    delete[] recv_requests;
-    delete[] send_requests;
-#endif
+// TODO: How to destroy out here?
+// #ifdef USE_MPI
+//     delete[] recv_requests;
+//     delete[] send_requests;
+// #endif
+
+// #ifdef USE_CUSPARSE
+//     // destroy matrix/vector descriptors
+//     cusparseDestroySpMat(matA);
+//     cusparseDestroyDnVec(vecX);
+//     cusparseDestroyDnVec(vecY);
+//     cusparseDestroy(handle);
+// #endif
 
 // TODO: Memcheck doesn't like this for some reason
 // #ifdef __CUDACC__
