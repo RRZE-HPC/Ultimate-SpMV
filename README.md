@@ -8,7 +8,7 @@ Examples:\
 	```./uspmv <matrix_name>.mtx scs -c 16 -s 512 -mode b```
 	```./uspmv <matrix_name>.mtx crs -mode s -sp -verbose 1```
 
-- kernel_format can be any one of: crs, scs, ell
+- kernel_format can be any one of: crs, scs (and by extention: ell and sell-p)
 
 Options:
 - -c (chunk size)
@@ -27,6 +27,7 @@ Options:
  
  
 Notes:
+- This is a work in progress. Please email any problems or suggestions to dane.c.lacey@fau.de
 - kernel_format can be any one of: crs, scs, ell
 - The -c and -s options are only relevant when the scs kernel is selected
 - Dependencies:

@@ -16,6 +16,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+// TODO
 // #include <float.h>
 
 
@@ -147,7 +148,7 @@ void bench_spmv(
     // If using cuda compiler, move data to device and assign device pointers
     printf("Moving data to device...\n");
     long n_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    
+
     config->num_blocks = n_blocks; // Just for ease of results printing later
     config->tpb = THREADS_PER_BLOCK;
     
@@ -179,12 +180,31 @@ void bench_spmv(
     float *d_values_lp = new float;
 
     if(config->value_type == "mp"){
-        // Allocate space for MP structs on device
-        
         long n_scs_elements_hp = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
                     + hp_local_scs->chunk_lengths[hp_local_scs->n_chunks - 1] * hp_local_scs->C;
         long n_scs_elements_lp = lp_local_scs->chunk_ptrs[lp_local_scs->n_chunks - 1]
                     + lp_local_scs->chunk_lengths[lp_local_scs->n_chunks - 1] * lp_local_scs->C;
+
+        // TODO: temporary way to get around memory courruption problem
+        for(int i = 0; i < n_scs_elements_hp; ++i){
+            if(hp_local_scs->col_idxs[i] >= local_scs->n_rows){
+#ifdef DEBUG_MODE
+                printf("Bad hp element %i found at idx %i\n", hp_local_scs->col_idxs[i], i);
+#endif
+                hp_local_scs->col_idxs[i] = 0;
+            }
+        }
+        for(int i = 0; i < n_scs_elements_lp; ++i){
+            if(lp_local_scs->col_idxs[i] >= local_scs->n_rows){
+#ifdef DEBUG_MODE
+                printf("Bad lp %i element found at idx %i\n", lp_local_scs->col_idxs[i], i);
+#endif
+                lp_local_scs->col_idxs[i] = 0;
+            }
+        }
+
+
+        // Allocate space for MP structs on device
         cudaMalloc(&d_values_hp, n_scs_elements_hp*sizeof(double));
         cudaMalloc(&d_values_lp, n_scs_elements_lp*sizeof(float));
         cudaMemcpy(d_values_hp, &(hp_local_scs->values)[0], n_scs_elements_hp*sizeof(double), cudaMemcpyHostToDevice);
@@ -253,7 +273,7 @@ void bench_spmv(
         two_prec_kernel_args_encoded->hp_values =        d_values_hp;
         two_prec_kernel_args_encoded->hp_local_x =       d_x_hp;
         two_prec_kernel_args_encoded->hp_local_y =       d_y_hp;
-        two_prec_kernel_args_encoded->lp_C =             d_C_hp; // shared
+        two_prec_kernel_args_encoded->lp_C =             d_C_hp; // shared maybe don't?
         two_prec_kernel_args_encoded->lp_n_chunks =      d_n_chunks_hp; //shared for now
         two_prec_kernel_args_encoded->lp_chunk_ptrs =    d_chunk_ptrs_lp;
         two_prec_kernel_args_encoded->lp_chunk_lengths = d_chunk_lengths_lp;
@@ -392,27 +412,60 @@ void bench_spmv(
 
     }
     else{
-        // Waiting on CUDA 12.6...
-        // cusparseCreateSlicedELL(
-        //     &matA, 
-        //     local_scs->n_rows, 
-        //     local_scs->n_cols, 
-        //     local_scs->nnz,
-        //     local_scs->n_elements,
-        //     local_scs->C,
-        //     d_chunk_ptrs,
-        //     d_col_idxs,
-        //     d_values,
-        //     CUSPARSE_INDEX_32I, 
-        //     CUSPARSE_INDEX_32I,
-        //     CUSPARSE_INDEX_BASE_ZERO, 
-        //     CUDA_R_64F
-        // );
-        // // Create dense vector X
-        // cusparseCreateDnVec(&vecX, local_scs->n_rows_padded, d_x, CUDA_R_64F);
-        // // Create dense vector y
-        // cusparseCreateDnVec(&vecY, local_scs->n_rows_padded, d_y, CUDA_R_64F);
-        // // allocate an external buffer if needed
+        if(config->value_type == "dp"){
+            cusparseCreateSlicedEll(
+                &matA, 
+                local_scs->n_rows, 
+                local_scs->n_cols, 
+                local_scs->nnz,
+                local_scs->n_elements,
+                local_scs->C,
+                d_chunk_ptrs,
+                d_col_idxs,
+                d_values,
+                CUSPARSE_INDEX_32I, 
+                CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, 
+                CUDA_R_64F
+            );
+            // Create dense vector X
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F);
+            // Create dense vector y
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F);
+            // allocate an external buffer if needed
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else if(config->value_type == "sp"){
+            cusparseCreateSlicedEll(
+                &matA, 
+                local_scs->n_rows_padded, 
+                local_scs->n_cols, 
+                local_scs->nnz,
+                local_scs->n_elements,
+                local_scs->C,
+                d_chunk_ptrs,
+                d_col_idxs,
+                d_values,
+                CUSPARSE_INDEX_32I, 
+                CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, 
+                CUDA_R_32F
+            );
+            // Create dense vector X
+            cusparseCreateDnVec(&vecX, local_scs->n_rows_padded, d_x, CUDA_R_32F);
+            // Create dense vector y
+            cusparseCreateDnVec(&vecY, local_scs->n_rows_padded, d_y, CUDA_R_32F);
+            // allocate an external buffer if needed
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
     }
 
     cudaMalloc(&dBuffer, bufferSize);
@@ -501,7 +554,6 @@ void bench_spmv(
     // Enter main COMM-SPMV-SWAP loop, bench mode
     if(config->mode == 'b'){
 #ifdef __CUDACC__
-    float warmup_runtime = 0.0;
     cudaEvent_t start, stop, warmup_start, warmup_stop;
     cudaEventCreate(&warmup_start);
     cudaEventCreate(&warmup_stop);
@@ -513,7 +565,8 @@ void bench_spmv(
 
         // Warm-up
 #ifdef __CUDACC__
-    cudaEventRecord(warmup_start);
+    cudaEventRecord(warmup_start, 0);
+    cudaDeviceSynchronize();
 #else
         double begin_warm_up_loop_time, end_warm_up_loop_time;
         
@@ -523,7 +576,6 @@ void bench_spmv(
         begin_warm_up_loop_time = getTimeStamp();
 #endif
 #endif
-
         for(int k = 0; k < WARM_UP_REPS; ++k){
 #ifdef USE_MPI
             spmv_kernel.init_halo_exchange();
@@ -532,11 +584,11 @@ void bench_spmv(
             // TODO: Is this #if-else correct with mpi? I don't think it is.
             if(config->value_type == "mp"){
                 spmv_kernel.execute_warmup_mp_spmv();
-                spmv_kernel.swap_local_mp_vectors();
+                // spmv_kernel.swap_local_mp_vectors();
             }
             else{
                 spmv_kernel.execute_warmup_spmv();
-                spmv_kernel.swap_local_vectors();
+                // spmv_kernel.swap_local_vectors();
             }
 
 #ifdef USE_MPI
@@ -546,10 +598,11 @@ void bench_spmv(
         }
 
 #ifdef __CUDACC__
-        cudaEventRecord(warmup_stop);
+        float warmup_runtime;
+        cudaEventRecord(warmup_stop, 0);
         cudaEventSynchronize(warmup_stop);
         cudaEventElapsedTime(&warmup_runtime, warmup_start, warmup_stop);
-        std::cout << "warm up time: " << warmup_runtime/1000.0 << std::endl;
+        std::cout << "warm up time: " << warmup_runtime * MILLI_TO_SEC << std::endl;
 #else
 
 #ifdef USE_MPI
@@ -567,7 +620,7 @@ void bench_spmv(
         double begin_bench_loop_time, end_bench_loop_time = 0.0;
 #endif
 
-        float runtime = 0.0;
+        float runtime;
 
         // Initialize number of repetitions for actual benchmark
         int n_iter = 2;
@@ -619,11 +672,11 @@ void bench_spmv(
                 for(int k=0; k<n_iter; ++k) {
                     if(config->value_type == "mp"){
                         spmv_kernel.execute_mp_spmv();
-                        spmv_kernel.swap_local_mp_vectors();
+                        // spmv_kernel.swap_local_mp_vectors();
                     }
                     else{
                         spmv_kernel.execute_spmv();
-                        spmv_kernel.swap_local_vectors();
+                        // spmv_kernel.swap_local_vectors();
                     }
 #ifdef USE_MPI
                     if(config->ba_synch)
@@ -646,7 +699,7 @@ void bench_spmv(
 #endif
 #endif
 #ifdef __CUDACC__
-            } while (runtime*MILLI_TO_SEC < config->bench_time);
+            } while (runtime * MILLI_TO_SEC < config->bench_time);
 #else
             } while (runtime < config->bench_time);
 #endif
@@ -1152,16 +1205,6 @@ void compute_result(
     local_x.init(config, 'x');
     local_y.init(config, 'y');
 
-    // printf("x = \n");
-    // for(int i = 0; i < (local_x.vec).size(); ++i){
-    //     printf("%f\n", (local_x.vec)[i]);
-    // }
-    // printf("y = \n");
-    // for(int i = 0; i < (local_y.vec).size(); ++i){
-    //     printf("%f\n", (local_y.vec)[i]);
-    // }
-    // exit(1);
-
     // TODO: wrap in method or something
     if(config->value_type == "mp"){
         for(int i = 0; i < (local_x.vec).size(); ++i){
@@ -1172,6 +1215,7 @@ void compute_result(
 
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x.vec;
+
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter bench_spmv.\n");}

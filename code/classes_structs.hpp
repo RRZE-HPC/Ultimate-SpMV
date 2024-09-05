@@ -391,11 +391,10 @@ class SpmvKernel {
                             printf("C = %i => Advanced MP SCS kernel selected\n", config->chunk_size);
                         }
 #ifdef __CUDACC__
-                        // TODO: Performance issue with advanced MP gpu kernel
-                        // two_prec_kernel_func_ptr = spmv_gpu_mp_scs_adv_launcher<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_adv_launcher<IT>;
-                        two_prec_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
-                        two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
+                        two_prec_kernel_func_ptr = spmv_gpu_mp_scs_adv_launcher<IT>;
+                        two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_adv_launcher<IT>;
+                        // two_prec_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
+                        // two_prec_warmup_kernel_func_ptr = spmv_gpu_mp_scs_launcher<IT>;
 #else
                         // NOTE: Maybe include proper warmup kernel later
                         two_prec_kernel_func_ptr = spmv_omp_scs_mp_adv<IT>;
@@ -448,7 +447,11 @@ class SpmvKernel {
                     && config->chunk_size != 64
                     && config->chunk_size != 128
                     && config->chunk_size != 256){
+#ifdef USE_CUSPARSE
+                    if(my_rank == 0){printf("CUSPARSE SCS kernel selected\n");}
+#else
                     if(my_rank == 0){printf("SCS kernel selected\n");}
+#endif
 #ifdef __CUDACC__
                     one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
@@ -458,9 +461,11 @@ class SpmvKernel {
 #endif
                 }
                 else if (config->kernel_format == "scs"){
-                    if(my_rank == 0){
-                        printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);
-                    }
+#ifdef USE_CUSPARSE
+                    if(my_rank == 0){printf("CUSPARSE SCS kernel selected\n");}
+#else
+                    if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
+#endif
 #ifdef __CUDACC__
                     one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
@@ -704,8 +709,11 @@ class SpmvKernel {
         // NOTE: Should also work with GPUs?
         inline void swap_local_vectors(){
 #ifdef USE_CUSPARSE
-            // TODO
-            // std::swap(&vecX, &vecY);
+            // cusparseDnVecDescr_t tmp;
+            // tmp = vecX;
+            // vecX = vecY;
+            // vecY = vecX;
+            // std::swap(&(vecX.data), &(vecY.data));
 #else
             std::swap(local_x, local_y);
 #endif
@@ -849,11 +857,16 @@ struct ScsData
     ST n_elements{}; // No. of nz + padding.
     ST nnz{};        // No. of nz only.
 
-    V<IT, IT> chunk_ptrs;    // Chunk start offsets into col_idxs & values.
-    V<IT, IT> chunk_lengths; // Length of one row in a chunk.
-    V<IT, IT> col_idxs;
-    V<VT, IT> values;
-    V<IT, IT> old_to_new_idx;
+    // V<IT, IT> chunk_ptrs;    // Chunk start offsets into col_idxs & values.
+    // V<IT, IT> chunk_lengths; // Length of one row in a chunk.
+    // V<IT, IT> col_idxs;
+    // V<VT, IT> values;
+    // V<IT, IT> old_to_new_idx;
+    std::vector<IT> chunk_ptrs;    // Chunk start offsets into col_idxs & values.
+    std::vector<IT> chunk_lengths; // Length of one row in a chunk.
+    std::vector<IT> col_idxs;
+    std::vector<VT> values;
+    std::vector<IT> old_to_new_idx;
     // std::vector<int> new_to_old_idx; //inverse of above
     IT * new_to_old_idx;
     // TODO: ^ make V object as well?

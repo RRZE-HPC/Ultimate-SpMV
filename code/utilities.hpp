@@ -1232,14 +1232,14 @@ void parse_cli_inputs(
 #endif
 
 #ifdef USE_CUSPARSE
-    if(*kernel_format != "crs" && *kernel_format != "csr"){
-        if(my_rank == 0){fprintf(stderr, "ERROR: At the moment CUSPARSE is only able to use the CRS format.\n");exit(1);}
-        exit(1);
+    if(*kernel_format != "crs" && *kernel_format != "csr" && *kernel_format != "scs"){
+        if(config->sigma != 1){
+            if(my_rank == 0){fprintf(stderr, "ERROR: At the moment CUSPARSE is only able to use the CRS format.\n");exit(1);}
+            exit(1);
+        }
     }
-    // if(config->sigma != 1){
-    //     if(my_rank == 0){fprintf(stderr, "ERROR: At the moment CUSPARSE is only able to use the CRS and SELL format. Please set -s 1.\n");exit(1);}
-    //     exit(1);
-    // }
+
+    if(*value_type == "mp"){fprintf(stderr, "ERROR: cuSPARSE with Mixed precision is not supported at this time.\n");exit(1);}
 #endif
 
 #ifdef USE_MPI
@@ -1385,7 +1385,8 @@ void convert_to_scs(
     // second entry: population count of row
     using index_and_els_per_row = std::pair<ST, ST>;
 
-    std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded);
+    // std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded);
+    std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded + sigma);
 
     for (ST i = 0; i < scs->n_rows_padded; ++i) {
         n_els_per_row[i].first = i;
@@ -1403,7 +1404,6 @@ void convert_to_scs(
 
     if(fixed_permutation != NULL){
         std::vector<index_and_els_per_row> n_els_per_row_tmp(scs->n_rows_padded);
-        // NOTE: Permutation vectors are only n_rows long. The padding rows aren't touched
         for(int i = 0; i < scs->n_rows_padded; ++i){
             if(i < scs->n_rows){
                 n_els_per_row_tmp[i].first = n_els_per_row[i].first;
@@ -1415,10 +1415,10 @@ void convert_to_scs(
                 n_els_per_row_tmp[i].second = n_els_per_row[i].second;
             }
         }
-        for(int i = 0; i < scs->n_rows; ++i){
+        // n_els_per_row = n_els_per_row_tmp;
+        for(int i = 0; i < scs->n_rows_padded; ++i){
             n_els_per_row[i] = n_els_per_row_tmp[i];
         }
-        // n_els_per_row = n_els_per_row_tmp;
     }
     else{
         for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
@@ -1434,12 +1434,9 @@ void convert_to_scs(
                     });
         }
     }
-    // determine chunk_ptrs and chunk_lengths
 
-    // TODO: check chunk_ptrs can overflow
-    // std::cout << d.n_chunks << std::endl;
-    scs->chunk_lengths = V<IT, IT>(scs->n_chunks); // init a vector of length d.n_chunks
-    scs->chunk_ptrs    = V<IT, IT>(scs->n_chunks + 1);
+    scs->chunk_lengths = std::vector<IT>(scs->n_chunks + scs->sigma); // init a vector of length d.n_chunks
+    scs->chunk_ptrs    = std::vector<IT>(scs->n_chunks + 1 + scs->sigma);
 
     IT cur_chunk_ptr = 0;
     
@@ -1465,12 +1462,10 @@ void convert_to_scs(
     ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
                         + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
 
-    // std::cout << "n_scs_elements = " << n_scs_elements << std::endl;
     scs->chunk_ptrs[scs->n_chunks] = n_scs_elements;
 
     // construct permutation vector
-
-    scs->old_to_new_idx = V<IT, IT>(scs->n_rows);
+    scs->old_to_new_idx = std::vector<IT>(scs->n_rows + scs->sigma);
 
     for (ST i = 0; i < scs->n_rows_padded; ++i) {
         IT old_row_idx = n_els_per_row[i].first;
@@ -1481,8 +1476,13 @@ void convert_to_scs(
     }
     
 
-    scs->values   = V<VT, IT>(n_scs_elements);
-    scs->col_idxs = V<IT, IT>(n_scs_elements);
+    // scs->values   = V<VT, IT>(n_scs_elements + scs->sigma);
+    // scs->col_idxs = V<IT, IT>(n_scs_elements + scs->sigma);
+    scs->values   = std::vector<VT>(n_scs_elements + scs->sigma);
+    scs->col_idxs = std::vector<IT>(n_scs_elements + scs->sigma);
+
+    printf("n_scs_elements = %i.\n", n_scs_elements);
+    // exit(1);
 
     IT padded_col_idx = 0;
 
@@ -1496,7 +1496,13 @@ void convert_to_scs(
         scs->col_idxs[i] = padded_col_idx;
     }
 
-    std::vector<IT> col_idx_in_row(scs->n_rows_padded);
+    // I don't know what this would help, but you can try it.
+    // std::vector<IT> col_idx_in_row(scs->n_rows_padded);
+    std::vector<IT> col_idx_in_row(scs->n_rows_padded + scs->sigma);
+    // int *col_idx_in_row = new int [scs->n_rows_padded + scs->sigma];
+    // for (int i = 0; i < scs->n_rows_padded + scs->sigma; ++i){
+    //     col_idx_in_row[i] = 0;
+    // }
 
     // fill values and col_idxs
     for (ST i = 0; i < scs->nnz; ++i) {
@@ -1523,6 +1529,21 @@ void convert_to_scs(
         col_idx_in_row[row]++;
     }
 
+    // for (int i = 0; i < scs->n_rows_padded + scs->sigma; ++i){
+    //     printf("col idx = %i\n", scs->col_idxs[i]);
+    // }
+    // exit(0);
+
+    // printf("Problem row 16\n");
+    // for (int i = 0; i < n_els_per_row[16].second; ++i){
+    //     IT row = 16;
+    //     ST chunk_index = row / scs->C;
+    //     IT chunk_start = scs->chunk_ptrs[chunk_index];
+    //     IT chunk_row   = row % scs->C;
+    //     IT idx = chunk_start + col_idx_in_row[row] * scs->C + chunk_row;
+    //     printf("val: %f, col: %i\n", scs->values[idx], scs->col_idxs[idx]);
+    // }
+
     // Sort inverse permutation vector, based on scs->old_to_new_idx
     // std::vector<int> inv_perm(scs->n_rows);
     // std::vector<int> inv_perm_temp(scs->n_rows);
@@ -1541,6 +1562,10 @@ void convert_to_scs(
 
     scs->n_elements = n_scs_elements;
 
+    // for(int i = 0; i < n_scs_elements; ++i){
+    //     printf("col idx: %i\n", scs->col_idxs.data()[i]);
+    // }
+
     // Experimental 2024_02_01, I do not want the rows permuted yet... so permute back
     // if sigma > C, I can see this being a problem
     // for (ST i = 0; i < scs->n_rows_padded; ++i) {
@@ -1552,6 +1577,22 @@ void convert_to_scs(
     // }    
 
     // return true;
+
+
+    // printf("perm = [\n");
+    // for (ST i = 0; i < scs->n_rows; ++i) {
+    //     printf("perm idx %i\n", scs->old_to_new_idx.data()[i]);
+    // }
+    // printf("]\n");
+
+    // printf("inv perm = [\n");
+    // for (ST i = 0; i < scs->n_rows; ++i) {
+    //     printf("inv perm idx %i\n", scs->new_to_old_idx[i]);
+    // }
+    // printf("]\n");
+    // exit(1);
+
+    // delete col_idx_in_row; <- uhh why does this cause a seg fault?
 }
 
 template<typename IT>

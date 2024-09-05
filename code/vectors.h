@@ -45,7 +45,7 @@ public:
         return *this;
     }
 
-    // virtual ~BaseVector() = default;
+    virtual ~BaseVector() = default;
 
     IT n_rows{};
 
@@ -104,11 +104,11 @@ public:
 
 
 
-    // virtual ~Vector()
-    // {
-    //     if (this->data())
-    //         free(this->data());
-    // }
+    virtual ~Vector()
+    {
+        if (this->data())
+            free(this->data());
+    }
 
     inline       VT & operator()(IT r)       { return this->data()[r]; }
     inline const VT & operator()(IT r) const { return this->data()[r]; }

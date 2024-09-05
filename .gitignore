@@ -13,11 +13,15 @@ spmv_mkl_compare.txt
 log.txt
 code/scripts/results/
 error.log
+results/
+profiles/
 
 spmv_mkl_compare_sp.txt
 spmv_mkl_compare_dp.txt
 spmv_mkl_compare_mp.txt
 spmv_bench.txt
+scan_epsilon.sh
+ML_Geer_data_vol_tests/
 
 *.o
 *.gch

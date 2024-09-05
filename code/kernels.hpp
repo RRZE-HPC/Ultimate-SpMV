@@ -309,7 +309,7 @@ spmv_omp_scs_adv(
 /**
  * Sell-C-sigma implementation templated by C.
  */
-template <ST C, typename VT, typename IT>
+template <ST C, typename IT>
 static void
 scs_mp_impl_cpu(
     const ST * hp_n_chunks, // n_chunks (same for both)
@@ -336,8 +336,8 @@ scs_mp_impl_cpu(
 #endif
         #pragma omp for schedule(static)
         for (ST c = 0; c < *hp_n_chunks; ++c) {
-            VT hp_tmp[C]{};
-            VT lp_tmp[C]{};
+            double hp_tmp[C]{};
+            double lp_tmp[C]{};
 
             IT hp_cs = hp_chunk_ptrs[c];
             IT lp_cs = lp_chunk_ptrs[c];
@@ -350,8 +350,8 @@ scs_mp_impl_cpu(
 
             for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
                 for (IT i = 0; i < C; ++i) {
-                    lp_tmp[i] += lp_values[lp_cs + j * C + i] * lp_x[lp_col_idxs[lp_cs + j * C + i]];
-                    // lp_tmp[i] += lp_values[lp_cs + j * C + i] * hp_x[lp_col_idxs[lp_cs + j * C + i]];
+                    // lp_tmp[i] += lp_values[lp_cs + j * C + i] * lp_x[lp_col_idxs[lp_cs + j * C + i]];
+                    lp_tmp[i] += lp_values[lp_cs + j * C + i] * hp_x[lp_col_idxs[lp_cs + j * C + i]];
                 }
             }
 
@@ -372,7 +372,7 @@ scs_mp_impl_cpu(
  *
  * Note: only works for selected Cs, see INSTANTIATE_CS.
  */
-template <typename VT, typename IT>
+template <typename IT>
 static void
 spmv_omp_scs_mp_adv(
     const ST * hp_C, // 1
@@ -390,21 +390,22 @@ spmv_omp_scs_mp_adv(
     const IT * RESTRICT lp_col_idxs,
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
-    float * RESTRICT lp_y, // unused
-    const int * my_rank
+    float * RESTRICT lp_y,
+    const int * my_rank = NULL
 )
 {
     switch (*hp_C)
     {
         #define INSTANTIATE_CS X(1) X(2) X(4) X(8) X(16) X(32) X(64) X(128) X(256)
 
-        #define X(CC) case CC: scs_mp_impl_cpu<CC>(hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y); break;
+        #define X(CC) case CC: scs_mp_impl_cpu<CC,IT>(hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y); break;
         INSTANTIATE_CS
         #undef X
 
 #ifdef SCS_C
     case SCS_C:
-        case SCS_C: scs_mp_impl_cpu<SCS_C>(hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y); break;
+        case SCS_C: scs_mp_impl_cpu<SCS_C, IT>(hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y);
+        break;
 #endif
     default:
         fprintf(stderr,
@@ -501,7 +502,7 @@ spmv_omp_csr_mp(
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
-    const int * my_rank
+    const int * my_rank = NULL
     )
 {
     // if(my_rank == 1){
@@ -582,7 +583,7 @@ spmv_warmup_omp_scs_mp(
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
-    const int * my_rank
+    const int * my_rank = NULL
 )
 {
     #pragma omp parallel
@@ -642,7 +643,7 @@ spmv_omp_scs_mp(
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
-    const int * my_rank
+    const int * my_rank = NULL
 )
 {
     #pragma omp parallel
@@ -717,9 +718,9 @@ spmv_gpu_scs(const ST *C,
 template <typename VT, typename IT>
 void spmv_gpu_scs_launcher(
     const ST * C,
-    const ST * num_rows, // n_chunks
-    const IT * RESTRICT row_ptrs, // chunk_ptrs
-    const IT * RESTRICT row_lengths, // unused
+    const ST * n_chunks, // n_chunks
+    const IT * RESTRICT chunk_ptrs, // chunk_ptrs
+    const IT * RESTRICT chunk_lengths, // unused
     const IT * RESTRICT col_idxs,
     const VT * RESTRICT values,
     VT * RESTRICT x,
@@ -728,7 +729,7 @@ void spmv_gpu_scs_launcher(
     const int * my_rank = NULL
 ){
     spmv_gpu_scs<<<*n_blocks, THREADS_PER_BLOCK>>>(
-        C, num_rows, row_ptrs, row_lengths, col_idxs, values, x, y
+        C, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y
     );
 }
 
@@ -751,29 +752,29 @@ spmv_gpu_mp_scs(
     const float * RESTRICT lp_values,
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
-    const int * my_rank
+    const int * my_rank = NULL
 )
 {
-    long row = threadIdx.x + blockDim.x * blockIdx.x;
+    int row = threadIdx.x + blockDim.x * blockIdx.x;
     int c   = row / (*hp_C);  // the no. of the chunk
     int idx = row % (*hp_C);  // index inside the chunk
+    int C = *hp_C; 
 
     if (row < *hp_n_chunks * (*hp_C)) {
-        double hp_tmp{};
-        double lp_tmp{};
+        double tmp{};
 
         int hp_cs = hp_chunk_ptrs[c];
         int lp_cs = lp_chunk_ptrs[c];
 
         for (int j = 0; j < hp_chunk_lengths[c]; ++j) {
-            hp_tmp += hp_values[hp_cs + j * (*hp_C) + idx] * hp_x[hp_col_idxs[hp_cs + j * (*hp_C) + idx]];
+            tmp += hp_values[hp_cs + idx + j * C] * hp_x[hp_col_idxs[hp_cs + idx + j * C]];
         }
         for (int j = 0; j < lp_chunk_lengths[c]; ++j) {
-            lp_tmp += lp_values[lp_cs + j * (*lp_C) + idx] * lp_x[lp_col_idxs[lp_cs + j * (*lp_C) + idx]];
-            // lp_tmp += lp_values[lp_cs + j * (*lp_C) + idx] * hp_x[lp_col_idxs[lp_cs + j * (*lp_C) + idx]];
+            tmp += lp_values[lp_cs + idx + j * (*lp_C)] * lp_x[lp_col_idxs[lp_cs + idx + j * (*lp_C)]];
         }
 
-        hp_y[row] = hp_tmp + lp_tmp;
+        hp_y[row] = tmp;
+
     }
 }
 
@@ -796,7 +797,7 @@ void spmv_gpu_mp_scs_launcher(
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
     const ST * n_blocks,
-    const int * my_rank
+    const int * my_rank = NULL
 ){
     spmv_gpu_mp_scs<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
         hp_C,
@@ -817,6 +818,15 @@ void spmv_gpu_mp_scs_launcher(
         lp_y,
         my_rank
     );
+
+    // spmv_gpu_scs<double, int><<<*n_blocks, THREADS_PER_BLOCK>>>(
+    //     hp_C, hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y
+    // );
+
+    // spmv_gpu_scs<float, int><<<*n_blocks, THREADS_PER_BLOCK>>>(
+    //     lp_C, lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y
+    // );
+
 }
 
 template <typename VT, typename IT>
@@ -960,7 +970,7 @@ void spmv_gpu_mp_csr_launcher(
 template <ST C, typename VT, typename IT>
 __device__
 static void
-scs_impl_gpu(const ST n_chunks,
+scs_impl_gpu(const ST * n_chunks,
          const IT * RESTRICT chunk_ptrs,
          const IT * RESTRICT chunk_lengths,
          const IT * RESTRICT col_idxs,
@@ -972,7 +982,7 @@ scs_impl_gpu(const ST n_chunks,
     ST c   = row / C;  // the no. of the chunk
     ST idx = row % C;  // index inside the chunk
 
-    if (row < n_chunks * C) {
+    if (row < *n_chunks * C) {
         VT tmp{};
         IT cs = chunk_ptrs[c];
 
@@ -1008,13 +1018,13 @@ spmv_gpu_scs_adv(
     {
         #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128)
 
-        #define X(CC) case CC: scs_impl_gpu<CC>(*n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); break;
+        #define X(CC) case CC: scs_impl_gpu<CC>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); break;
         INSTANTIATE_CS
         #undef X
 
 #ifdef SCS_C
     case SCS_C:
-        case SCS_C: scs_impl_gpu<SCS_C>(*n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y);
+        case SCS_C: scs_impl_gpu<SCS_C>(n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y);
         break;
 #endif
     default:
@@ -1054,14 +1064,14 @@ template <ST C, typename IT>
 __device__
 static void
 scs_mp_impl_gpu(
-    const ST hp_n_chunks, // n_chunks (same for both)
+    const ST * hp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
     const IT * RESTRICT hp_chunk_lengths, // unused
     const IT * RESTRICT hp_col_idxs,
     const double * RESTRICT hp_values,
     double * RESTRICT hp_x,
     double * RESTRICT hp_y, 
-    const ST lp_n_chunks, // n_chunks (same for both)
+    const ST * lp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
     const IT * RESTRICT lp_chunk_lengths, // unused
     const IT * RESTRICT lp_col_idxs,
@@ -1074,24 +1084,21 @@ scs_mp_impl_gpu(
     ST c   = row / C;  // the no. of the chunk
     ST idx = row % C;  // index inside the chunk
 
-    if (row < hp_n_chunks * C) {
-        double hp_tmp{};
-        double lp_tmp{};
+    if (row < *hp_n_chunks * C) {
+        double tmp{};
 
         IT hp_cs = hp_chunk_ptrs[c];
         IT lp_cs = lp_chunk_ptrs[c];
 
         for (ST j = 0; j < hp_chunk_lengths[c]; ++j) {
-            hp_tmp += hp_values[hp_cs + j * C + idx] * hp_x[hp_col_idxs[hp_cs + j * C + idx]];
+            tmp += hp_values[hp_cs + j * C + idx] * hp_x[hp_col_idxs[hp_cs + j * C + idx]];
         }
         for (ST j = 0; j < lp_chunk_lengths[c]; ++j) {
-            lp_tmp += lp_values[lp_cs + j * C + idx] * lp_x[lp_col_idxs[lp_cs + j * C + idx]];
-            // lp_tmp += lp_values[lp_cs + j * C + idx] * hp_x[lp_col_idxs[lp_cs + j * C + idx]];
+            tmp += lp_values[lp_cs + j * C + idx] * hp_x[lp_col_idxs[lp_cs + j * C + idx]];
         }
 
-        hp_y[row] = hp_tmp + lp_tmp;
+        hp_y[row] = tmp;
     }
-
 }
 
 
@@ -1122,17 +1129,18 @@ spmv_gpu_scs_mp_adv(
     float * RESTRICT lp_y // unused
 )
 {
+    // printf("Do I get on to the device?\n");
     switch (*hp_C)
     {
         #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128) X(256)
 
-        #define X(CC) case CC: scs_mp_impl_gpu<CC>(*hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, *lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y); break;
+        #define X(CC) case CC: scs_mp_impl_gpu<CC>(hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y); break;
         INSTANTIATE_CS
         #undef X
 
 #ifdef SCS_C
     case SCS_C:
-        case SCS_C: scs_mp_impl_gpu<SCS_C>(*hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, *lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y);
+        case SCS_C: scs_mp_impl_gpu<SCS_C>(hp_n_chunks, hp_chunk_ptrs, hp_chunk_lengths, hp_col_idxs, hp_values, hp_x, hp_y, lp_n_chunks, lp_chunk_ptrs, lp_chunk_lengths, lp_col_idxs, lp_values, lp_x, lp_y);
         break;
 #endif
     default:
@@ -1162,8 +1170,9 @@ void spmv_gpu_mp_scs_adv_launcher(
     float * RESTRICT lp_x,
     float * RESTRICT lp_y, // unused
     const ST * n_blocks,
-    const int * my_rank
+    const int * my_rank = NULL
 ){
+    // printf("Do I get to the launcher? n_blocks = %i\n", *n_blocks);
     spmv_gpu_scs_mp_adv<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
         hp_C, // 1
         hp_n_chunks, // n_chunks (same for both)
