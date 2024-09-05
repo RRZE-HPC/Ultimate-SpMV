@@ -57,6 +57,15 @@ struct max_rel_error<std::complex<double>>
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
 
+void dummy_pin(void){
+    volatile int dummy = 0;
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        dummy += thread_id;
+    }
+}
+
 template <typename VT>
 void print_vector(const std::string &name,
              const VT *begin,

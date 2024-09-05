@@ -1266,8 +1266,11 @@ int main(int argc, char *argv[]){
 
     // _Float16 a = 1.0;
 
-// Initialize just out of convenience
-int my_rank = 0, comm_size = 1;
+    // Bogus parallel region pin threads to cores
+    dummy_pin();
+
+    // Initialize just out of convenience
+    int my_rank = 0, comm_size = 1;
 
 #ifdef USE_MPI
     MPI_Init(&argc, &argv);
