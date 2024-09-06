@@ -406,7 +406,7 @@ void bench_spmv(
             );
         }
         else{
-            printf("CuSparse SpMV only enabled iwth CRS format in DP or SP\n");
+            printf("CuSparse CRS only enabled with DP or SP\n");
             exit(1);
         }
 
@@ -442,7 +442,7 @@ void bench_spmv(
         else if(config->value_type == "sp"){
             cusparseCreateSlicedEll(
                 &matA, 
-                local_scs->n_rows_padded, 
+                local_scs->n_rows, 
                 local_scs->n_cols, 
                 local_scs->nnz,
                 local_scs->n_elements,
@@ -456,15 +456,19 @@ void bench_spmv(
                 CUDA_R_32F
             );
             // Create dense vector X
-            cusparseCreateDnVec(&vecX, local_scs->n_rows_padded, d_x, CUDA_R_32F);
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F);
             // Create dense vector y
-            cusparseCreateDnVec(&vecY, local_scs->n_rows_padded, d_y, CUDA_R_32F);
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F);
             // allocate an external buffer if needed
             cusparseSpMV_bufferSize(
                 handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
                 CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
             );
+        }
+        else{
+            printf("CuSparse SELL-P only enabled with DP or SP\n");
+            exit(1);
         }
     }
 
