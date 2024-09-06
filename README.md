@@ -29,7 +29,7 @@ Options:
  
  
 Notes:
-- This is a work in progress. Please email any problems or suggestions to dane.c.lacey@fau.de
+- This is a work in progress. Please email any problems or suggestions to `dane.c.lacey at fau.de`
 - The -c and -s options are only relevant when the scs kernel is selected
 - Dependencies:
 	- mkl (used for validation of results)
