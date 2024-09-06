@@ -1560,12 +1560,12 @@ void convert_to_scs(
     // generate_inv_perm<IT>(scs->old_to_new_idx.data(), &(inv_perm)[0],  scs->n_rows);
 
 
-    int *inv_perm = new int[scs->n_rows];
-    int *inv_perm_temp = new int[scs->n_rows];
+    int *inv_perm = new int[scs->n_rows + scs->sigma];
+    int *inv_perm_temp = new int[scs->n_rows + scs->sigma];
     for(int i = 0; i < scs->n_rows; ++i){
         inv_perm_temp[i] = i;
     }
-    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm,  scs->n_rows);
+    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm,  scs->n_rows + scs->sigma);
 
     scs->new_to_old_idx = inv_perm;
 

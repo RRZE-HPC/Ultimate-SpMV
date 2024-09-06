@@ -893,13 +893,21 @@ void bench_spmv(
     r->hp_nnz = hp_local_scs->nnz;
     r->lp_nnz = lp_local_scs->nnz;
 
-    r->hp_beta = (double)hp_local_scs->nnz / hp_local_scs->n_elements;
-    if(hp_local_scs->n_elements == 0)
+    if(hp_local_scs->n_elements == 0){
         r->hp_beta = 0;
-    r->lp_beta = (double)lp_local_scs->nnz / lp_local_scs->n_elements;
-    if(lp_local_scs->n_elements == 0)
+    }
+    else{
+        r->hp_beta = (double)hp_local_scs->nnz / hp_local_scs->n_elements;
+    }
+        
+    
+    if(lp_local_scs->n_elements == 0){
         r->lp_beta = 0;
-
+    }
+    else{
+        r->lp_beta = (double)lp_local_scs->nnz / lp_local_scs->n_elements;
+    }
+    
 // TODO: How to destroy out here?
 // #ifdef USE_MPI
 //     delete[] recv_requests;

@@ -74,14 +74,14 @@ void write_bench_to_file(
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
         if(config->value_type == "mp"){
-            working_file << std::fixed << std::setprecision(2) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
+            working_file << std::fixed << std::setprecision(8) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
         }
         else{
-            working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
+            working_file << std::fixed << std::setprecision(8) << ", beta: " << r->beta;
         }
     }
     if (config->value_type == "mp"){
-        working_file << ", data_type: mp" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % hp elems: " << r->total_hp_percent << ", % lp elems: " << r->total_lp_percent;    
+        working_file << ", data_type: mp" << ", threshold: " << std::fixed << std::setprecision(8) << config->bucket_size << ", % hp elems: " << r->total_hp_percent << ", % lp elems: " << r->total_lp_percent;    
     }
     else{
         working_file << ", data_type: " << typeid(VT).name();
@@ -179,10 +179,10 @@ void write_result_to_file(
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << ", sigma: " << config->sigma;
         if(config->value_type == "mp"){
-            working_file << std::fixed << std::setprecision(2) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
+            working_file << std::fixed << std::setprecision(8) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
         }
         else{
-            working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
+            working_file << std::fixed << std::setprecision(8) << ", beta: " << r->beta;
         }
     }
     if(config->value_type == "dp"){
