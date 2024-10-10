@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <set>
 
+
 #ifdef USE_MPI
 /**
     @brief Generate unique tags for communication, based on the cantor pairing function. 
@@ -829,49 +830,49 @@ void collect_comm_info(
 #endif
 
 /**
-    @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into hp and lp sub-structs
+    @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into dp and sp sub-structs
     @param *local_mtx : Process-local coo matrix, received on this process from an earlier routine
-    @param *hp_local_mtx : Process-local "higher precision" coo matrix
-    @param *lp_local_mtx : Process-local "lower precision" coo matrix
+    @param *dp_local_mtx : Process-local "higher precision" coo matrix
+    @param *sp_local_mtx : Process-local "lower precision" coo matrix
 */
 template <typename VT, typename IT>
-void seperate_lp_from_hp( 
+void partition_precisions( 
     Config *config,
     MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
-    MtxData<double, int> *hp_local_mtx, 
-    MtxData<float, int> *lp_local_mtx,
+    MtxData<double, int> *dp_local_mtx, 
+    MtxData<float, int> *sp_local_mtx,
     std::vector<VT> *largest_row_elems, // <- to adjust for jacobi scaling
     std::vector<VT> *largest_col_elems,
     int my_rank = NULL)
 {
     long double threshold = config->bucket_size;
 
-    hp_local_mtx->is_sorted = local_mtx->is_sorted;
-    hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
-    hp_local_mtx->n_rows = local_mtx->n_rows;
-    hp_local_mtx->n_cols = local_mtx->n_cols;
+    dp_local_mtx->is_sorted = local_mtx->is_sorted;
+    dp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    dp_local_mtx->n_rows = local_mtx->n_rows;
+    dp_local_mtx->n_cols = local_mtx->n_cols;
 
-    lp_local_mtx->is_sorted = local_mtx->is_sorted;
-    lp_local_mtx->is_symmetric = local_mtx->is_symmetric;
-    lp_local_mtx->n_rows = local_mtx->n_rows;
-    lp_local_mtx->n_cols = local_mtx->n_cols;
+    sp_local_mtx->is_sorted = local_mtx->is_sorted;
+    sp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    sp_local_mtx->n_rows = local_mtx->n_rows;
+    sp_local_mtx->n_cols = local_mtx->n_cols;
 
-    int lp_elem_ctr = 0;
-    int hp_elem_ctr = 0;
+    int sp_elem_ctr = 0;
+    int dp_elem_ctr = 0;
 
-    std::vector<IT> hp_local_I;
-    std::vector<IT> hp_local_J;
-    std::vector<double> hp_local_vals;
-    hp_local_mtx->I = hp_local_I;
-    hp_local_mtx->J = hp_local_J;
-    hp_local_mtx->values = hp_local_vals;
+    std::vector<IT> dp_local_I;
+    std::vector<IT> dp_local_J;
+    std::vector<double> dp_local_vals;
+    dp_local_mtx->I = dp_local_I;
+    dp_local_mtx->J = dp_local_J;
+    dp_local_mtx->values = dp_local_vals;
 
-    std::vector<IT> lp_local_I;
-    std::vector<IT> lp_local_J;
-    std::vector<float> lp_local_vals;
-    lp_local_mtx->I = lp_local_I;
-    lp_local_mtx->J = lp_local_J;
-    lp_local_mtx->values = lp_local_vals;
+    std::vector<IT> sp_local_I;
+    std::vector<IT> sp_local_J;
+    std::vector<float> sp_local_vals;
+    sp_local_mtx->I = sp_local_I;
+    sp_local_mtx->J = sp_local_J;
+    sp_local_mtx->values = sp_local_vals;
 
     // Scan local_mtx
     // TODO: If this is a bottleneck:
@@ -879,50 +880,51 @@ void seperate_lp_from_hp(
     // 2. Allocate space
     // 3. Assign in parallel
     for(int i = 0; i < local_mtx->nnz; ++i){
-        // If element value below threshold, place in hp_local_mtx
+        // If element value below threshold, place in dp_local_mtx
         if(config->equilibrate){
-            if(std::abs(local_mtx->values[i]) >= (long double) threshold / ( (*largest_col_elems)[local_mtx->J[i]] * (*largest_row_elems)[local_mtx->I[i]])) {   
-                hp_local_mtx->values.push_back(local_mtx->values[i]);
-                hp_local_mtx->I.push_back(local_mtx->I[i]);
-                hp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++hp_elem_ctr;
+            // TODO: static casting just to make it compile... 
+            if(std::abs(static_cast<double>(local_mtx->values[i])) >= (long double) threshold / ( (*largest_col_elems)[local_mtx->J[i]] * (*largest_row_elems)[local_mtx->I[i]])) {   
+                dp_local_mtx->values.push_back(local_mtx->values[i]);
+                dp_local_mtx->I.push_back(local_mtx->I[i]);
+                dp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++dp_elem_ctr;
             }
             else{
-                // else, place in lp_local_mtx 
-                lp_local_mtx->values.push_back(local_mtx->values[i]);
-                lp_local_mtx->I.push_back(local_mtx->I[i]);
-                lp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++lp_elem_ctr;
+                // else, place in sp_local_mtx 
+                sp_local_mtx->values.push_back(local_mtx->values[i]);
+                sp_local_mtx->I.push_back(local_mtx->I[i]);
+                sp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++sp_elem_ctr;
             }
         }
         else{
-            if(std::abs(local_mtx->values[i]) >= (long double) threshold){   
-                hp_local_mtx->values.push_back(local_mtx->values[i]);
-                hp_local_mtx->I.push_back(local_mtx->I[i]);
-                hp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++hp_elem_ctr;
+            if(std::abs(static_cast<double>(local_mtx->values[i])) >= (long double) threshold){   
+                dp_local_mtx->values.push_back(local_mtx->values[i]);
+                dp_local_mtx->I.push_back(local_mtx->I[i]);
+                dp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++dp_elem_ctr;
             }
-            else if (std::abs(local_mtx->values[i]) < (long double) threshold){
-                // else, place in lp_local_mtx 
-                lp_local_mtx->values.push_back(local_mtx->values[i]);
-                lp_local_mtx->I.push_back(local_mtx->I[i]);
-                lp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++lp_elem_ctr;
+            else if (std::abs(static_cast<double>(local_mtx->values[i])) < (long double) threshold){
+                // else, place in sp_local_mtx 
+                sp_local_mtx->values.push_back(local_mtx->values[i]);
+                sp_local_mtx->I.push_back(local_mtx->I[i]);
+                sp_local_mtx->J.push_back(local_mtx->J[i]);
+                ++sp_elem_ctr;
             }
             else{
-                printf("seperate_lp_from_hp ERROR: Element %i does not fit into either struct.\n", i);
+                printf("partition_precisions ERROR: Element %i does not fit into either struct.\n", i);
                 exit(1);
             }
         }
 
     }
 
-    hp_local_mtx->nnz = hp_elem_ctr;
-    lp_local_mtx->nnz = lp_elem_ctr;
+    dp_local_mtx->nnz = dp_elem_ctr;
+    sp_local_mtx->nnz = sp_elem_ctr;
 
-    if(local_mtx->nnz != (hp_elem_ctr + lp_elem_ctr)){
-        printf("seperate_lp_from_hp ERROR: %i Elements have been lost when seperating \
-        into lp and hp structs on rank: %i.\n", local_mtx->nnz - (hp_elem_ctr + lp_elem_ctr), my_rank);
+    if(local_mtx->nnz != (dp_elem_ctr + sp_elem_ctr)){
+        printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+        into dp and sp structs on rank: %i.\n", local_mtx->nnz - (dp_elem_ctr + sp_elem_ctr), my_rank);
         exit(1);
     }
 }
@@ -938,8 +940,11 @@ void seperate_lp_from_hp(
 template<typename VT, typename IT>
 void init_local_structs(
     ScsData<VT, IT> *local_scs,
-    ScsData<double, IT> *hp_local_scs,
-    ScsData<float, IT> *lp_local_scs,
+    ScsData<double, IT> *dp_local_scs,
+    ScsData<float, IT> *sp_local_scs,
+#ifdef HAVE_HALF_MATH
+    ScsData<_Float16, IT> *hp_local_scs,
+#endif
     ContextData<IT> *local_context,
     MtxData<VT, IT> *total_mtx,
     Config *config, // shouldn't this be const?
@@ -950,7 +955,6 @@ void init_local_structs(
     int* metis_perm = NULL,
     int* metis_inv_perm = NULL)
 {
-
     MtxData<VT, IT> *local_mtx = new MtxData<VT, IT>;
 
     local_context->total_nnz = total_mtx->nnz;
@@ -975,7 +979,7 @@ void init_local_structs(
 #endif
 
     // Scale the one-precision matrix
-    if(config->value_type != "mp" && config->equilibrate){
+    if(config->value_type != "ap" && config->equilibrate){
         equilibrate_matrix<VT, IT>(local_mtx);
         // std::vector<VT> largest_elems(local_mtx->n_cols);
         // extract_largest_elems<VT, IT>(local_mtx, &largest_elems);
@@ -989,12 +993,22 @@ void init_local_structs(
     convert_to_scs<VT, VT, IT>(local_mtx, config->chunk_size, config->sigma, local_scs, NULL, work_sharing_arr, my_rank);
 
     // Only used for mixed precision
-    MtxData<double, int> *hp_local_mtx = new MtxData<double, int>;
-    MtxData<float, int> *lp_local_mtx = new MtxData<float, int>;
+    MtxData<double, int> *dp_local_mtx = new MtxData<double, int>;
+    MtxData<float, int> *sp_local_mtx = new MtxData<float, int>;
+#ifdef HAVE_HALF_MATH
+    MtxData<_Float16, int> *hp_local_mtx = new MtxData<_Float16, int>;
+#endif
 
-    if (config->value_type == "mp"){
+    if (config->value_type == "ap"){
+#ifdef HAVE_HALF_MATH
+        printf("ERROR: Adaptive precision not yet implemented with _Float16.\n");
+        exit(1);
+        std::vector<VT> largest_row_elems(local_mtx->n_cols, 0.0f16);
+        std::vector<VT> largest_col_elems(local_mtx->n_cols, 0.0f16);
+#else
         std::vector<VT> largest_row_elems(local_mtx->n_cols, 0.0);
         std::vector<VT> largest_col_elems(local_mtx->n_cols, 0.0);
+#endif
 
         if(config->equilibrate){
             extract_largest_row_elems<VT, IT>(local_mtx, &largest_row_elems);
@@ -1004,22 +1018,22 @@ void init_local_structs(
             scale_matrix_cols<VT, IT>(local_mtx, &largest_col_elems);
         }
 
-        seperate_lp_from_hp<VT,IT>(config, local_mtx, hp_local_mtx, lp_local_mtx, &largest_row_elems, &largest_col_elems, my_rank);
+        partition_precisions<VT,IT>(config, local_mtx, dp_local_mtx, sp_local_mtx, &largest_row_elems, &largest_col_elems, my_rank);
 
         // We permute the lower precision struct in the exact same way as the higher precision one
-        printf("hp_struct\n");
-        convert_to_scs<double, double, IT>(hp_local_mtx, config->chunk_size, config->sigma, hp_local_scs, NULL, work_sharing_arr, my_rank);
+        printf("dp_struct\n");
+        convert_to_scs<double, double, IT>(dp_local_mtx, config->chunk_size, config->sigma, dp_local_scs, NULL, work_sharing_arr, my_rank);
 
-        printf("lp_struct\n");
-        convert_to_scs<float, float, IT>(lp_local_mtx, config->chunk_size, config->sigma, lp_local_scs, &(hp_local_scs->old_to_new_idx)[0], work_sharing_arr, my_rank);
+        printf("sp_struct\n");
+        convert_to_scs<float, float, IT>(sp_local_mtx, config->chunk_size, config->sigma, sp_local_scs, &(dp_local_scs->old_to_new_idx)[0], work_sharing_arr, my_rank);
 
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");
         std::string file_out_name;
-        file_out_name = "hp_local_scs";
-        hp_local_scs->write_to_mtx_file(my_rank, file_out_name);
-        file_out_name = "lp_local_scs";
-        lp_local_scs->write_to_mtx_file(my_rank, file_out_name);
+        file_out_name = "dp_local_scs";
+        dp_local_scs->write_to_mtx_file(my_rank, file_out_name);
+        file_out_name = "sp_local_scs";
+        sp_local_scs->write_to_mtx_file(my_rank, file_out_name);
 #ifdef USE_MPI
         MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -1027,7 +1041,7 @@ void init_local_structs(
 #endif
     }
 
-    if (config->value_type != "mp"){
+    if (config->value_type != "ap"){
 #ifdef OUTPUT_SPARSITY
         printf("Writing sparsity pattern to output file.\n");
         std::string file_out_name;
@@ -1089,7 +1103,7 @@ void init_local_structs(
     // permute_scs_cols(local_scs, &(local_scs->old_to_new_idx)[0]);
 
     // TODO: How to permute columns with here?
-    // if (config->value_type == "mp"){
+    // if (config->value_type == "ap"){
     //     // Permute column indices the same as the original scs struct
     //     // But rows are permuted differently (i.e. within the convert_to_scs routine)
     //     // permute_scs_cols(hp_local_scs, &(hp_local_scs->old_to_new_idx)[0]);

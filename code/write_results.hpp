@@ -13,11 +13,11 @@ void compute_euclid_dist(
     Result<VT, IT> *r,
     std::vector<VT> *x
 ){
-    long double tmp = 0; // NOTE: does this need to be VT?
+    double tmp = 0.0; // NOTE: does this need to be VT?
 
     #pragma omp parallel for reduction(+:tmp)
     for(int i = 0; i < r->total_rows; ++i){
-        tmp += (r->total_uspmv_result[i] - (*x)[i]) * (r->total_uspmv_result[i] - (*x)[i]);
+        tmp += (double)((r->total_uspmv_result[i] - (*x)[i]) * (r->total_uspmv_result[i] - (*x)[i]));
     }
 
     r->euclid_dist = std::sqrt(tmp);
@@ -28,11 +28,11 @@ void compute_euclid_magnitude(
     Result<VT, IT> *r,
     std::vector<VT> *x
 ){
-    long double tmp = 0; // NOTE: does this need to be VT?
+    double tmp = 0.0; // NOTE: does this need to be VT?
 
     #pragma omp parallel for reduction(+:tmp)
     for(int i = 0; i < r->total_rows; ++i){
-        tmp += (*x)[i] * (*x)[i];
+        tmp += (double)((*x)[i] * (*x)[i]);
     }
     r->mkl_magnitude = std::sqrt(tmp);
 }
@@ -73,18 +73,23 @@ void write_bench_to_file(
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
-        if(config->value_type == "mp"){
-            working_file << std::fixed << std::setprecision(2) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
+        if(config->value_type == "ap"){
+            working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", sp_beta: " << r->sp_beta;
         }
         else{
             working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
         }
     }
-    if (config->value_type == "mp"){
-        working_file << ", data_type: mp" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % hp elems: " << r->total_hp_percent << ", % lp elems: " << r->total_lp_percent;    
+    if (config->value_type == "ap"){
+        working_file << ", data_type: ap" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % dp elems: " << r->total_dp_percent << ", % sp elems: " << r->total_sp_percent;    
     }
     else{
-        working_file << ", data_type: " << typeid(VT).name();
+        if(config->value_type == "dp")
+            working_file << ", data_type: double";
+        else if(config->value_type == "sp")
+            working_file << ", data_type: float";
+        else if(config->value_type == "hp")
+            working_file << ", data_type: half";
     }
 #ifdef USE_MPI
     working_file << ", revisions: " << r->n_calls << ", seg_method: " << *seg_method << std::endl;
@@ -127,22 +132,23 @@ void write_result_to_file(
     int comm_size
 
 ){
-    // Used for assessing error
+    // Used for computing error
     compute_euclid_dist<VT, IT>(r, x);
-    compute_euclid_magnitude(r,x);
+    compute_euclid_magnitude<VT, IT>(r,x);
 
     int width;
-    long double relative_diff, max_relative_diff, max_relative_diff_elem_uspmv, max_relative_diff_elem_mkl;
-    long double absolute_diff, max_absolute_diff, max_absolute_diff_elem_uspmv, max_absolute_diff_elem_mkl;
+    double relative_diff, max_relative_diff, max_relative_diff_elem_uspmv, max_relative_diff_elem_mkl;
+    double absolute_diff, max_absolute_diff, max_absolute_diff_elem_uspmv, max_absolute_diff_elem_mkl;
     std::fstream working_file;
 
+    // IDK about all this "double" stuff
     max_relative_diff = 0.0;
-    max_relative_diff_elem_uspmv = r->total_uspmv_result[0];
-    max_relative_diff_elem_mkl = (*x)[0];
+    max_relative_diff_elem_uspmv = (double)(r->total_uspmv_result[0]);
+    max_relative_diff_elem_mkl = (double)((*x)[0]);
 
     max_absolute_diff = 0.0;
-    max_absolute_diff_elem_uspmv = r->total_uspmv_result[0];
-    max_absolute_diff_elem_mkl = (*x)[0];
+    max_absolute_diff_elem_uspmv = (double)(r->total_uspmv_result[0]);
+    max_absolute_diff_elem_mkl = (double)((*x)[0]);
 
     std::cout.precision(16);
     int num_omp_threads;
@@ -162,7 +168,10 @@ void write_result_to_file(
     else if(config->value_type == "sp"){
         output_filename = config->output_filename_sp;
     }
-    else if(config->value_type == "mp"){
+    else if(config->value_type == "hp"){
+        output_filename = config->output_filename_hp;
+    }
+    else if(config->value_type == "ap"){
         output_filename = config->output_filename_mp;
     }
     working_file.open(output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
@@ -178,22 +187,22 @@ void write_result_to_file(
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << ", sigma: " << config->sigma;
-        if(config->value_type == "mp"){
-            working_file << std::fixed << std::setprecision(2) << ", hp_beta: " << r->hp_beta << ", lp_beta: " << r->lp_beta;
+        if(config->value_type == "ap"){
+            working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", sp_beta: " << r->sp_beta;
         }
         else{
             working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
         }
     }
-    if(config->value_type == "dp"){
+    if(config->value_type == "dp")
         working_file << ", data_type: " << "dp";
-    }
-    else if(config->value_type == "sp"){
+    else if(config->value_type == "sp")
         working_file << ", data_type: " << "sp";
-    }
-    else if(config->value_type == "mp"){
-        working_file << ", data_type: " << "mp";
-    }
+    else if(config->value_type == "hp")
+        working_file << ", data_type: " << "hp";
+    else if(config->value_type == "ap")
+        working_file << ", data_type: " << "ap";
+
 #ifdef USE_MPI
     working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << std::endl;
 #else
@@ -239,8 +248,9 @@ void write_result_to_file(
                     << std::left << std::setw(width+4) << "-------------------------" << std::endl;
     }
     for(int i = 0; i < r->total_uspmv_result.size(); ++i){
-        relative_diff = std::abs( ((*x)[i] - r->total_uspmv_result[i]) /(*x)[i]);
-        absolute_diff = std::abs( (*x)[i] - r->total_uspmv_result[i]);
+        // TODO: static casting just to make it compile... 
+        relative_diff = std::abs( (static_cast<double>((*x)[i]) - r->total_uspmv_result[i]) /static_cast<double>((*x)[i]));
+        absolute_diff = std::abs( static_cast<double>((*x)[i]) - r->total_uspmv_result[i]);
 
         // Protect against printing 'inf's
 #ifdef DEBUG_MODE
@@ -252,10 +262,11 @@ void write_result_to_file(
         
         if(config -> verbose_validation == 1)
         {
-            working_file << std::left << std::setprecision(16) << std::setw(width) << (*x)[i]
-                        << std::left << std::setw(width) << r->total_uspmv_result[i]
-                        << std::left << std::setw(width) << 100 * relative_diff
-                        << std::left  << std::setw(width) << absolute_diff;
+            // TODO: Do I need this?
+            // working_file << std::left << std::setprecision(16) << std::setw(width) << (double)((*x)[i])
+            //             << std::left << std::setw(width) << r->total_uspmv_result[i]
+            //             << std::left << std::setw(width) << 100 * relative_diff
+            //             << std::left  << std::setw(width) << absolute_diff;
 
             if((std::abs(relative_diff) > .01) || std::isinf(relative_diff)){
                 working_file << std::left << std::setw(width) << "ERROR";
@@ -264,9 +275,7 @@ void write_result_to_file(
                 working_file << std::left << std::setw(width) << "WARNING";
             }
 
-        working_file << std::endl;
-        // if(i > 5)
-        //     exit(1);
+            working_file << std::endl;
         }
         else if(config -> verbose_validation == 0)
         {
@@ -444,4 +453,68 @@ void validate_sp_result(
 
     delete scs;
 }
+
+// TODO
+// #ifdef HAVE_HALF_MATH
+void validate_hp_result(
+    MtxData<_Float16, int> *total_mtx,
+    Config *config,
+    Result<_Float16, int> *r,
+    std::vector<_Float16> *mkl_hp_result
+){
+    mkl_hp_result = nullptr;
+    // std::cout << "Validation of half precision results not yet implemented." << std::endl;
+// #ifdef __CUDACC__
+//     long num_rows = total_mtx->n_rows;
+//     long num_cols = total_mtx->n_cols;
+//     long chunk_size = 1;
+// #else
+//     int num_rows = total_mtx->n_rows;
+//     int num_cols = total_mtx->n_cols;
+//     int chunk_size = 1;
+// #endif
+
+//     mkl_sp_result->resize(num_rows, 0);
+//     std::vector<float> y(num_rows, 0);
+
+//     ScsData<float, int> *scs = new ScsData<float, int>;
+
+//     convert_to_scs<float, float, int>(total_mtx, 1, 1, scs);
+
+//     V<int, int>row_ptrs(total_mtx->n_rows + 1);
+
+//     convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
+        
+//     for (int i = 0; i < num_rows; i++) {
+//         (*mkl_sp_result)[i] = r->total_x[i];
+//     }
+
+//     for (int i = 0; i < num_cols; i++) {
+//         y[i] = 0.0;
+//     }
+
+//     char transa = 'n';
+//     float alpha = 1.0;
+//     float beta = 0.0; 
+//     char matdescra [4] = {
+//         'G', // general matrix
+//         ' ', // ignored
+//         ' ', // ignored
+//         'C'}; // zero-based indexing (C-style)
+
+//     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
+//     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
+//     for(int i = 0; i < config->n_repetitions; ++i){
+// #ifdef __CUDACC__
+//         // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
+//         spmv_omp_csr<float, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_sp_result)[0], &y[0]);
+// #else
+//         mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
+// #endif
+//         std::swap(*mkl_sp_result, y);
+//     }
+
+//     delete scs;
+}
+// #endif
 #endif

@@ -19,8 +19,6 @@
 #include <metis.h>
 #endif
 
-template <typename VT, typename IT>
-using V = Vector<VT, IT>;
 using ST = long;
 
 // Initialize all matrices and vectors the same.
@@ -109,6 +107,9 @@ struct Config
     // filename for double precision results printing
     std::string output_filename_dp = "spmv_mkl_compare_dp.txt";
 
+    // filename for double precision results printing
+    std::string output_filename_hp = "spmv_mkl_compare_hp.txt";
+
     // filename for mixed precision results printing
     std::string output_filename_mp = "spmv_mkl_compare_mp.txt";
 
@@ -177,22 +178,22 @@ struct OnePrecKernelArgs
 template <typename IT>
 struct TwoPrecKernelArgs
 {
-    ST * hp_C;
-    ST * hp_n_chunks; // (same for both)
-    IT * RESTRICT hp_chunk_ptrs;
-    IT * RESTRICT hp_chunk_lengths;
-    IT * RESTRICT hp_col_idxs;
-    double * RESTRICT hp_values;
-    double * RESTRICT hp_local_x;
-    double * RESTRICT hp_local_y;
-    ST * lp_C;
-    ST * lp_n_chunks; // (same for both)
-    IT * RESTRICT lp_chunk_ptrs;
-    IT * RESTRICT lp_chunk_lengths;
-    IT * RESTRICT lp_col_idxs;
-    float * RESTRICT lp_values;
-    float * RESTRICT lp_local_x;
-    float * RESTRICT lp_local_y;
+    ST * dp_C;
+    ST * dp_n_chunks; // (same for both)
+    IT * RESTRICT dp_chunk_ptrs;
+    IT * RESTRICT dp_chunk_lengths;
+    IT * RESTRICT dp_col_idxs;
+    double * RESTRICT dp_values;
+    double * RESTRICT dp_local_x;
+    double * RESTRICT dp_local_y;
+    ST * sp_C;
+    ST * sp_n_chunks; // (same for both)
+    IT * RESTRICT sp_chunk_ptrs;
+    IT * RESTRICT sp_chunk_lengths;
+    IT * RESTRICT sp_col_idxs;
+    float * RESTRICT sp_values;
+    float * RESTRICT sp_local_x;
+    float * RESTRICT sp_local_y;
 #ifdef __CUDACC__
     ST * n_blocks;
 #endif
@@ -234,22 +235,22 @@ class SpmvKernel {
         )> OnePrecFuncPtr;
 
         typedef std::function<void(
-            const ST *, // hp_C
-            const ST *, // hp_n_chunks // TODO same, for now.
-            const IT * RESTRICT, // hp_chunk_ptrs
-            const IT * RESTRICT, // hp_chunk_lengths
-            const IT * RESTRICT, // hp_col_idxs
-            const double * RESTRICT, // hp_values
-            double * RESTRICT, // hp_x
-            double * RESTRICT, // hp_y
-            const ST *, // lp_C
-            const ST *, // lp_n_chunks // TODO same, for now.
-            const IT * RESTRICT, // lp_chunk_ptrs
-            const IT * RESTRICT, // lp_chunk_lengths
-            const IT * RESTRICT, // lp_col_idxs
-            const float * RESTRICT, // lp_values
-            float * RESTRICT, // lp_x
-            float * RESTRICT, // lp_y
+            const ST *, // dp_C
+            const ST *, // dp_n_chunks // TODO same, for now.
+            const IT * RESTRICT, // dp_chunk_ptrs
+            const IT * RESTRICT, // dp_chunk_lengths
+            const IT * RESTRICT, // dp_col_idxs
+            const double * RESTRICT, // dp_values
+            double * RESTRICT, // dp_x
+            double * RESTRICT, // dp_y
+            const ST *, // sp_C
+            const ST *, // sp_n_chunks // TODO same, for now.
+            const IT * RESTRICT, // sp_chunk_ptrs
+            const IT * RESTRICT, // sp_chunk_lengths
+            const IT * RESTRICT, // sp_col_idxs
+            const float * RESTRICT, // sp_values
+            float * RESTRICT, // sp_x
+            float * RESTRICT, // sp_y
 #ifdef __CUDACC__
             const ST *, // n_blocks
 #endif
@@ -284,18 +285,18 @@ class SpmvKernel {
 #endif
 
         // Need different names on all of unpacked args
-        const ST * hp_C = two_prec_kernel_args_decoded->hp_C;
-        const ST * hp_n_chunks = two_prec_kernel_args_decoded->hp_n_chunks; // TODO same, for now.
-        const IT * RESTRICT hp_chunk_ptrs = two_prec_kernel_args_decoded->hp_chunk_ptrs;
-        const IT * RESTRICT hp_chunk_lengths = two_prec_kernel_args_decoded->hp_chunk_lengths;
-        const IT * RESTRICT hp_col_idxs = two_prec_kernel_args_decoded->hp_col_idxs;
-        const double * RESTRICT hp_values = two_prec_kernel_args_decoded->hp_values;
-        const ST * lp_C = two_prec_kernel_args_decoded->lp_C;
-        const ST * lp_n_chunks = two_prec_kernel_args_decoded->lp_n_chunks; // TODO same, for now.
-        const IT * RESTRICT lp_chunk_ptrs = two_prec_kernel_args_decoded->lp_chunk_ptrs;
-        const IT * RESTRICT lp_chunk_lengths = two_prec_kernel_args_decoded->lp_chunk_lengths;
-        const IT * RESTRICT lp_col_idxs = two_prec_kernel_args_decoded->lp_col_idxs;
-        const float * RESTRICT lp_values = two_prec_kernel_args_decoded->lp_values;
+        const ST * dp_C = two_prec_kernel_args_decoded->dp_C;
+        const ST * dp_n_chunks = two_prec_kernel_args_decoded->dp_n_chunks; // TODO same, for now.
+        const IT * RESTRICT dp_chunk_ptrs = two_prec_kernel_args_decoded->dp_chunk_ptrs;
+        const IT * RESTRICT dp_chunk_lengths = two_prec_kernel_args_decoded->dp_chunk_lengths;
+        const IT * RESTRICT dp_col_idxs = two_prec_kernel_args_decoded->dp_col_idxs;
+        const double * RESTRICT dp_values = two_prec_kernel_args_decoded->dp_values;
+        const ST * sp_C = two_prec_kernel_args_decoded->sp_C;
+        const ST * sp_n_chunks = two_prec_kernel_args_decoded->sp_n_chunks; // TODO same, for now.
+        const IT * RESTRICT sp_chunk_ptrs = two_prec_kernel_args_decoded->sp_chunk_ptrs;
+        const IT * RESTRICT sp_chunk_lengths = two_prec_kernel_args_decoded->sp_chunk_lengths;
+        const IT * RESTRICT sp_col_idxs = two_prec_kernel_args_decoded->sp_col_idxs;
+        const float * RESTRICT sp_values = two_prec_kernel_args_decoded->sp_values;
 #ifdef __CUDACC__
         const ST * n_blocks_2 = two_prec_kernel_args_decoded->n_blocks;
 #endif
@@ -333,10 +334,10 @@ class SpmvKernel {
     public:
         VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
         VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
-        double * RESTRICT hp_local_x = two_prec_kernel_args_decoded->hp_local_x;
-        double * RESTRICT hp_local_y = two_prec_kernel_args_decoded->hp_local_y;
-        float * RESTRICT lp_local_x = two_prec_kernel_args_decoded->lp_local_x;
-        float * RESTRICT lp_local_y = two_prec_kernel_args_decoded->lp_local_y;
+        double * RESTRICT dp_local_x = two_prec_kernel_args_decoded->dp_local_x;
+        double * RESTRICT dp_local_y = two_prec_kernel_args_decoded->dp_local_y;
+        float * RESTRICT sp_local_x = two_prec_kernel_args_decoded->sp_local_x;
+        float * RESTRICT sp_local_y = two_prec_kernel_args_decoded->sp_local_y;
         
 
         SpmvKernel(
@@ -350,7 +351,7 @@ class SpmvKernel {
         cusparse_args_encoded(cusparse_args_encoded_),
         comm_args_encoded(comm_args_encoded_){
         // SpmvKernel(Config *config_, void *kernel_args_encoded_, void *comm_args_encoded_): config(config_), kernel_args_encoded(kernel_args_encoded_), comm_args_encoded(comm_args_encoded_) {
-            if(config->value_type == "mp"){
+            if(config->value_type == "ap"){
                 if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                     if(my_rank == 0){printf("MP-CRS kernel selected\n");}
 #ifdef __CUDACC__
@@ -417,6 +418,10 @@ class SpmvKernel {
                     if(my_rank == 0){printf("CRS kernel selected\n");}
                     one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
                     one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
+                    // one_prec_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
+                    // one_prec_warmup_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
+                    // one_prec_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
+                    // one_prec_warmup_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
 #endif
                 }
                 else if (config->kernel_format == "ell" || config->kernel_format == "ell_rm"){
@@ -650,22 +655,22 @@ class SpmvKernel {
 
         inline void execute_mp_spmv(void){
             two_prec_kernel_func_ptr(
-                hp_C,
-                hp_n_chunks,
-                hp_chunk_ptrs,
-                hp_chunk_lengths,
-                hp_col_idxs,
-                hp_values,
-                hp_local_x,
-                hp_local_y, 
-                lp_C,
-                lp_n_chunks,
-                lp_chunk_ptrs,
-                lp_chunk_lengths,
-                lp_col_idxs,
-                lp_values,
-                lp_local_x,
-                lp_local_y,
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_local_x,
+                dp_local_y, 
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                sp_local_x,
+                sp_local_y,
 #ifdef __CUDACC__
                 n_blocks_2,
 #endif
@@ -679,22 +684,22 @@ class SpmvKernel {
 
         inline void execute_warmup_mp_spmv(void){
             two_prec_warmup_kernel_func_ptr(
-                hp_C,
-                hp_n_chunks,
-                hp_chunk_ptrs,
-                hp_chunk_lengths,
-                hp_col_idxs,
-                hp_values,
-                hp_local_x,
-                hp_local_y, 
-                lp_C,
-                lp_n_chunks,
-                lp_chunk_ptrs,
-                lp_chunk_lengths,
-                lp_col_idxs,
-                lp_values,
-                lp_local_x,
-                lp_local_y,
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_local_x,
+                dp_local_y, 
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                sp_local_x,
+                sp_local_y,
 #ifdef __CUDACC__
                 n_blocks_2,
 #endif
@@ -720,8 +725,8 @@ class SpmvKernel {
         }
 
         inline void swap_local_mp_vectors(){
-            std::swap(lp_local_x, lp_local_y);
-            std::swap(hp_local_x, hp_local_y);
+            std::swap(sp_local_x, sp_local_y);
+            std::swap(dp_local_x, dp_local_y);
         }
 };
 
@@ -1334,9 +1339,14 @@ void ScsData<VT, IT>::write_to_mtx_file(
 template <typename VT, typename IT>
 struct DefaultValues
 {
-
+#ifdef HAVE_HALF_MATH
+    VT A{2.0f16};
+    VT x{1.00f16};
+#else 
     VT A{2.0};
     VT x{1.00};
+#endif
+
     VT y{};
 
     VT *x_values{};
@@ -1356,14 +1366,14 @@ struct Result
     std::vector<unsigned long> nnz_per_proc;
 
     // Used in mp
-    std::vector<unsigned long> hp_nnz_per_proc;
-    std::vector<unsigned long> lp_nnz_per_proc;
-    unsigned long lp_nnz;
-    unsigned long hp_nnz;
-    unsigned long cumulative_hp_nnz;
-    unsigned long cumulative_lp_nnz;
-    double total_hp_percent;
-    double total_lp_percent;
+    std::vector<unsigned long> dp_nnz_per_proc;
+    std::vector<unsigned long> sp_nnz_per_proc;
+    unsigned long sp_nnz;
+    unsigned long dp_nnz;
+    unsigned long cumulative_dp_nnz;
+    unsigned long cumulative_sp_nnz;
+    double total_dp_percent;
+    double total_sp_percent;
 
     unsigned long total_nnz;
     unsigned long total_rows;
@@ -1384,8 +1394,8 @@ struct Result
     std::string value_type_str;
     std::string index_type_str;
 
-    uint64_t value_type_size{};
-    uint64_t index_type_size{};
+    int value_type_size{};
+    int index_type_size{};
 
     ST n_rows{};
     ST n_cols{};
@@ -1403,8 +1413,8 @@ struct Result
     double mem_y_mb{};
 
     double beta{};
-    double hp_beta{};
-    double lp_beta{};
+    double dp_beta{};
+    double sp_beta{};
 
     double cb_a_0{};
     double cb_a_nzc{};

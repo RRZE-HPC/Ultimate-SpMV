@@ -22,8 +22,10 @@ ifneq ($(COMPILER),gcc)
 ifneq ($(COMPILER),nvcc)
 ifneq ($(COMPILER),icx)
 ifneq ($(COMPILER),icc)
+ifneq ($(COMPILER),llvm)
 $(info COMPILER=$(COMPILER))
-$(error Please select a compiler in: [gcc, icc, icx, nvcc])
+$(error Please select a compiler in: [gcc, icc, icx, llvm, nvcc])
+endif
 endif
 endif
 endif
@@ -39,12 +41,16 @@ endif
 ifeq ($(COMPILER),gcc)
   CXX       = g++
   MPICXX     = mpicxx
-  OPT_LEVEL = -Ofast
+  OPT_LEVEL = -O3
+  # OPT_LEVEL = -ffast-math
   OPT_ARCH  = -march=native
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
   CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH)
 
   LIBS += -L${MKLROOT}/lib/intel64 
+  ifeq ($(CPP_VERSION), c++23)
+  CXXFLAGS += -DHAVE_HALF_MATH
+  endif
 endif
 
 ifeq ($(COMPILER),icc)
@@ -66,6 +72,21 @@ ifeq ($(COMPILER),icx)
   AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
 
   CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(AVX512_fix) $(OPT_ARCH)
+  ifeq ($(CPP_VERSION), c++23)
+  CXXFLAGS += -DHAVE_HALF_MATH 
+  endif
+endif
+
+ifeq ($(COMPILER),llvm)
+  CXX       = clang++
+  # MPICXX     = mpiicpc
+  OPT_LEVEL = -Ofast
+  OPT_ARCH  = -march=native
+  MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH)
+  ifeq ($(CPP_VERSION), c++23)
+  CXXFLAGS += -DHAVE_HALF_MATH 
+  endif
 endif
 
 ifeq ($(COMPILER),nvcc)

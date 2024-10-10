@@ -15,7 +15,7 @@ Options:
 - -s (int: sigma (required for scs))
 - -rev (int: number of back-to-back revisions to perform)
 - -rand_x (0/1: random x vector option)
-- -sp/dp/mp (numerical precision for spmv)
+- -dp/sp/hp/ap (numerical precision for spmv)
 - -seg_nnz/seg_rows/seg_metis (global matrix partitioning)
 - -validate (0/1: check result against mkl option)
 - -verbose (0/1: verbose validation of results)
@@ -24,7 +24,7 @@ Options:
 - -ba_synch (0/1: synch processes each benchmark loop)
 - -comm_halos (0/1: communication halo elements each benchmark loop)
 - -par_pack (0/1: pack elements contigously for MPI_Isend in parallel)
-- -bucket_size (float: threshold for matrix partitioning for mixed precision `-mp`)
+- -bucket_size (float: threshold for matrix partitioning for adaptive precision `-ap`)
 - -equilibrate (0/1: normalize rows of matrix)
  
  
@@ -33,7 +33,7 @@ Notes:
 - The -c and -s options are only relevant when the scs kernel is selected
 - Dependencies:
 	- mkl (used for validation of results)
-- Select compiler in Makefile (icc, icx, gcc, nvcc)
+- Select compiler in Makefile (gcc, icc, icx, llvm, nvcc)
 	- icc not advised
 - VECTOR_LENGTH for SIMD instructions is also defined at the top of the Makefile, useful for non-SELL_C_SIGMA kernels
 - If using AVX512 on icelake, I currently get around downfall perf bug with the icx compiler from OneAPI 2023.2.0

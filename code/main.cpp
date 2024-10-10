@@ -16,8 +16,6 @@
 #include <string>
 #include <sstream>
 #include <vector>
-// TODO
-// #include <float.h>
 
 
 #define WARM_UP_REPS 100
@@ -41,31 +39,46 @@ template <typename VT, typename IT>
 void bench_spmv(
     Config *config,
     ScsData<VT, IT> *local_scs,
-    ScsData<double, IT> *hp_local_scs,
-    ScsData<float, IT> *lp_local_scs,
+    ScsData<double, IT> *dp_local_scs,
+    ScsData<float, IT> *sp_local_scs,
+#ifdef HAVE_HALF_MATH
+    ScsData<_Float16, IT> *hp_local_scs,
+#endif
     ContextData<IT> *local_context,
     const IT *work_sharing_arr,
     std::vector<VT> *local_y,
-    std::vector<double> *hp_local_y,
-    std::vector<float> *lp_local_y,
+    std::vector<double> *dp_local_y,
+    std::vector<float> *sp_local_y,
+#ifdef HAVE_HALF_MATH
+    std::vector<_Float16> *hp_local_y,
+#endif
     std::vector<VT> *local_x,
-    std::vector<double> *hp_local_x,
-    std::vector<float> *lp_local_x,
+    std::vector<double> *dp_local_x,
+    std::vector<float> *sp_local_x,
+#ifdef HAVE_HALF_MATH
+    std::vector<_Float16> *hp_local_x,
+#endif
     Result<VT, IT> *r,
     int my_rank,
     int comm_size)
 {
     // Permute x, in order to match the permutation which was done to the columns
     std::vector<VT> local_x_permuted(local_x->size(), 0);
-    std::vector<double> hp_local_x_permuted(hp_local_x->size(), 0);
-    std::vector<float> lp_local_x_permuted(hp_local_x->size(), 0);
+    std::vector<double> dp_local_x_permuted(dp_local_x->size(), 0);
+    std::vector<float> sp_local_x_permuted(sp_local_x->size(), 0);
+#ifdef HAVE_HALF_MATH
+    std::vector<_Float16> hp_local_x_permuted(hp_local_x->size(), 0);
+#endif
 
     apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
-    if(config->value_type == "mp"){
-        // Currently, we fix one sigma. That is, we permute lp and hp exactly the same
-        apply_permutation<double, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
-        apply_permutation<float, IT>(&(lp_local_x_permuted)[0], &(*lp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    if(config->value_type == "ap"){
+        // Currently, we fix one sigma. That is, we permute dp and sp exactly the same
+        apply_permutation<double, IT>(&(dp_local_x_permuted)[0], &(*dp_local_x)[0], &(dp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+        apply_permutation<float, IT>(&(sp_local_x_permuted)[0], &(*sp_local_x)[0], &(sp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+#ifdef HAVE_HALF_MATH
+        apply_permutation<_Float16, IT>(&(hp_local_x_permuted)[0], &(*hp_local_x)[0], &(hp_local_scs->new_to_old_idx)[0], local_scs->n_rows);
+#endif
     }
 
     OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded = new OnePrecKernelArgs<VT, IT>;
@@ -110,7 +123,7 @@ void bench_spmv(
 //     comm_args_void_ptr = (void*) comm_args_encoded;
 
 //     void *kernel_args_void_ptr;
-//     if(config->value_type == "mp"){
+//     if(config->value_type == "ap"){
 //         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
 //     }
 //     else{
@@ -162,125 +175,125 @@ void bench_spmv(
     VT *d_values = new VT;
     ST *d_n_blocks = new ST;
 
-    double *d_x_hp = new double;
-    double *d_y_hp = new double;
-    ST *d_C_hp = new ST;
-    ST *d_n_chunks_hp = new ST;
-    IT *d_chunk_ptrs_hp = new IT;
-    IT *d_chunk_lengths_hp = new IT;
-    IT *d_col_idxs_hp = new IT;
-    double *d_values_hp = new double;
-    float *d_x_lp = new float;
-    float *d_y_lp = new float;
-    ST *d_C_lp = new ST;
-    ST *d_n_chunks_lp = new ST;
-    IT *d_chunk_ptrs_lp = new IT;
-    IT *d_chunk_lengths_lp = new IT;
-    IT *d_col_idxs_lp = new IT;
-    float *d_values_lp = new float;
+    double *d_x_dp = new double;
+    double *d_y_dp = new double;
+    ST *d_C_dp = new ST;
+    ST *d_n_chunks_dp = new ST;
+    IT *d_chunk_ptrs_dp = new IT;
+    IT *d_chunk_lengths_dp = new IT;
+    IT *d_col_idxs_dp = new IT;
+    double *d_values_dp = new double;
+    float *d_x_sp = new float;
+    float *d_y_sp = new float;
+    ST *d_C_sp = new ST;
+    ST *d_n_chunks_sp = new ST;
+    IT *d_chunk_ptrs_sp = new IT;
+    IT *d_chunk_lengths_sp = new IT;
+    IT *d_col_idxs_sp = new IT;
+    float *d_values_sp = new float;
 
-    if(config->value_type == "mp"){
-        long n_scs_elements_hp = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
-                    + hp_local_scs->chunk_lengths[hp_local_scs->n_chunks - 1] * hp_local_scs->C;
-        long n_scs_elements_lp = lp_local_scs->chunk_ptrs[lp_local_scs->n_chunks - 1]
-                    + lp_local_scs->chunk_lengths[lp_local_scs->n_chunks - 1] * lp_local_scs->C;
+    if(config->value_type == "ap"){
+        long n_scs_elements_dp = dp_local_scs->chunk_ptrs[dp_local_scs->n_chunks - 1]
+                    + dp_local_scs->chunk_lengths[dp_local_scs->n_chunks - 1] * dp_local_scs->C;
+        long n_scs_elements_sp = sp_local_scs->chunk_ptrs[sp_local_scs->n_chunks - 1]
+                    + sp_local_scs->chunk_lengths[sp_local_scs->n_chunks - 1] * sp_local_scs->C;
 
         // TODO: temporary way to get around memory courruption problem
-        for(int i = 0; i < n_scs_elements_hp; ++i){
-            if(hp_local_scs->col_idxs[i] >= local_scs->n_rows){
+        for(int i = 0; i < n_scs_elements_dp; ++i){
+            if(dp_local_scs->col_idxs[i] >= local_scs->n_rows){
 #ifdef DEBUG_MODE
-                printf("Bad hp element %i found at idx %i\n", hp_local_scs->col_idxs[i], i);
+                printf("Bad dp element %i found at idx %i\n", dp_local_scs->col_idxs[i], i);
 #endif
-                hp_local_scs->col_idxs[i] = 0;
+                dp_local_scs->col_idxs[i] = 0;
             }
         }
-        for(int i = 0; i < n_scs_elements_lp; ++i){
-            if(lp_local_scs->col_idxs[i] >= local_scs->n_rows){
+        for(int i = 0; i < n_scs_elements_sp; ++i){
+            if(sp_local_scs->col_idxs[i] >= local_scs->n_rows){
 #ifdef DEBUG_MODE
-                printf("Bad lp %i element found at idx %i\n", lp_local_scs->col_idxs[i], i);
+                printf("Bad sp %i element found at idx %i\n", sp_local_scs->col_idxs[i], i);
 #endif
-                lp_local_scs->col_idxs[i] = 0;
+                sp_local_scs->col_idxs[i] = 0;
             }
         }
 
 
         // Allocate space for MP structs on device
-        cudaMalloc(&d_values_hp, n_scs_elements_hp*sizeof(double));
-        cudaMalloc(&d_values_lp, n_scs_elements_lp*sizeof(float));
-        cudaMemcpy(d_values_hp, &(hp_local_scs->values)[0], n_scs_elements_hp*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_values_lp, &(lp_local_scs->values)[0], n_scs_elements_lp*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMalloc(&d_values_dp, n_scs_elements_dp*sizeof(double));
+        cudaMalloc(&d_values_sp, n_scs_elements_sp*sizeof(float));
+        cudaMemcpy(d_values_dp, &(dp_local_scs->values)[0], n_scs_elements_dp*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_values_sp, &(sp_local_scs->values)[0], n_scs_elements_sp*sizeof(float), cudaMemcpyHostToDevice);
 
-        cudaMalloc(&d_C_hp, sizeof(long));
-        cudaMalloc(&d_n_chunks_hp, sizeof(long));
-        cudaMalloc(&d_chunk_ptrs_hp, (hp_local_scs->n_chunks + 1)*sizeof(int));
-        cudaMalloc(&d_chunk_lengths_hp, hp_local_scs->n_chunks*sizeof(int));
-        cudaMalloc(&d_col_idxs_hp, n_scs_elements_hp*sizeof(int));
-        cudaMalloc(&d_C_lp, sizeof(long));
-        cudaMalloc(&d_n_chunks_lp, sizeof(long));
-        cudaMalloc(&d_chunk_ptrs_lp, (lp_local_scs->n_chunks + 1)*sizeof(int));
-        cudaMalloc(&d_chunk_lengths_lp, lp_local_scs->n_chunks*sizeof(int));
-        cudaMalloc(&d_col_idxs_lp, n_scs_elements_lp*sizeof(int));
+        cudaMalloc(&d_C_dp, sizeof(long));
+        cudaMalloc(&d_n_chunks_dp, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs_dp, (dp_local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths_dp, dp_local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs_dp, n_scs_elements_dp*sizeof(int));
+        cudaMalloc(&d_C_sp, sizeof(long));
+        cudaMalloc(&d_n_chunks_sp, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs_sp, (sp_local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths_sp, sp_local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs_sp, n_scs_elements_sp*sizeof(int));
 
         // Copy matrix data to device
-        cudaMemcpy(d_chunk_ptrs_hp, &(hp_local_scs->chunk_ptrs)[0], (hp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_chunk_lengths_hp, &(hp_local_scs->chunk_lengths)[0], hp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_col_idxs_hp, &(hp_local_scs->col_idxs)[0], n_scs_elements_hp*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_C_hp, &hp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_n_chunks_hp, &hp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_ptrs_dp, &(dp_local_scs->chunk_ptrs)[0], (dp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths_dp, &(dp_local_scs->chunk_lengths)[0], dp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs_dp, &(dp_local_scs->col_idxs)[0], n_scs_elements_dp*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C_dp, &dp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks_dp, &dp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
 
-        cudaMemcpy(d_chunk_ptrs_lp, &(lp_local_scs->chunk_ptrs)[0], (lp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_chunk_lengths_lp, &(lp_local_scs->chunk_lengths)[0], lp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_col_idxs_lp, &(lp_local_scs->col_idxs)[0], n_scs_elements_lp*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_C_lp, &lp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_n_chunks_lp, &lp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_ptrs_sp, &(sp_local_scs->chunk_ptrs)[0], (sp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths_sp, &(sp_local_scs->chunk_lengths)[0], sp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs_sp, &(sp_local_scs->col_idxs)[0], n_scs_elements_sp*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C_sp, &sp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks_sp, &sp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
 
         // Copy x and y data to device
-        double *local_x_hp_hardcopy = new double[local_scs->n_rows_padded];
-        double *local_y_hp_hardcopy = new double[local_scs->n_rows_padded];
-        float *local_x_lp_hardcopy = new float[local_scs->n_rows_padded];
-        float *local_y_lp_hardcopy = new float[local_scs->n_rows_padded];
+        double *local_x_dp_hardcopy = new double[local_scs->n_rows_padded];
+        double *local_y_dp_hardcopy = new double[local_scs->n_rows_padded];
+        float *local_x_sp_hardcopy = new float[local_scs->n_rows_padded];
+        float *local_y_sp_hardcopy = new float[local_scs->n_rows_padded];
 
         #pragma omp parallel for
         for(int i = 0; i < local_scs->n_rows_padded; ++i){
-            local_x_hp_hardcopy[i] = hp_local_x_permuted[i];
-            local_y_hp_hardcopy[i] = (*hp_local_y)[i];
-            local_x_lp_hardcopy[i] = lp_local_x_permuted[i];
-            local_y_lp_hardcopy[i] = (*lp_local_y)[i];
+            local_x_dp_hardcopy[i] = dp_local_x_permuted[i];
+            local_y_dp_hardcopy[i] = (*dp_local_y)[i];
+            local_x_sp_hardcopy[i] = sp_local_x_permuted[i];
+            local_y_sp_hardcopy[i] = (*sp_local_y)[i];
         }
 
-        cudaMalloc(&d_x_hp, local_scs->n_rows_padded*sizeof(double));
-        cudaMalloc(&d_y_hp, local_scs->n_rows_padded*sizeof(double));
-        cudaMalloc(&d_x_lp, local_scs->n_rows_padded*sizeof(float));
-        cudaMalloc(&d_y_lp, local_scs->n_rows_padded*sizeof(float));
+        cudaMalloc(&d_x_dp, local_scs->n_rows_padded*sizeof(double));
+        cudaMalloc(&d_y_dp, local_scs->n_rows_padded*sizeof(double));
+        cudaMalloc(&d_x_sp, local_scs->n_rows_padded*sizeof(float));
+        cudaMalloc(&d_y_sp, local_scs->n_rows_padded*sizeof(float));
 
-        cudaMemcpy(d_x_hp, local_x_hp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y_hp, local_y_hp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_x_lp, local_x_lp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y_lp, local_y_lp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_x_dp, local_x_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_dp, local_y_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_x_sp, local_x_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_sp, local_y_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
 
-        delete local_x_hp_hardcopy;
-        delete local_y_hp_hardcopy;
-        delete local_x_lp_hardcopy;
-        delete local_y_lp_hardcopy;
+        delete local_x_dp_hardcopy;
+        delete local_y_dp_hardcopy;
+        delete local_x_sp_hardcopy;
+        delete local_y_sp_hardcopy;
 
         // Pack pointers into struct 
         // TODO: allow for each struct to have it's own C
-        two_prec_kernel_args_encoded->hp_C =             d_C_hp;
-        two_prec_kernel_args_encoded->hp_n_chunks =      d_n_chunks_hp; //shared for now
-        two_prec_kernel_args_encoded->hp_chunk_ptrs =    d_chunk_ptrs_hp;
-        two_prec_kernel_args_encoded->hp_chunk_lengths = d_chunk_lengths_hp;
-        two_prec_kernel_args_encoded->hp_col_idxs =      d_col_idxs_hp;
-        two_prec_kernel_args_encoded->hp_values =        d_values_hp;
-        two_prec_kernel_args_encoded->hp_local_x =       d_x_hp;
-        two_prec_kernel_args_encoded->hp_local_y =       d_y_hp;
-        two_prec_kernel_args_encoded->lp_C =             d_C_hp; // shared maybe don't?
-        two_prec_kernel_args_encoded->lp_n_chunks =      d_n_chunks_hp; //shared for now
-        two_prec_kernel_args_encoded->lp_chunk_ptrs =    d_chunk_ptrs_lp;
-        two_prec_kernel_args_encoded->lp_chunk_lengths = d_chunk_lengths_lp;
-        two_prec_kernel_args_encoded->lp_col_idxs =      d_col_idxs_lp;
-        two_prec_kernel_args_encoded->lp_values =        d_values_lp;
-        two_prec_kernel_args_encoded->lp_local_x =       d_x_lp;
-        two_prec_kernel_args_encoded->lp_local_y =       d_y_lp;
+        two_prec_kernel_args_encoded->dp_C =             d_C_dp;
+        two_prec_kernel_args_encoded->dp_n_chunks =      d_n_chunks_dp; //shared for now
+        two_prec_kernel_args_encoded->dp_chunk_ptrs =    d_chunk_ptrs_dp;
+        two_prec_kernel_args_encoded->dp_chunk_lengths = d_chunk_lengths_dp;
+        two_prec_kernel_args_encoded->dp_col_idxs =      d_col_idxs_dp;
+        two_prec_kernel_args_encoded->dp_values =        d_values_dp;
+        two_prec_kernel_args_encoded->dp_local_x =       d_x_dp;
+        two_prec_kernel_args_encoded->dp_local_y =       d_y_dp;
+        two_prec_kernel_args_encoded->sp_C =             d_C_dp; // shared maybe don't?
+        two_prec_kernel_args_encoded->sp_n_chunks =      d_n_chunks_dp; //shared for now
+        two_prec_kernel_args_encoded->sp_chunk_ptrs =    d_chunk_ptrs_sp;
+        two_prec_kernel_args_encoded->sp_chunk_lengths = d_chunk_lengths_sp;
+        two_prec_kernel_args_encoded->sp_col_idxs =      d_col_idxs_sp;
+        two_prec_kernel_args_encoded->sp_values =        d_values_sp;
+        two_prec_kernel_args_encoded->sp_local_x =       d_x_sp;
+        two_prec_kernel_args_encoded->sp_local_y =       d_y_sp;
         two_prec_kernel_args_encoded->n_blocks =         &n_blocks;
         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
 
@@ -406,7 +419,7 @@ void bench_spmv(
             );
         }
         else{
-            printf("CuSparse SpMV only enabled iwth CRS format in DP or SP\n");
+            printf("CuSparse SpMV only enabled with CRS format in DP or SP\n");
             exit(1);
         }
 
@@ -489,26 +502,26 @@ void bench_spmv(
     cusparse_args_void_ptr = (void*) cusparse_args_encoded;
 #endif
 #else
-    if(config->value_type == "mp"){
+    if(config->value_type == "ap"){
         // Encode kernel args into struct
         
         // TODO: allow for each struct to have it's own C
-        two_prec_kernel_args_encoded->hp_C = &hp_local_scs->C;
-        two_prec_kernel_args_encoded->hp_n_chunks = &hp_local_scs->n_chunks; //shared for now
-        two_prec_kernel_args_encoded->hp_chunk_ptrs = hp_local_scs->chunk_ptrs.data();
-        two_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
-        two_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
-        two_prec_kernel_args_encoded->hp_values = hp_local_scs->values.data();
-        two_prec_kernel_args_encoded->hp_local_x = &(hp_local_x_permuted)[0];
-        two_prec_kernel_args_encoded->hp_local_y = &(*hp_local_y)[0];
-        two_prec_kernel_args_encoded->lp_C = &lp_local_scs->C;
-        two_prec_kernel_args_encoded->lp_n_chunks = &hp_local_scs->n_chunks; //shared for now
-        two_prec_kernel_args_encoded->lp_chunk_ptrs = lp_local_scs->chunk_ptrs.data();
-        two_prec_kernel_args_encoded->lp_chunk_lengths = lp_local_scs->chunk_lengths.data();
-        two_prec_kernel_args_encoded->lp_col_idxs = lp_local_scs->col_idxs.data();
-        two_prec_kernel_args_encoded->lp_values = lp_local_scs->values.data();
-        two_prec_kernel_args_encoded->lp_local_x = &(lp_local_x_permuted)[0];
-        two_prec_kernel_args_encoded->lp_local_y = &(*lp_local_y)[0];
+        two_prec_kernel_args_encoded->dp_C = &dp_local_scs->C;
+        two_prec_kernel_args_encoded->dp_n_chunks = &dp_local_scs->n_chunks; //shared for now
+        two_prec_kernel_args_encoded->dp_chunk_ptrs = dp_local_scs->chunk_ptrs.data();
+        two_prec_kernel_args_encoded->dp_chunk_lengths = dp_local_scs->chunk_lengths.data();
+        two_prec_kernel_args_encoded->dp_col_idxs = dp_local_scs->col_idxs.data();
+        two_prec_kernel_args_encoded->dp_values = dp_local_scs->values.data();
+        two_prec_kernel_args_encoded->dp_local_x = &(dp_local_x_permuted)[0];
+        two_prec_kernel_args_encoded->dp_local_y = &(*dp_local_y)[0];
+        two_prec_kernel_args_encoded->sp_C = &sp_local_scs->C;
+        two_prec_kernel_args_encoded->sp_n_chunks = &dp_local_scs->n_chunks; //shared for now
+        two_prec_kernel_args_encoded->sp_chunk_ptrs = sp_local_scs->chunk_ptrs.data();
+        two_prec_kernel_args_encoded->sp_chunk_lengths = sp_local_scs->chunk_lengths.data();
+        two_prec_kernel_args_encoded->sp_col_idxs = sp_local_scs->col_idxs.data();
+        two_prec_kernel_args_encoded->sp_values = sp_local_scs->values.data();
+        two_prec_kernel_args_encoded->sp_local_x = &(sp_local_x_permuted)[0];
+        two_prec_kernel_args_encoded->sp_local_y = &(*sp_local_y)[0];
         kernel_args_void_ptr = (void*) two_prec_kernel_args_encoded;
     }
     else{
@@ -582,7 +595,7 @@ void bench_spmv(
             spmv_kernel.finalize_halo_exchange();
 #endif
             // TODO: Is this #if-else correct with mpi? I don't think it is.
-            if(config->value_type == "mp"){
+            if(config->value_type == "ap"){
                 spmv_kernel.execute_warmup_mp_spmv();
                 // spmv_kernel.swap_local_mp_vectors();
             }
@@ -670,7 +683,7 @@ void bench_spmv(
 #endif
                 
                 for(int k=0; k<n_iter; ++k) {
-                    if(config->value_type == "mp"){
+                    if(config->value_type == "ap"){
                         spmv_kernel.execute_mp_spmv();
                         // spmv_kernel.swap_local_mp_vectors();
                     }
@@ -696,6 +709,7 @@ void bench_spmv(
                 cudaEventElapsedTime(&runtime, start, stop);
 #else
                 runtime = getTimeStamp() - begin_bench_loop_time;
+                // std::cout << "runtime = " << runtime << std::endl;
 #endif
 #endif
 #ifdef __CUDACC__
@@ -720,7 +734,7 @@ void bench_spmv(
     else if(config->mode == 's'){ // Enter main COMM-SPMV-SWAP loop, solve mode
         // Selects the first (n_rows)-many elements of a sorted y vector, and chops off padding
         std::vector<VT> sorted_local_y(local_y->size(), 0);
-        std::vector<double> sorted_hp_local_y(local_y->size(), 0);
+        std::vector<double> sorted_dp_local_y(local_y->size(), 0);
 
         for (int i = 0; i < config->n_repetitions; ++i)
         {
@@ -753,7 +767,7 @@ void bench_spmv(
             }
 #endif
 #endif
-            if(config->value_type == "mp"){
+            if(config->value_type == "ap"){
                 spmv_kernel.execute_mp_spmv();
             }
             else{
@@ -771,7 +785,7 @@ void bench_spmv(
                 }
             }
 #endif
-            if(config->value_type == "mp"){
+            if(config->value_type == "ap"){
                 spmv_kernel.swap_local_mp_vectors();    
             }
             else{
@@ -798,8 +812,8 @@ void bench_spmv(
 
 // Copy permuted results back into local_x
 #ifdef __CUDACC__
-        if(config->value_type == "mp"){
-            cudaMemcpy(&(*hp_local_x)[0], spmv_kernel.hp_local_x, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+        if(config->value_type == "ap"){
+            cudaMemcpy(&(*dp_local_x)[0], spmv_kernel.dp_local_x, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
         }
         else if(config->value_type == "dp"){
             cudaMemcpy(&(*local_x)[0], spmv_kernel.local_x, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
@@ -808,9 +822,9 @@ void bench_spmv(
             cudaMemcpy(&(*local_x)[0], spmv_kernel.local_x, local_scs->n_rows_padded*sizeof(float), cudaMemcpyDeviceToHost);
         }
 #else
-        if(config->value_type == "mp"){
+        if(config->value_type == "ap"){
             for(int i = 0; i < local_scs->n_rows_padded; ++i){
-                (*hp_local_x)[i] = (spmv_kernel.hp_local_x)[i];
+                (*dp_local_x)[i] = (spmv_kernel.dp_local_x)[i];
             }
         }
         else{
@@ -821,13 +835,13 @@ void bench_spmv(
 #endif
 
         // TODO: Clean up!
-        if(config->value_type == "mp"){
+        if(config->value_type == "ap"){
             
-            apply_permutation<double, IT>(&(sorted_hp_local_y)[0], &(*hp_local_x)[0], &(hp_local_scs->old_to_new_idx)[0], hp_local_scs->n_rows);
+            apply_permutation<double, IT>(&(sorted_dp_local_y)[0], &(*dp_local_x)[0], &(dp_local_scs->old_to_new_idx)[0], dp_local_scs->n_rows);
         
             // Give result to local_y for results output
             for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = (sorted_hp_local_y)[i];
+                (*local_y)[i] = (sorted_dp_local_y)[i];
             }
         }
         else{
@@ -871,7 +885,14 @@ void bench_spmv(
     r->n_cols = local_scs->n_cols;
     r->nnz    = local_scs->nnz;
 
-    r->value_type_str = typeid(VT).name();
+    if(config->value_type == "dp")
+        r->value_type_str = "double";
+    
+    else if(config->value_type == "sp")
+        r->value_type_str = "float";
+    else
+        r->value_type_str = "half";
+
     r->index_type_str = typeid(IT).name();
     r->value_type_size = sizeof(VT);
     r->index_type_size = sizeof(IT);
@@ -886,15 +907,15 @@ void bench_spmv(
     r->beta = (double)local_scs->nnz / local_scs->n_elements;
 
     // Only relevant for mp
-    r->hp_nnz = hp_local_scs->nnz;
-    r->lp_nnz = lp_local_scs->nnz;
+    r->dp_nnz = dp_local_scs->nnz;
+    r->sp_nnz = sp_local_scs->nnz;
 
-    r->hp_beta = (double)hp_local_scs->nnz / hp_local_scs->n_elements;
-    if(hp_local_scs->n_elements == 0)
-        r->hp_beta = 0;
-    r->lp_beta = (double)lp_local_scs->nnz / lp_local_scs->n_elements;
-    if(lp_local_scs->n_elements == 0)
-        r->lp_beta = 0;
+    r->dp_beta = (double)dp_local_scs->nnz / dp_local_scs->n_elements;
+    if(dp_local_scs->n_elements == 0)
+        r->dp_beta = 0;
+    r->sp_beta = (double)sp_local_scs->nnz / sp_local_scs->n_elements;
+    if(sp_local_scs->n_elements == 0)
+        r->sp_beta = 0;
 
 // TODO: How to destroy out here?
 // #ifdef USE_MPI
@@ -912,7 +933,7 @@ void bench_spmv(
 
 // TODO: Memcheck doesn't like this for some reason
 // #ifdef __CUDACC__
-//     if(config->value_type == "mp"){
+//     if(config->value_type == "ap"){
 //         cudaFree(d_x_hp);
 //         cudaFree(d_y_hp);
 //         cudaFree(d_C_hp);
@@ -986,19 +1007,19 @@ void gather_results(
                 0,
                 MPI_COMM_WORLD);
 
-        MPI_Gather(&(r->hp_nnz),
+        MPI_Gather(&(r->dp_nnz),
                 1,
                 MPI_UNSIGNED_LONG,
-                hp_nnz_per_procs_arr,
+                dp_nnz_per_procs_arr,
                 1,
                 MPI_UNSIGNED_LONG,
                 0,
                 MPI_COMM_WORLD);
 
-        MPI_Gather(&(r->lp_nnz),
+        MPI_Gather(&(r->sp_nnz),
                 1,
                 MPI_UNSIGNED_LONG,
-                lp_nnz_per_procs_arr,
+                sp_nnz_per_procs_arr,
                 1,
                 MPI_UNSIGNED_LONG,
                 0,
@@ -1023,11 +1044,11 @@ void gather_results(
         perfs_from_procs_arr[0] = r->perf_gflops;
         nnz_per_procs_arr[0] = r->nnz;
 
-        r->cumulative_hp_nnz = r->hp_nnz;
-        r->cumulative_lp_nnz = r->lp_nnz;
+        r->cumulative_dp_nnz = r->dp_nnz;
+        r->cumulative_sp_nnz = r->sp_nnz;
 
-        r->total_hp_percent = (r->cumulative_hp_nnz / (double)r->total_nnz) * 100.0;
-        r->total_lp_percent = (r->cumulative_lp_nnz / (double)r->total_nnz) * 100.0;
+        r->total_dp_percent = (r->cumulative_dp_nnz / (double)r->total_nnz) * 100.0;
+        r->total_sp_percent = (r->cumulative_sp_nnz / (double)r->total_nnz) * 100.0;
 #endif
         // NOTE: Garbage values for all but root process
         r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + comm_size);
@@ -1062,7 +1083,7 @@ void gather_results(
                 displ_arr_bk[i] = work_sharing_arr[i];
             }
 
-            if (typeid(VT) == typeid(double)){
+            if (config->value_type == "dp"){
                 // Gather all y_vector results to root
                 MPI_Gatherv(&(r->y_out)[0],
                             num_local_rows,
@@ -1084,7 +1105,7 @@ void gather_results(
                             0,
                             MPI_COMM_WORLD);
             }
-            else if (typeid(VT) == typeid(float)){
+            else if (config->value_type == "sp"){
                 MPI_Gatherv(&(r->y_out)[0],
                             num_local_rows,
                             MPI_FLOAT,
@@ -1142,8 +1163,11 @@ void compute_result(
     ScsData<VT, IT> local_scs;
 
     // Declare local structs on each process
-    ScsData<double, IT> hp_local_scs;
-    ScsData<float, IT> lp_local_scs;
+    ScsData<double, IT> dp_local_scs;
+    ScsData<float, IT> sp_local_scs;
+#ifdef HAVE_HALF_MATH
+    ScsData<_Float16, IT> hp_local_scs;
+#endif
 
     ContextData<IT> local_context;
 
@@ -1173,8 +1197,11 @@ void compute_result(
 
     init_local_structs<VT, IT>(
         &local_scs,
+        &dp_local_scs,
+        &sp_local_scs,
+#ifdef HAVE_HALF_MATH
         &hp_local_scs,
-        &lp_local_scs,
+#endif
         &local_context, 
         total_mtx,
         config, 
@@ -1191,26 +1218,42 @@ void compute_result(
 
     // Must be declared, but only used for mixed precision case
     // TODO: not efficient for storage, but used later for mp interop
-    SimpleDenseMatrix<double, IT> hp_local_x(&local_context);
-    SimpleDenseMatrix<float, IT> lp_local_x(&local_context);
+    SimpleDenseMatrix<double, IT> dp_local_x(&local_context);
+    SimpleDenseMatrix<float, IT> sp_local_x(&local_context);
+#ifdef HAVE_HALF_MATH
+    SimpleDenseMatrix<_Float16, IT> hp_local_x(&local_context);
+#endif
 
     SimpleDenseMatrix<VT, IT> local_y(&local_context);
 
     // NOTE: a low precision y vector is needed for swapping with low precision x
-    SimpleDenseMatrix<double, IT> hp_local_y(&local_context);
-    SimpleDenseMatrix<float, IT> lp_local_y(&local_context);
+    SimpleDenseMatrix<double, IT> dp_local_y(&local_context);
+    SimpleDenseMatrix<float, IT> sp_local_y(&local_context);
+#ifdef HAVE_HALF_MATH
+    SimpleDenseMatrix<_Float16, IT> hp_local_y(&local_context);
+#endif
 
     // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp,
     // or with 1s (by default)
     local_x.init(config, 'x');
     local_y.init(config, 'y');
 
+    // Copy initialized RHS and LHS into other precisions
     // TODO: wrap in method or something
-    if(config->value_type == "mp"){
-        for(int i = 0; i < (local_x.vec).size(); ++i){
-            hp_local_x.vec[i] = static_cast<double>(local_x.vec[i]);
-            lp_local_x.vec[i] = static_cast<float>(local_x.vec[i]);
-        }
+    for(int i = 0; i < (local_x.vec).size(); ++i){
+        dp_local_x.vec[i] = static_cast<double>(local_x.vec[i]);
+        sp_local_x.vec[i] = static_cast<float>(local_x.vec[i]);
+#ifdef HAVE_HALF_MATH
+        hp_local_x.vec[i] = static_cast<_Float16>(local_x.vec[i]);
+#endif
+    }
+
+    for(int i = 0; i < (local_y.vec).size(); ++i){
+        dp_local_y.vec[i] = 0.0;
+        sp_local_y.vec[i] = 0.0f;
+#ifdef HAVE_HALF_MATH
+        hp_local_y.vec[i] = 0.0f16;
+#endif
     }
 
     // Copy contents of local_x for output, and validation against mkl
@@ -1223,16 +1266,25 @@ void compute_result(
     bench_spmv<VT, IT>(
         config,
         &local_scs,
+        &dp_local_scs,
+        &sp_local_scs,
+#ifdef HAVE_HALF_MATH
         &hp_local_scs,
-        &lp_local_scs,
+#endif
         &local_context,
         work_sharing_arr,
         &local_y.vec,
-        &hp_local_y.vec,
-        &lp_local_y.vec,
-        &local_x.vec,
+        &dp_local_y.vec,
+        &sp_local_y.vec,
+#ifdef HAVE_HALF_MATH
         &hp_local_x.vec,
-        &lp_local_x.vec,
+#endif
+        &local_x.vec,
+        &dp_local_x.vec,
+        &sp_local_x.vec,
+#ifdef HAVE_HALF_MATH
+        &hp_local_x.vec,
+#endif
         r,
         my_rank,
         comm_size
@@ -1262,9 +1314,160 @@ void compute_result(
 #endif
 }
 
+// template <typename VT, typename IT>
+void standalone_bench(
+    Config config,
+    std::string matrix_file_name,
+    int my_rank,
+    int comm_size,
+    double begin_main_time
+){
+    MtxData<double, int> total_dp_mtx;
+    MtxData<float, int> total_sp_mtx;
+#ifdef HAVE_HALF_MATH
+    MtxData<_Float16, int> total_hp_mtx;
+#endif
+
+    Result<double, int> r_dp;
+    Result<float, int> r_sp;
+#ifdef HAVE_HALF_MATH
+    Result<_Float16, int> r_hp;
+#endif
+
+    if(my_rank == 0){
+#ifdef DEBUG_MODE
+if(my_rank == 0){printf("Reading mtx file.\n");}
+#endif
+
+    if(config.value_type == "dp"){
+        read_mtx<double, int>(matrix_file_name, config, &total_dp_mtx, my_rank);
+        r_dp.total_nnz = total_dp_mtx.nnz;
+        r_dp.total_rows = total_dp_mtx.n_rows;
+    }
+    else if(config.value_type == "sp"){
+        read_mtx<float, int>(matrix_file_name, config, &total_sp_mtx, my_rank);
+        r_sp.total_nnz = total_sp_mtx.nnz;
+        r_sp.total_rows = total_sp_mtx.n_rows;
+    }
+    else if(config.value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+        read_mtx<_Float16, int>(matrix_file_name, config, &total_hp_mtx, my_rank);
+        r_hp.total_nnz = total_hp_mtx.nnz;
+        r_hp.total_rows = total_hp_mtx.n_rows;
+#endif
+    }
+
+    }
+#ifdef DEBUG_MODE
+if(my_rank == 0){printf("Enter compute_result.\n");}
+#endif
+
+    if(config.value_type == "dp"){
+        compute_result<double, int>(&total_dp_mtx, &config, &r_dp, my_rank, comm_size);
+    }
+    else if (config.value_type == "sp"){
+        compute_result<float, int>(&total_sp_mtx, &config, &r_sp, my_rank, comm_size);
+
+    }
+    else if (config.value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+        compute_result<_Float16, int>(&total_hp_mtx, &config, &r_hp, my_rank, comm_size);
+#endif
+    }
+
+    double elapsed_main_time;
+
+#ifdef USE_MPI
+    elapsed_main_time = MPI_Wtime() - begin_main_time;
+#else
+    elapsed_main_time = getTimeStamp() - begin_main_time;
+#endif
+
+    if(config.value_type == "dp")
+        r_dp.total_walltime = elapsed_main_time;
+    if(config.value_type == "sp")
+        r_sp.total_walltime = elapsed_main_time;
+    if(config.value_type == "hp")
+#ifdef HAVE_HALF_MATH
+        r_hp.total_walltime = elapsed_main_time;
+#endif
+
+#ifdef DEBUG_MODE
+if(my_rank == 0){printf("Complete compute_result.\n");}
+#endif
+    if(my_rank == 0){
+        if(config.mode == 's'){
+            if(config.validate_result){
+#ifdef DEBUG_MODE
+if(my_rank == 0){printf("Validating results.\n");}
+#endif
+                std::vector<double> mkl_dp_result;
+                std::vector<float> mkl_sp_result;
+#ifdef HAVE_HALF_MATH
+                std::vector<_Float16> mkl_hp_result;
+#endif
+
+                if(config.value_type == "dp"){
+                    if(config.equilibrate){
+                        equilibrate_matrix<double, int>(&total_dp_mtx);
+                    }
+                    validate_dp_result(&total_dp_mtx, &config, &r_dp, &mkl_dp_result);
+                }
+                else if(config.value_type == "sp"){
+                    if(config.equilibrate){
+                        equilibrate_matrix<float, int>(&total_sp_mtx);
+                    }
+                    validate_sp_result(&total_sp_mtx, &config, &r_sp, &mkl_sp_result);
+                }
+                else if(config.value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+                    if(config.equilibrate){
+                        equilibrate_matrix<_Float16, int>(&total_hp_mtx);
+                    }
+                    validate_hp_result(&total_hp_mtx, &config, &r_hp, &mkl_hp_result);
+#endif
+                }
+                
+#ifdef DEBUG_MODE
+if(my_rank == 0){printf("Writing validation results to file.\n");}
+#endif
+                if(config.value_type == "dp"){
+                    write_result_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r_dp, &mkl_dp_result, comm_size);
+                }
+                else if(config.value_type == "sp"){
+                    write_result_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r_sp, &mkl_sp_result, comm_size);
+                }
+                else if(config.value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+                    write_result_to_file<_Float16, int>(&matrix_file_name, &(config.seg_method), &config, &r_hp, &mkl_hp_result, comm_size);
+#endif
+                }
+            }
+        }
+        else if(config.mode == 'b'){
+#ifdef DEBUG_MODE
+if(my_rank == 0){printf("Writing benchmark results to file.\n");}
+#endif
+            if(config.value_type == "dp"){
+                write_bench_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r_dp, comm_size);
+            }
+            else if(config.value_type == "sp"){
+                write_bench_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r_sp, comm_size);
+            }
+            else if(config.value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+                write_bench_to_file<_Float16, int>(&matrix_file_name, &(config.seg_method), &config, &r_hp, comm_size);
+#endif            
+            }
+        }
+    }
+}
+
 int main(int argc, char *argv[]){
 
-    // _Float16 a = 1.0;
+#ifdef DEBUG_MODE
+    std::cout << "Using c++ version: " << __cplusplus << std::endl;
+#endif
 
 // Initialize just out of convenience
 int my_rank = 0, comm_size = 1;
@@ -1282,6 +1485,8 @@ int my_rank = 0, comm_size = 1;
 #ifdef USE_LIKWID
     LIKWID_MARKER_INIT;
 #endif
+
+    bogus_init_pin();
 
     double begin_main_time;
 
@@ -1308,125 +1513,17 @@ int my_rank = 0, comm_size = 1;
     config.kernel_format = kernel_format;
     config.value_type = value_type;
 
-    if (config.value_type == "dp")
-    {
-        MtxData<double, int> total_mtx;
-        Result<double, int> r;
-
-        if(my_rank == 0){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Reading mtx file.\n");}
-#endif
-            read_mtx<double, int>(matrix_file_name, config, &total_mtx, my_rank);
-            r.total_nnz = total_mtx.nnz;
-            r.total_rows = total_mtx.n_rows;
-        }
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Enter compute_result.\n");}
-#endif
-        compute_result<double, int>(&total_mtx, &config, &r, my_rank, comm_size);
-
-#ifdef USE_MPI
-        r.total_walltime = MPI_Wtime() - begin_main_time;
-#else
-        r.total_walltime = getTimeStamp() - begin_main_time;
-#endif
-
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Complete compute_result.\n");}
-#endif
-        if(my_rank == 0){
-            if(config.mode == 's'){
-                if(config.validate_result){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Validating results.\n");}
-#endif
-                    std::vector<double> mkl_dp_result;
-                    if(config.equilibrate){
-                        equilibrate_matrix<double, int>(&total_mtx);
-                        // std::vector<double> largest_elems(total_mtx.n_cols);
-                        // extract_largest_elems<double, int>(&total_mtx, &largest_elems);
-                        // scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
-                    }
-                    validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Writing validation results to file.\n");}
-#endif
-                    write_result_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_dp_result, comm_size);
-                }
-                else{
-                }
-            }
-            else if(config.mode == 'b'){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Writing benchmark results to file.\n");}
-#endif
-                write_bench_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r, comm_size);
-            }
-        }
+    if(config.value_type != "ap"){
+        standalone_bench(
+            config,
+            matrix_file_name,
+            my_rank,
+            comm_size,
+            begin_main_time
+        );
     }
-    else if (config.value_type == "sp")
-    {
-        MtxData<float, int> total_mtx;
-        Result<float, int> r;
-
-        if(my_rank == 0){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Reading mtx file.\n");}
-#endif
-            read_mtx<float, int>(matrix_file_name, config, &total_mtx, my_rank);
-            r.total_nnz = total_mtx.nnz;
-            r.total_rows = total_mtx.n_rows;
-        }
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Enter compute_result.\n");}
-#endif
-        compute_result<float, int>(&total_mtx, &config, &r, my_rank, comm_size);
-
-#ifdef USE_MPI
-        r.total_walltime = MPI_Wtime() - begin_main_time;
-#else
-        r.total_walltime = getTimeStamp() - begin_main_time;
-#endif
-
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Complete compute_result.\n");}
-#endif
-
-        if(my_rank == 0){
-            if(config.mode == 's'){
-                if(config.validate_result){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Validating results.\n");}
-#endif
-                    std::vector<float> mkl_sp_result;
-                    if(config.equilibrate){
-                        equilibrate_matrix<float, int>(&total_mtx);
-                        // std::vector<float> largest_elems(total_mtx.n_cols);
-                        // extract_largest_elems<float, int>(&total_mtx, &largest_elems);
-                        // scale_w_jacobi<float, int>(&total_mtx, &largest_elems);
-                    }
-                    validate_sp_result(&total_mtx, &config, &r, &mkl_sp_result);
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Writing validation results to file.\n");}
-#endif
-                    write_result_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r, &mkl_sp_result, comm_size);
-                }
-                else{
-                }
-            }
-            else if(config.mode == 'b'){
-#ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Writing benchmark results to file.\n");}
-#endif
-                write_bench_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r, comm_size);
-            }
-        }
-    }
-    else if (config.value_type == "mp")
-    // Currently, everything is still read and results are written as doubles.
-    // i.e. VT = double, IT = int.
-    {
+    // Treat adaptive precision as a special case, although not necessary probably
+    else{
         MtxData<double, int> total_mtx;
         Result<double, int> r;
 
@@ -1462,9 +1559,6 @@ int my_rank = 0, comm_size = 1;
                     std::vector<double> mkl_dp_result;
                     if(config.equilibrate){
                         equilibrate_matrix<double, int>(&total_mtx);
-                        // std::vector<double> largest_elems(total_mtx.n_cols);
-                        // extract_largest_elems<double, int>(&total_mtx, &largest_elems);
-                        // scale_w_jacobi<double, int>(&total_mtx, &largest_elems);
                     }
                     validate_dp_result(&total_mtx, &config, &r, &mkl_dp_result);
 #ifdef DEBUG_MODE

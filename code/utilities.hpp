@@ -23,6 +23,7 @@
 #include <float.h>
 #include <math.h>
 
+
 template <typename T>
 struct max_rel_error
 {
@@ -975,7 +976,7 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -sp/dp/mp [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%Lf], -equilibrate [%i]\n",
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -dp/sp/hp/ap [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%Lf], -equilibrate [%i]\n",
                             argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size, config->equilibrate);
                     
 }
@@ -1193,9 +1194,13 @@ void parse_cli_inputs(
         {
             *value_type = "sp";
         }
-        else if (arg == "-mp")
+        else if (arg == "-hp")
         {
-            *value_type = "mp";
+            *value_type = "hp";
+        }
+        else if (arg == "-ap")
+        {
+            *value_type = "ap";
         }
         else if (arg == "-seg_rows" || arg == "-seg-rows")
         {
@@ -1239,11 +1244,11 @@ void parse_cli_inputs(
         }
     }
 
-    if(*value_type == "mp"){fprintf(stderr, "ERROR: cuSPARSE with Mixed precision is not supported at this time.\n");exit(1);}
+    if(*value_type == "ap"){fprintf(stderr, "ERROR: cuSPARSE with Mixed precision is not supported at this time.\n");exit(1);}
 #endif
 
 #ifdef USE_MPI
-    if(*value_type == "mp"){fprintf(stderr, "ERROR: Mixed precision with MPI is not supported at this time.\n");exit(1);}
+    if(*value_type == "ap"){fprintf(stderr, "ERROR: Mixed precision with MPI is not supported at this time.\n");exit(1);}
 #endif
 
     // Is this even true?
@@ -1259,7 +1264,7 @@ void parse_cli_inputs(
         if(my_rank == 0){fprintf(stderr, "ERROR: kernel format not recognized.\n");exit(1);}
     }
 
-    // if((*value_type == "mp" && *kernel_format != "crs") || (*value_type == "mp" && *kernel_format != "crs")){
+    // if((*value_type == "ap" && *kernel_format != "crs") || (*value_type == "ap" && *kernel_format != "crs")){
     //     if(my_rank == 0){fprintf(stderr, "ERROR: only CRS kernel supports mixed precision at this time.\n");exit(1);}
     // }
 }
@@ -1646,9 +1651,6 @@ void read_mtx(
 {
     char* filename = const_cast<char*>(matrix_file_name.c_str());
     IT nrows, ncols, nnz;
-    VT *val_ptr;
-    IT *I_ptr;
-    IT *J_ptr;
 
     MM_typecode matcode;
     FILE *f;
@@ -1693,9 +1695,9 @@ void read_mtx(
     //int ncols;
     IT *row_unsorted;
     IT *col_unsorted;
-    VT *val_unsorted;
+    double *val_unsorted; // <- always read as double, then convert
 
-    if(mm_read_unsymmetric_sparse<VT, IT>(filename, &nrows, &ncols, &nnz, &val_unsorted, &row_unsorted, &col_unsorted) < 0)
+    if(mm_read_unsymmetric_sparse<double, IT>(filename, &nrows, &ncols, &nnz, &val_unsorted, &row_unsorted, &col_unsorted) < 0)
     {
         printf("Error in file reading\n");
         exit(1);
@@ -1727,7 +1729,7 @@ void read_mtx(
 
         IT *row_general = new IT[new_nnz];
         IT *col_general = new IT[new_nnz];
-        VT *val_general = new VT[new_nnz];
+        double *val_general = new double[new_nnz];
 
         int idx_gen=0;
 
@@ -1782,7 +1784,7 @@ void read_mtx(
     for(int idx=0; idx<nnz; ++idx)
     {
         col[idx] = col_unsorted[perm[idx]];
-        val[idx] = val_unsorted[perm[idx]];
+        val[idx] = static_cast<VT>(val_unsorted[perm[idx]]);
         row[idx] = row_unsorted[perm[idx]];
     }
 
@@ -1889,14 +1891,16 @@ void extract_matrix_min_mean_max(
 
     #pragma omp parallel for reduction(max:max_val) 
     for (int idx = 0; idx < local_mtx->nnz; idx++)
-       max_val = max_val > fabs(local_mtx->values[idx]) ? max_val : fabs(local_mtx->values[idx]);
+       max_val = max_val > fabs(static_cast<double>(local_mtx->values[idx])) ? max_val : fabs(static_cast<double>(local_mtx->values[idx]));
+
+    //    max_val = max_val > fabs(local_mtx->values[idx]) ? max_val : fabs(local_mtx->values[idx]);
 
     // Get min
     double min_val = DBL_MAX;
 
     #pragma omp parallel for reduction(min:min_val) 
     for (int idx = 0; idx < local_mtx->nnz; idx++)
-       min_val = min_val < fabs(local_mtx->values[idx]) ? min_val : fabs(local_mtx->values[idx]);
+       min_val = min_val < fabs(static_cast<double>(local_mtx->values[idx])) ? min_val : fabs(static_cast<double>(local_mtx->values[idx]));
 
     // Take average and save max and min
     config->matrix_mean = min_val + ((max_val - min_val) / 2.0);
@@ -2037,11 +2041,19 @@ void scale_matrix_cols(
 
 template <typename VT, typename IT>
 void equilibrate_matrix(MtxData<VT, IT> *coo_mat){
+#ifdef HAVE_HALF_MATH
+    std::vector<VT> largest_row_elems(coo_mat->n_cols, 0.0f16);
+#else
     std::vector<VT> largest_row_elems(coo_mat->n_cols, 0.0);
+#endif
     extract_largest_row_elems<VT, IT>(coo_mat, &largest_row_elems);
     scale_matrix_rows<VT, IT>(coo_mat, &largest_row_elems);
 
+#ifdef HAVE_HALF_MATH
+    std::vector<VT> largest_col_elems(coo_mat->n_cols, 0.0f16);
+#else
     std::vector<VT> largest_col_elems(coo_mat->n_cols, 0.0);
+#endif
     extract_largest_col_elems<VT, IT>(coo_mat, &largest_col_elems);
     scale_matrix_cols<VT, IT>(coo_mat, &largest_col_elems);
 }
@@ -2054,11 +2066,14 @@ void register_likwid_markers(
     #pragma omp parallel
     {
         if(config->kernel_format == "crs"){
-            if(config->value_type == "mp"){
+            if(config->value_type == "ap"){
                 LIKWID_MARKER_REGISTER("spmv_ap_crs_benchmark");
             }
             else{
-                LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
+                // if(config->value_type == "hp")
+                //     LIKWID_MARKER_REGISTER("half_prec_spmv_crs_benchmark");
+                // else
+                    LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
             }
         }
         else if(config->kernel_format == "scs"){
@@ -2073,7 +2088,7 @@ void register_likwid_markers(
                 && config->chunk_size != 128
                 && config->chunk_size != 256
             ){
-                if(config->value_type == "mp"){
+                if(config->value_type == "ap"){
                     LIKWID_MARKER_REGISTER("spmv_ap_scs_benchmark");
                 }
                 else{
@@ -2081,7 +2096,7 @@ void register_likwid_markers(
                 }
             }
             else{
-                if(config->value_type == "mp"){
+                if(config->value_type == "ap"){
                     LIKWID_MARKER_REGISTER("spmv_ap_scs_adv_benchmark");
                 }
                 else{
@@ -2178,7 +2193,7 @@ void register_likwid_markers(
 //     IT *d_col_idxs_lp = new IT;
 //     float *d_values_lp = new float;
 
-//     if(config->value_type == "mp"){
+//     if(config->value_type == "ap"){
 //         // Allocate space for MP structs on device
         
 //         long n_scs_elements_hp = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
@@ -2436,7 +2451,7 @@ void register_likwid_markers(
 //     // cusparse_args_void_ptr = (void*) cusparse_args_encoded;
 // #endif
 // #else
-//     if(config->value_type == "mp"){
+//     if(config->value_type == "ap"){
 //         // Encode kernel args into struct
         
 //         // TODO: allow for each struct to have it's own C
@@ -2489,5 +2504,24 @@ void register_likwid_markers(
 //     comm_args_encoded->comm_size = &comm_size;
 //     // comm_args_void_ptr = (void*) comm_args_encoded;
 // }
+void bogus_init_pin(void){
+    
+    // Just to take overhead of pinning away from timers
+    int num_threads;
+    double bogus = 0.0;
 
+    #pragma omp parallel
+    {
+        num_threads = omp_get_num_threads();
+    }
+
+    #pragma omp parallel for
+    for(int i = 0; i < num_threads; ++i){
+        bogus += 1;
+    }
+
+    if(bogus < 100){
+        printf("");
+    }
+}
 #endif

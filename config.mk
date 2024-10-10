@@ -1,5 +1,5 @@
-# [gcc, icc, icx, nvcc]
-COMPILER = nvcc
+# [gcc, icc, icx, llvm, nvcc]
+COMPILER = icx
 # [int]
 VECTOR_LENGTH = 4 # CPU only
 # [1/0]
@@ -9,7 +9,7 @@ DEBUG_MODE_FINE = 0
 # [1/0]
 OUTPUT_SPARSITY = 0
 # [c++14]
-CPP_VERSION = c++14
+CPP_VERSION = c++20
 # [none, a40, a100]
 GPGPU_ARCH = a100
 # [int]

@@ -213,7 +213,7 @@ int mm_read_unsymmetric_sparse(
         //     II[i]--;  /* adjust from 1-based to 0-based */
         //     J[i]--;
         // }
-        if(typeid(VT) == typeid(double)){
+        // if(typeid(VT) == typeid(double)){ // <- Just real in double always
             for (i=0; i<nz; i++)
             {
                 if (fscanf(f, "%d %d %lg\n", &II[i], &J[i], &val[i]) // NOTE: what does the lg affect?
@@ -221,16 +221,29 @@ int mm_read_unsymmetric_sparse(
                 II[i]--;  /* adjust from 1-based to 0-based */
                 J[i]--;
             }
-        }
-        else if(typeid(VT) == typeid(float)){
-            for (i=0; i<nz; i++)
-            {
-                if (fscanf(f, "%d %d %f\n", &II[i], &J[i], &val[i]) // NOTE: what does the lg affect?
-                        != 3) return MM_PREMATURE_EOF;
-                II[i]--;  /* adjust from 1-based to 0-based */
-                J[i]--;
-            }
-        }
+        // }
+        // else if(typeid(VT) == typeid(float)){
+        //     for (i=0; i<nz; i++)
+        //     {
+        //         if (fscanf(f, "%d %d %f\n", &II[i], &J[i], &val[i]) // NOTE: what does the lg affect?
+        //                 != 3) return MM_PREMATURE_EOF;
+        //         II[i]--;  /* adjust from 1-based to 0-based */
+        //         J[i]--;
+        //     }
+        // }
+// #ifdef HAVE_HALF_MATH
+//         printf("ERROR: Cannot read matrices in half precision yet.\n");
+//         exit(1);
+//         else if(typeid(VT) == typeid(_Float16)){
+//             for (i=0; i<nz; i++)
+//             {
+//                 if (fscanf(f, "%d %d %f\n", &II[i], &J[i], &val[i]) // NOTE: what does the lg affect?
+//                         != 3) return MM_PREMATURE_EOF;
+//                 II[i]--;  /* adjust from 1-based to 0-based */
+//                 J[i]--;
+//             }
+//         }
+// #endif
     }
     else
     {
