@@ -6,7 +6,7 @@ Can be run as a standalone benchmarking harness, or as a library. See API_doc.md
 Examples:\
 	```mpirun -n 4 ./uspmv <matrix_name>.mtx <kernel_format> <options>```\
 	```./uspmv <matrix_name>.mtx scs -c 16 -s 512 -mode b```\
-	```./uspmv <matrix_name>.mtx crs -mode s -sp -verbose 1```
+	```./uspmv <matrix_name>.mtx crs -mode s -ap[dp sp] -verbose 1```
 
 - kernel_format can be any one of: crs, scs (and by extention: ell and sell-p)
 
@@ -15,7 +15,7 @@ Options:
 - -s (int: sigma (required for scs))
 - -rev (int: number of back-to-back revisions to perform)
 - -rand_x (0/1: random x vector option)
-- -dp/sp/hp/ap (numerical precision for spmv)
+- -dp/sp/hp/ap[dp_sp]/ap[sp_hp]/ap[dp_hp] (numerical precision for SpMV)
 - -seg_nnz/seg_rows/seg_metis (global matrix partitioning)
 - -validate (0/1: check result against mkl option)
 - -verbose (0/1: verbose validation of results)

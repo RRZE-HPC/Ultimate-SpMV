@@ -9,7 +9,7 @@ DEBUG_MODE_FINE = 0
 # [1/0]
 OUTPUT_SPARSITY = 0
 # [c++14]
-CPP_VERSION = c++20
+CPP_VERSION = c++23
 # [none, a40, a100]
 GPGPU_ARCH = a100
 # [int]

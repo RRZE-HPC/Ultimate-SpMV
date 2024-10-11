@@ -976,7 +976,7 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -dp/sp/hp/ap [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%Lf], -equilibrate [%i]\n",
+                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -dp/sp/hp/ap[dp_sp]/ap[dp_hp]/ap[sp_hp] [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%Lf], -equilibrate [%i]\n",
                             argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size, config->equilibrate);
                     
 }
@@ -1198,9 +1198,17 @@ void parse_cli_inputs(
         {
             *value_type = "hp";
         }
-        else if (arg == "-ap")
+        else if (arg == "-ap[dp_sp]")
         {
-            *value_type = "ap";
+            *value_type = "ap[dp_sp]";
+        }
+        else if (arg == "-ap[sp_hp]")
+        {
+            *value_type = "ap[sp_hp]";
+        }
+        else if (arg == "-ap[dp_hp]")
+        {
+            *value_type = "ap[dp_hp]";
         }
         else if (arg == "-seg_rows" || arg == "-seg-rows")
         {
@@ -1217,7 +1225,8 @@ void parse_cli_inputs(
         else
         {
             if(my_rank == 0){
-                fprintf(stderr, "ERROR: unknown argument.\n");
+                fprintf(stderr, "ERROR: unknown argument: ");
+                std::cout << arg << std::endl;
                 cli_options_messge(argc, argv, seg_method, value_type, config);
                 exit(1);
             }
@@ -1227,7 +1236,10 @@ void parse_cli_inputs(
     // Sanity checks //
 #ifndef USE_METIS
     if (*seg_method == "seg-metis"){
-        if(my_rank == 0){fprintf(stderr, "ERROR: seg-metis selected, but USE_METIS not defined in Makefile.\n");exit(1);}
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: seg-metis selected, but USE_METIS not defined in Makefile.\n");
+            exit(1);
+        }
     }
 #endif
 
@@ -1239,16 +1251,37 @@ void parse_cli_inputs(
 #ifdef USE_CUSPARSE
     if(*kernel_format != "crs" && *kernel_format != "csr" && *kernel_format != "scs"){
         if(config->sigma != 1){
-            if(my_rank == 0){fprintf(stderr, "ERROR: At the moment CUSPARSE is only able to use the CRS format.\n");exit(1);}
-            exit(1);
+            if(my_rank == 0){
+                fprintf(stderr, "ERROR: At the moment CUSPARSE is only able to use the CRS format.\n");
+                exit(1);
+            }
         }
     }
 
-    if(*value_type == "ap"){fprintf(stderr, "ERROR: cuSPARSE with Mixed precision is not supported at this time.\n");exit(1);}
+    if(*value_type == "ap[dp_sp]" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]"){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: cuSPARSE with Adaptive precision is not supported at this time.\n");
+            exit(1);
+        }
+    }
 #endif
 
 #ifdef USE_MPI
-    if(*value_type == "ap"){fprintf(stderr, "ERROR: Mixed precision with MPI is not supported at this time.\n");exit(1);}
+    if(*value_type == "ap[dp_sp]" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]"){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Adaptive precision with MPI is not supported at this time.\n");
+            exit(1);
+        }
+    }
+#endif
+
+#ifndef HAVE_HALF_MATH
+    if(*value_type == "hp" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]"){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Half precision selected, but HAVE_HALF_MATH not defined.\n");
+            exit(1);
+        }
+    }
 #endif
 
     // Is this even true?
@@ -1261,7 +1294,10 @@ void parse_cli_inputs(
     // }
     std::vector<std::string> acceptable_kernels{"crs", "csr", "scs", "ell_rm", "ell", "ell_cm"};
     if (std::find(std::begin(acceptable_kernels), std::end(acceptable_kernels), *kernel_format) == std::end(acceptable_kernels)){
-        if(my_rank == 0){fprintf(stderr, "ERROR: kernel format not recognized.\n");exit(1);}
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: kernel format not recognized.\n");
+            exit(1);
+        }
     }
 
     // if((*value_type == "ap" && *kernel_format != "crs") || (*value_type == "ap" && *kernel_format != "crs")){
@@ -2524,4 +2560,225 @@ void bogus_init_pin(void){
         printf("");
     }
 }
+
+/**
+    @brief Matrix splitting routine, used for seperating a higher precision mtx coo struct into dp and sp sub-structs
+    @param *local_mtx : Process-local coo matrix, received on this process from an earlier routine
+    @param *dp_local_mtx : Process-local "higher precision" coo matrix
+    @param *sp_local_mtx : Process-local "lower precision" coo matrix
+*/
+template <typename VT, typename IT>
+void partition_precisions( 
+    Config *config,
+    MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
+    MtxData<double, int> *dp_local_mtx, 
+    MtxData<float, int> *sp_local_mtx,
+#ifdef HAVE_HALF_MATH
+    MtxData<_Float16, int> *hp_local_mtx,
+#endif
+    std::vector<VT> *largest_row_elems, 
+    std::vector<VT> *largest_col_elems,
+    int my_rank = NULL)
+{
+    double threshold = config->bucket_size;
+
+    dp_local_mtx->is_sorted = local_mtx->is_sorted;
+    dp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    dp_local_mtx->n_rows = local_mtx->n_rows;
+    dp_local_mtx->n_cols = local_mtx->n_cols;
+
+    sp_local_mtx->is_sorted = local_mtx->is_sorted;
+    sp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    sp_local_mtx->n_rows = local_mtx->n_rows;
+    sp_local_mtx->n_cols = local_mtx->n_cols;
+
+    hp_local_mtx->is_sorted = local_mtx->is_sorted;
+    hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    hp_local_mtx->n_rows = local_mtx->n_rows;
+    hp_local_mtx->n_cols = local_mtx->n_cols;
+
+    int dp_elem_ctr = 0;
+    int sp_elem_ctr = 0;
+    int hp_elem_ctr = 0;
+
+    // TODO: This practice of assigning pointers to vectors is dangerous...
+    std::vector<IT> dp_local_I;
+    std::vector<IT> dp_local_J;
+    std::vector<double> dp_local_vals;
+    dp_local_mtx->I = dp_local_I;
+    dp_local_mtx->J = dp_local_J;
+    dp_local_mtx->values = dp_local_vals;
+
+    std::vector<IT> sp_local_I;
+    std::vector<IT> sp_local_J;
+    std::vector<float> sp_local_vals;
+    sp_local_mtx->I = sp_local_I;
+    sp_local_mtx->J = sp_local_J;
+    sp_local_mtx->values = sp_local_vals;
+
+#ifdef HAVE_HALF_MATH
+    std::vector<IT> hp_local_I;
+    std::vector<IT> hp_local_J;
+    std::vector<_Float16> hp_local_vals;
+    hp_local_mtx->I = hp_local_I;
+    hp_local_mtx->J = hp_local_J;
+    hp_local_mtx->values = hp_local_vals;
+#endif
+
+    // Scan local_mtx
+    // TODO: If this is a bottleneck:
+    // 1. Scan in parallel 
+    // 2. Allocate space
+    // 3. Assign in parallel
+    if(config->value_type == "ap[dp_sp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(config->equilibrate){
+                // TODO: static casting just to make it compile... 
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold / \
+                    ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else{
+                    // else, place in sp_local_mtx 
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+            }
+            else{
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold){   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold){
+                    // else, place in sp_local_mtx 
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else{
+                    printf("partition_precisions ERROR: Element %i does not fit into either struct.\n", i);
+                    exit(1);
+                }
+            }
+        }
+
+        dp_local_mtx->nnz = dp_elem_ctr;
+        sp_local_mtx->nnz = sp_elem_ctr;
+
+        if(local_mtx->nnz != (dp_elem_ctr + sp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into dp and sp structs on rank: %i.\n", local_mtx->nnz - (dp_elem_ctr + sp_elem_ctr), my_rank);
+            exit(1);
+        }
+    }
+#ifdef HAVE_HALF_MATH
+    else if(config->value_type == "ap[dp_hp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(config->equilibrate){
+                // TODO: static casting just to make it compile... 
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else{
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+            }
+            else{
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold){   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold){
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+                else{
+                    printf("partition_precisions ERROR: Element %i does not fit into either struct.\n", i);
+                    exit(1);
+                }
+            }
+        }
+
+        dp_local_mtx->nnz = dp_elem_ctr;
+        hp_local_mtx->nnz = hp_elem_ctr;
+
+        if(local_mtx->nnz != (dp_elem_ctr + hp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into dp and hp structs on rank: %i.\n", local_mtx->nnz - (dp_elem_ctr + hp_elem_ctr), my_rank);
+            exit(1);
+        }
+    }
+    else if(config->value_type == "ap[sp_hp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(config->equilibrate){
+                // TODO: static casting just to make it compile... 
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold / \
+                    ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else{
+                    // else, place in sp_local_mtx 
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+            }
+            else{
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold){   
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold){
+                    // else, place in sp_local_mtx 
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+                else{
+                    printf("partition_precisions ERROR: Element %i does not fit into either struct.\n", i);
+                    exit(1);
+                }
+            }
+        }
+
+        sp_local_mtx->nnz = sp_elem_ctr;
+        hp_local_mtx->nnz = hp_elem_ctr;
+
+        if(local_mtx->nnz != (sp_elem_ctr + hp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into sp and hp structs on rank: %i.\n", local_mtx->nnz - (sp_elem_ctr + hp_elem_ctr), my_rank);
+            exit(1);
+        }
+    }
+#endif
+}
+
 #endif

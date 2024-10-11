@@ -73,15 +73,23 @@ void write_bench_to_file(
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
-        if(config->value_type == "ap"){
+        if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "apap[sp_hp]"){
+            std::cout << "TODO" << std::endl;
+            exit(1);
             working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", sp_beta: " << r->sp_beta;
         }
         else{
             working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
         }
     }
-    if (config->value_type == "ap"){
-        working_file << ", data_type: ap" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % dp elems: " << r->total_dp_percent << ", % sp elems: " << r->total_sp_percent;    
+    if (config->value_type == "ap[dp_sp]"){
+        working_file << ", data_type: ap[dp_sp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % dp elems: " << r->total_dp_percent << ", % sp elems: " << r->total_sp_percent;    
+    }
+    else if(config->value_type == "ap[dp_hp]"){
+        working_file << ", data_type: ap[dp_hp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % dp elems: " << r->total_dp_percent << ", % hp elems: " << r->total_hp_percent;    
+    }
+    else if(config->value_type == "ap[sp_hp]"){
+        working_file << ", data_type: ap[sp_hp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % sp elems: " << r->total_sp_percent << ", % hp elems: " << r->total_hp_percent;    
     }
     else{
         if(config->value_type == "dp")

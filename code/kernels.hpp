@@ -707,6 +707,234 @@ spmv_warmup_omp_csr_mp(
 
 template <typename IT>
 static void
+spmv_omp_csr_apdpsp(
+    const ST * dp_C, // 1
+    const ST * dp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
+    const IT * RESTRICT dp_row_lengths, // unused for now
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C, // 1
+    const ST * sp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT sp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT sp_row_lengths, // unused for now
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y, // unused
+#ifdef HAVE_HALF_MATH
+    const ST * hp_C, // 1
+    const ST * hp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT hp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y, // unused
+#endif
+    const int * my_rank = NULL
+    )
+{
+    #pragma omp parallel
+    {
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apdpsp_crs_benchmark");
+    #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *dp_n_rows; ++row) {
+                double dp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
+                    dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+                }
+    #endif
+                }
+
+                double sp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row + 1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    sp_sum += sp_values[j] * dp_x[sp_col_idxs[j]];
+
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], sp_x[sp_col_idxs[j]]);
+                    printf("sp_sum += %5.16f * %f\n", sp_values[j], sp_x[sp_col_idxs[j]]);
+
+                }
+    #endif
+                }
+
+                dp_y[row] = dp_sum + sp_sum; // implicit conversion to VTU?
+            }
+
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apdpsp_crs_benchmark");
+    #endif
+        }
+}
+
+template <typename IT>
+static void
+spmv_omp_csr_apdphp(
+    const ST * dp_C, // 1
+    const ST * dp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
+    const IT * RESTRICT dp_row_lengths, // unused for now
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C, // 1
+    const ST * sp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT sp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT sp_row_lengths, // unused for now
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y, // unused
+#ifdef HAVE_HALF_MATH
+    const ST * hp_C, // 1
+    const ST * hp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT hp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y, // unused
+#endif
+    const int * my_rank = NULL
+    )
+{
+    #pragma omp parallel
+    {
+    // #ifdef USE_LIKWID
+    //         LIKWID_MARKER_START("spmv_apdpsp_crs_benchmark");
+    // #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *dp_n_rows; ++row) {
+                double dp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
+                    dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+                }
+    #endif
+                }
+
+                double hp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    hp_sum += hp_values[j] * dp_x[hp_col_idxs[j]];
+
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], sp_x[sp_col_idxs[j]]);
+                    printf("sp_sum += %5.16f * %f\n", sp_values[j], sp_x[sp_col_idxs[j]]);
+
+                }
+    #endif
+                }
+
+                dp_y[row] = dp_sum + hp_sum; // implicit conversion to VTU?
+            }
+
+    // #ifdef USE_LIKWID
+    //     LIKWID_MARKER_STOP("spmv_apdpsp_crs_benchmark");
+    // #endif
+        }
+}
+
+template <typename IT>
+static void
+spmv_omp_csr_apsphp(
+    const ST * dp_C, // 1
+    const ST * dp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
+    const IT * RESTRICT dp_row_lengths, // unused for now
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C, // 1
+    const ST * sp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT sp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT sp_row_lengths, // unused for now
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y, // unused
+#ifdef HAVE_HALF_MATH
+    const ST * hp_C, // 1
+    const ST * hp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT hp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y, // unused
+#endif
+    const int * my_rank = NULL
+    )
+{
+    #pragma omp parallel
+    {
+    // #ifdef USE_LIKWID
+    //         LIKWID_MARKER_START("spmv_apdpsp_crs_benchmark");
+    // #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *sp_n_rows; ++row) {
+                double sp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row+1]; ++j) {
+                    sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+                }
+    #endif
+                }
+
+                double hp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    hp_sum += hp_values[j] * sp_x[hp_col_idxs[j]];
+
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], sp_x[sp_col_idxs[j]]);
+                    printf("sp_sum += %5.16f * %f\n", sp_values[j], sp_x[sp_col_idxs[j]]);
+
+                }
+    #endif
+                }
+
+                sp_y[row] = sp_sum + hp_sum; // implicit conversion to VTU?
+            }
+
+    // #ifdef USE_LIKWID
+    //     LIKWID_MARKER_STOP("spmv_apdpsp_crs_benchmark");
+    // #endif
+        }
+}
+
+template <typename IT>
+static void
 spmv_omp_csr_mp(
     const ST * dp_C, // 1
     const ST * dp_n_rows, // TODO: (same for both)
