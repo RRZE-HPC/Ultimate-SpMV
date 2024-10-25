@@ -76,7 +76,7 @@ void write_bench_to_file(
             working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", sp_beta: " << r->sp_beta;
         }
         else{
-            working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
+            working_file << std::fixed << std::setprecision(8) << ", beta: " << r->beta;
         }
     }
     if (config->value_type == "ap[dp_sp]"){
@@ -223,7 +223,7 @@ void write_result_to_file(
 #endif
         }
         else{
-            working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
+            working_file << std::fixed << std::setprecision(8) << ", beta: " << r->beta;
         }
     }
     if(config->value_type == "dp")

@@ -58,6 +58,15 @@ struct max_rel_error<std::complex<double>>
 template <typename VT, typename IT>
 using V = Vector<VT, IT>;
 
+void dummy_pin(void){
+    volatile int dummy = 0;
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        dummy += thread_id;
+    }
+}
+
 template <typename VT>
 void print_vector(const std::string &name,
              const VT *begin,
@@ -1677,12 +1686,12 @@ void convert_to_scs(
     // generate_inv_perm<IT>(scs->old_to_new_idx.data(), &(inv_perm)[0],  scs->n_rows);
 
 
-    int *inv_perm = new int[scs->n_rows];
-    int *inv_perm_temp = new int[scs->n_rows];
+    int *inv_perm = new int[scs->n_rows + scs->sigma];
+    int *inv_perm_temp = new int[scs->n_rows + scs->sigma];
     for(int i = 0; i < scs->n_rows; ++i){
         inv_perm_temp[i] = i;
     }
-    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm,  scs->n_rows);
+    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm,  scs->n_rows + scs->sigma);
 
     scs->new_to_old_idx = inv_perm;
 
