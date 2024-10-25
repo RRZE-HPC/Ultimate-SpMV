@@ -427,7 +427,7 @@ void seg_work_sharing_arr(
 #endif
 
         ScsData<VT, IT> global_crs;
-        convert_to_scs(config->bucket_size, total_mtx, 1, 1, &global_crs);
+        convert_to_scs(config->ap_threshold_1, total_mtx, 1, 1, &global_crs);
 
         //partition using METIS
         int ncon = 1;

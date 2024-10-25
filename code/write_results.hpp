@@ -11,7 +11,7 @@
 template<typename VT, typename IT>
 void compute_euclid_dist(
     Result<VT, IT> *r,
-    std::vector<VT> *x
+    std::vector<double> *x
 ){
     double tmp = 0.0; // NOTE: does this need to be VT?
 
@@ -26,7 +26,7 @@ void compute_euclid_dist(
 template<typename VT, typename IT>
 void compute_euclid_magnitude(
     Result<VT, IT> *r,
-    std::vector<VT> *x
+    std::vector<double> *x
 ){
     double tmp = 0.0; // NOTE: does this need to be VT?
 
@@ -56,9 +56,6 @@ void write_bench_to_file(
         num_omp_threads = omp_get_num_threads();
     }
 #endif
-
-
-
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with ";
@@ -73,7 +70,7 @@ void write_bench_to_file(
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
-        if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "apap[sp_hp]"){
+        if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]"){
             std::cout << "TODO" << std::endl;
             exit(1);
             working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", sp_beta: " << r->sp_beta;
@@ -83,13 +80,16 @@ void write_bench_to_file(
         }
     }
     if (config->value_type == "ap[dp_sp]"){
-        working_file << ", data_type: ap[dp_sp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % dp elems: " << r->total_dp_percent << ", % sp elems: " << r->total_sp_percent;    
+        working_file << ", data_type: ap[dp_sp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->ap_threshold_1 << ", % dp elems: " << r->total_dp_percent << ", % sp elems: " << r->total_sp_percent;    
     }
     else if(config->value_type == "ap[dp_hp]"){
-        working_file << ", data_type: ap[dp_hp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % dp elems: " << r->total_dp_percent << ", % hp elems: " << r->total_hp_percent;    
+        working_file << ", data_type: ap[dp_hp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->ap_threshold_1 << ", % dp elems: " << r->total_dp_percent << ", % hp elems: " << r->total_hp_percent;    
     }
     else if(config->value_type == "ap[sp_hp]"){
-        working_file << ", data_type: ap[sp_hp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->bucket_size << ", % sp elems: " << r->total_sp_percent << ", % hp elems: " << r->total_hp_percent;    
+        working_file << ", data_type: ap[sp_hp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->ap_threshold_1 << ", % sp elems: " << r->total_sp_percent << ", % hp elems: " << r->total_hp_percent;    
+    }
+    else if(config->value_type == "ap[dp_sp_hp]"){
+        working_file << ", data_type: ap[dp_sp_hp]" << ", threshold 1: " << std::fixed << std::setprecision(2) << config->ap_threshold_1 << ", threshold 2: " << std::fixed << std::setprecision(2) << config->ap_threshold_2 << ", % dp elems: " << r->total_dp_percent << ", % sp elems: " << r->total_sp_percent << ", % hp elems: " << r->total_hp_percent;    
     }
     else{
         if(config->value_type == "dp")
@@ -136,7 +136,7 @@ void write_result_to_file(
     const std::string *seg_method,
     Config *config,
     Result<VT, IT> *r,
-    std::vector<VT> *x,
+    std::vector<double> *x,
     int comm_size
 
 ){
@@ -152,11 +152,11 @@ void write_result_to_file(
     // IDK about all this "double" stuff
     max_relative_diff = 0.0;
     max_relative_diff_elem_uspmv = (double)(r->total_uspmv_result[0]);
-    max_relative_diff_elem_mkl = (double)((*x)[0]);
+    max_relative_diff_elem_mkl =(*x)[0];
 
     max_absolute_diff = 0.0;
     max_absolute_diff_elem_uspmv = (double)(r->total_uspmv_result[0]);
-    max_absolute_diff_elem_mkl = (double)((*x)[0]);
+    max_absolute_diff_elem_mkl = (*x)[0];
 
     std::cout.precision(16);
     int num_omp_threads;
@@ -179,8 +179,8 @@ void write_result_to_file(
     else if(config->value_type == "hp"){
         output_filename = config->output_filename_hp;
     }
-    else if(config->value_type == "ap"){
-        output_filename = config->output_filename_mp;
+    else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+        output_filename = config->output_filename_ap;
     }
     working_file.open(output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
     working_file << *matrix_file_name << " with ";
@@ -195,8 +195,32 @@ void write_result_to_file(
     working_file << "kernel: " << config->kernel_format; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << ", sigma: " << config->sigma;
-        if(config->value_type == "ap"){
+        if(config->value_type == "ap[dp_sp]"){
             working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", sp_beta: " << r->sp_beta;
+        }
+        else if(config->value_type == "ap[dp_hp]"){
+#ifdef HAVE_HALF_MATH
+            working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", hp_beta: " << r->hp_beta;
+#else
+            printf("ERROR: HAVE_HALF_MATH not defined.\n");
+            exit(1);
+#endif
+        }
+        else if(config->value_type == "ap[sp_hp]"){
+#ifdef HAVE_HALF_MATH
+            working_file << std::fixed << std::setprecision(2) << ", sp_beta: " << r->sp_beta << ", hp_beta: " << r->hp_beta;
+#else
+            printf("ERROR: HAVE_HALF_MATH not defined.\n");
+            exit(1);
+#endif
+        }
+        else if(config->value_type == "ap[dp_sp_hp]"){
+#ifdef HAVE_HALF_MATH
+            working_file << std::fixed << std::setprecision(2) << ", dp_beta: " << r->dp_beta << ", sp_beta: " << r->sp_beta << ", hp_beta: " << r->hp_beta;
+#else
+            printf("ERROR: HAVE_HALF_MATH not defined.\n");
+            exit(1);
+#endif
         }
         else{
             working_file << std::fixed << std::setprecision(2) << ", beta: " << r->beta;
@@ -208,8 +232,17 @@ void write_result_to_file(
         working_file << ", data_type: " << "sp";
     else if(config->value_type == "hp")
         working_file << ", data_type: " << "hp";
-    else if(config->value_type == "ap")
-        working_file << ", data_type: " << "ap";
+    else if(config->value_type == "ap[dp_sp]")
+        working_file << ", data_type: " << "ap[dp_sp]";
+#ifdef HAVE_HALF_MATH
+    else if(config->value_type == "ap[dp_hp]")
+        working_file << ", data_type: " << "ap[dp_hp]";
+    else if(config->value_type == "ap[sp_hp]")
+        working_file << ", data_type: " << "ap[sp_hp]";
+    else if(config->value_type == "ap[dp_sp_hp]")
+        working_file << ", data_type: " << "ap[dp_sp_hp]";
+#endif
+    
 
 #ifdef USE_MPI
     working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << std::endl;
@@ -268,13 +301,13 @@ void write_result_to_file(
         }
 #endif
         
-        if(config -> verbose_validation == 1)
+        if(config->verbose_validation == 1)
         {
             // TODO: Do I need this?
-            // working_file << std::left << std::setprecision(16) << std::setw(width) << (double)((*x)[i])
-            //             << std::left << std::setw(width) << r->total_uspmv_result[i]
-            //             << std::left << std::setw(width) << 100 * relative_diff
-            //             << std::left  << std::setw(width) << absolute_diff;
+            working_file << std::left << std::setprecision(16) << std::setw(width) << (double)((*x)[i])
+                        << std::left << std::setw(width) << static_cast<double>(r->total_uspmv_result[i])
+                        << std::left << std::setw(width) << 100 * relative_diff
+                        << std::left  << std::setw(width) << absolute_diff;
 
             if((std::abs(relative_diff) > .01) || std::isinf(relative_diff)){
                 working_file << std::left << std::setw(width) << "ERROR";
@@ -335,13 +368,16 @@ void write_result_to_file(
     @param *matrix_file_name : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
-    @param *r : a Result struct, in which results of the comoputations are stored
 */
-void validate_dp_result(
+void validate_result(
     MtxData<double, int> *total_mtx,
     Config *config,
-    Result<double, int> *r,
-    std::vector<double> *mkl_dp_result
+    Result<double, int> *r_dp,
+    Result<float, int> *r_sp,
+#ifdef HAVE_HALF_MATH
+    Result<_Float16, int> *r_hp,
+#endif
+    std::vector<double> *mkl_result
 ){    
 #ifdef __CUDACC__
     long num_rows = total_mtx->n_rows;
@@ -353,7 +389,7 @@ void validate_dp_result(
     int chunk_size = 1;
 #endif
 
-    mkl_dp_result->resize(num_rows, 0);
+    mkl_result->resize(num_rows, 0);
     std::vector<double> y(num_rows, 0);
 
     ScsData<double, int> *scs = new ScsData<double, int>;
@@ -364,9 +400,24 @@ void validate_dp_result(
 
     convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
         
-    for (int i = 0; i < num_rows; i++) {
-        (*mkl_dp_result)[i] = r->total_x[i];
+    if(config->value_type == "dp" || config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+        for (int i = 0; i < num_rows; i++) {
+            (*mkl_result)[i] = r_dp->total_x[i];
+        }
     }
+    else if(config->value_type == "sp" || config->value_type == "ap[sp_hp]"){
+        for (int i = 0; i < num_rows; i++) {
+            (*mkl_result)[i] = r_sp->total_x[i];
+        }
+    }
+    else if(config->value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+        for (int i = 0; i < num_rows; i++) {
+            (*mkl_result)[i] = r_hp->total_x[i];
+        }
+#endif
+    }
+
 
     for (int i = 0; i < num_cols; i++) {
         y[i] = 0.0;
@@ -386,11 +437,11 @@ void validate_dp_result(
     for(int i = 0; i < config->n_repetitions; ++i){
 #ifdef __CUDACC__
         // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
-        spmv_omp_csr<double, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_dp_result)[0], &y[0]);
+        spmv_omp_csr<double, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_result)[0], &y[0]);
 #else
-        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_dp_result)[0], &beta, &y[0]);
+        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_result)[0], &beta, &y[0]);
 #endif
-        std::swap(*mkl_dp_result, y);
+        std::swap(*mkl_result, y);
     }
 
     delete scs;

@@ -12,10 +12,7 @@
 
 #define RESTRICT				__restrict__
 
-
-template <typename VT, typename IT>
-using V = Vector<VT, IT>;
-using ST = long;
+// using ST = int;
 
 template <typename VT, typename IT>
 struct MtxData
@@ -30,6 +27,33 @@ struct MtxData
     std::vector<IT> I;
     std::vector<IT> J;
     std::vector<VT> values;
+
+    void print(void)
+    {
+            std::cout << "n_rows = " << n_rows << std::endl;
+            std::cout << "n_cols = " << n_cols << std::endl;
+            std::cout << "nnz = " << nnz << std::endl;
+            std::cout << "is_sorted = " << is_sorted << std::endl;
+            std::cout << "is_symmetric = " << is_symmetric << std::endl;
+
+            std::cout << "I = [";
+            for(int i = 0; i < nnz; ++i){
+                std::cout << I[i] << ", ";
+            }
+            std::cout << "]" << std::endl;
+
+            std::cout << "J = [";
+            for(int i = 0; i < nnz; ++i){
+                std::cout << J[i] << ", ";
+            }
+            std::cout << "]" << std::endl;
+
+            std::cout << "values = [";
+            for(int i = 0; i < nnz; ++i){
+                std::cout << static_cast<double>(values[i]) << ", ";
+            }
+            std::cout << "]" << std::endl;
+    }
 };
 
 template <typename VT, typename IT>
@@ -45,12 +69,12 @@ struct ScsData
     ST n_elements{}; // No. of nz + padding.
     ST nnz{};        // No. of nz only.
 
-    V<IT, IT> chunk_ptrs;    // Chunk start offsets into col_idxs & values.
-    V<IT, IT> chunk_lengths; // Length of one row in a chunk.
-    V<IT, IT> col_idxs;
-    V<VT, IT> values;
-    V<IT, IT> old_to_new_idx;
-    std::vector<int> new_to_old_idx; //inverse of above
+    std::vector<IT> chunk_ptrs;    // Chunk start offsets into col_idxs & values.
+    std::vector<IT> chunk_lengths; // Length of one row in a chunk.
+    std::vector<IT> col_idxs;
+    std::vector<VT> values;
+    std::vector<IT> old_to_new_idx;
+    IT * new_to_old_idx;
 
     void permute(IT *_perm_, IT*  _invPerm_);
     void print(void);
@@ -228,7 +252,7 @@ void ScsData<VT, IT>::print(void){
 
     std::cout << "values = [";
     for(int i = 0; i < n_scs_elements; ++i){
-        std::cout << values[i];
+        std::cout << static_cast<double>(values[i]);
         if(i == n_scs_elements - 1)
             std::cout << "]" << std::endl;
         else
@@ -382,8 +406,6 @@ void convert_to_scs(
     ST sigma,
     ScsData<VT, IT> *scs,
     int *fixed_permutation = NULL
-    // int *work_sharing_arr = nullptr,
-    // int my_rank = 0
     )
 {
     scs->nnz    = local_mtx->nnz;
@@ -427,7 +449,8 @@ void convert_to_scs(
     // second entry: population count of row
     using index_and_els_per_row = std::pair<ST, ST>;
 
-    std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded);
+    // std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded);
+    std::vector<index_and_els_per_row> n_els_per_row(scs->n_rows_padded + sigma);
 
     for (ST i = 0; i < scs->n_rows_padded; ++i) {
         n_els_per_row[i].first = i;
@@ -445,7 +468,6 @@ void convert_to_scs(
 
     if(fixed_permutation != NULL){
         std::vector<index_and_els_per_row> n_els_per_row_tmp(scs->n_rows_padded);
-        // NOTE: Permutation vectors are only n_rows long. The padding rows aren't touched
         for(int i = 0; i < scs->n_rows_padded; ++i){
             if(i < scs->n_rows){
                 n_els_per_row_tmp[i].first = n_els_per_row[i].first;
@@ -457,10 +479,10 @@ void convert_to_scs(
                 n_els_per_row_tmp[i].second = n_els_per_row[i].second;
             }
         }
-        // for(int i = 0; i < scs->n_rows; ++i){
-        //     n_els_per_row[i] = n_els_per_row_tmp[i];
-        // }
-        n_els_per_row = n_els_per_row_tmp;
+        // n_els_per_row = n_els_per_row_tmp;
+        for(int i = 0; i < scs->n_rows_padded; ++i){
+            n_els_per_row[i] = n_els_per_row_tmp[i];
+        }
     }
     else{
         for (ST i = 0; i < scs->n_rows_padded; i += scs->sigma) {
@@ -476,12 +498,9 @@ void convert_to_scs(
                     });
         }
     }
-    // determine chunk_ptrs and chunk_lengths
 
-    // TODO: check chunk_ptrs can overflow
-    // std::cout << d.n_chunks << std::endl;
-    scs->chunk_lengths = V<IT, IT>(scs->n_chunks); // init a vector of length d.n_chunks
-    scs->chunk_ptrs    = V<IT, IT>(scs->n_chunks + 1);
+    scs->chunk_lengths = std::vector<IT>(scs->n_chunks + scs->sigma); // init a vector of length d.n_chunks
+    scs->chunk_ptrs    = std::vector<IT>(scs->n_chunks + 1 + scs->sigma);
 
     IT cur_chunk_ptr = 0;
     
@@ -507,12 +526,10 @@ void convert_to_scs(
     ST n_scs_elements = scs->chunk_ptrs[scs->n_chunks - 1]
                         + scs->chunk_lengths[scs->n_chunks - 1] * scs->C;
 
-    // std::cout << "n_scs_elements = " << n_scs_elements << std::endl;
     scs->chunk_ptrs[scs->n_chunks] = n_scs_elements;
 
     // construct permutation vector
-
-    scs->old_to_new_idx = V<IT, IT>(scs->n_rows);
+    scs->old_to_new_idx = std::vector<IT>(scs->n_rows + scs->sigma);
 
     for (ST i = 0; i < scs->n_rows_padded; ++i) {
         IT old_row_idx = n_els_per_row[i].first;
@@ -523,8 +540,13 @@ void convert_to_scs(
     }
     
 
-    scs->values   = V<VT, IT>(n_scs_elements);
-    scs->col_idxs = V<IT, IT>(n_scs_elements);
+    // scs->values   = V<VT, IT>(n_scs_elements + scs->sigma);
+    // scs->col_idxs = V<IT, IT>(n_scs_elements + scs->sigma);
+    scs->values   = std::vector<VT>(n_scs_elements + scs->sigma);
+    scs->col_idxs = std::vector<IT>(n_scs_elements + scs->sigma);
+
+    printf("n_scs_elements = %i.\n\n", n_scs_elements);
+    // exit(1);
 
     IT padded_col_idx = 0;
 
@@ -538,7 +560,13 @@ void convert_to_scs(
         scs->col_idxs[i] = padded_col_idx;
     }
 
-    std::vector<IT> col_idx_in_row(scs->n_rows_padded);
+    // I don't know what this would help, but you can try it.
+    // std::vector<IT> col_idx_in_row(scs->n_rows_padded);
+    std::vector<IT> col_idx_in_row(scs->n_rows_padded + scs->sigma);
+    // int *col_idx_in_row = new int [scs->n_rows_padded + scs->sigma];
+    // for (int i = 0; i < scs->n_rows_padded + scs->sigma; ++i){
+    //     col_idx_in_row[i] = 0;
+    // }
 
     // fill values and col_idxs
     for (ST i = 0; i < scs->nnz; ++i) {
@@ -565,16 +593,42 @@ void convert_to_scs(
         col_idx_in_row[row]++;
     }
 
-    // Sort inverse permutation vector, based on scs->old_to_new_idx
-    std::vector<int> inv_perm(scs->n_rows);
-    std::vector<int> inv_perm_temp(scs->n_rows);
-    std::iota(std::begin(inv_perm_temp), std::end(inv_perm_temp), 0); // Fill with 0, 1, ..., scs->n_rows.
+    // for (int i = 0; i < scs->n_rows_padded + scs->sigma; ++i){
+    //     printf("col idx = %i\n", scs->col_idxs[i]);
+    // }
+    // exit(0);
 
-    generate_inv_perm<IT>(scs->old_to_new_idx.data(), &inv_perm[0],  scs->n_rows);
+    // printf("Problem row 16\n");
+    // for (int i = 0; i < n_els_per_row[16].second; ++i){
+    //     IT row = 16;
+    //     ST chunk_index = row / scs->C;
+    //     IT chunk_start = scs->chunk_ptrs[chunk_index];
+    //     IT chunk_row   = row % scs->C;
+    //     IT idx = chunk_start + col_idx_in_row[row] * scs->C + chunk_row;
+    //     printf("val: %f, col: %i\n", scs->values[idx], scs->col_idxs[idx]);
+    // }
+
+    // Sort inverse permutation vector, based on scs->old_to_new_idx
+    // std::vector<int> inv_perm(scs->n_rows);
+    // std::vector<int> inv_perm_temp(scs->n_rows);
+    // std::iota(std::begin(inv_perm_temp), std::end(inv_perm_temp), 0); // Fill with 0, 1, ..., scs->n_rows.
+    // generate_inv_perm<IT>(scs->old_to_new_idx.data(), &(inv_perm)[0],  scs->n_rows);
+
+
+    int *inv_perm = new int[scs->n_rows];
+    int *inv_perm_temp = new int[scs->n_rows];
+    for(int i = 0; i < scs->n_rows; ++i){
+        inv_perm_temp[i] = i;
+    }
+    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm,  scs->n_rows);
 
     scs->new_to_old_idx = inv_perm;
 
     scs->n_elements = n_scs_elements;
+
+    // for(int i = 0; i < n_scs_elements; ++i){
+    //     printf("col idx: %i\n", scs->col_idxs.data()[i]);
+    // }
 
     // Experimental 2024_02_01, I do not want the rows permuted yet... so permute back
     // if sigma > C, I can see this being a problem
@@ -587,6 +641,22 @@ void convert_to_scs(
     // }    
 
     // return true;
+
+
+    // printf("perm = [\n");
+    // for (ST i = 0; i < scs->n_rows; ++i) {
+    //     printf("perm idx %i\n", scs->old_to_new_idx.data()[i]);
+    // }
+    // printf("]\n");
+
+    // printf("inv perm = [\n");
+    // for (ST i = 0; i < scs->n_rows; ++i) {
+    //     printf("inv perm idx %i\n", scs->new_to_old_idx[i]);
+    // }
+    // printf("]\n");
+    // exit(1);
+
+    // delete col_idx_in_row; <- uhh why does this cause a seg fault?
 }
 
 // TODO: Validate
@@ -600,7 +670,7 @@ void permute_scs_cols(
 
     // std::vector<IT> col_idx_in_row(scs->n_rows_padded);
 
-    V<IT, IT> col_perm_idxs(n_scs_elements);
+    std::vector<IT, IT> col_perm_idxs(n_scs_elements);
 
     // TODO: parallelize
 
@@ -622,86 +692,293 @@ void permute_scs_cols(
 }
 
 template <typename VT, typename IT>
-void seperate_lp_from_hp( 
-    MtxData<double, IT> *local_mtx, // <- should be scaled when entering this routine 
-    MtxData<double, int> *hp_local_mtx, 
-    MtxData<float, int> *lp_local_mtx,
-    // MtxData<double, int> *lp_local_mtx,
-    std::vector<double> *largest_row_elems, // <- to adjust for jacobi scaling
-    std::vector<double> *largest_col_elems,
-    long double threshold,
-    bool is_equilibrated)
+void partition_precisions( 
+    MtxData<VT, IT> *local_mtx, // <- should be scaled when entering this routine 
+    MtxData<double, int> *dp_local_mtx, 
+    MtxData<float, int> *sp_local_mtx,
+#ifdef HAVE_HALF_MATH
+    MtxData<_Float16, int> *hp_local_mtx,
+#endif
+    std::vector<VT> *largest_row_elems, 
+    std::vector<VT> *largest_col_elems,
+    double ap_threshold_1,
+    double ap_threshold_2,
+    char *ap_value_type,
+    bool is_equilibrated
+)
 {
+    dp_local_mtx->is_sorted = local_mtx->is_sorted;
+    dp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    dp_local_mtx->n_rows = local_mtx->n_rows;
+    dp_local_mtx->n_cols = local_mtx->n_cols;
+
+    sp_local_mtx->is_sorted = local_mtx->is_sorted;
+    sp_local_mtx->is_symmetric = local_mtx->is_symmetric;
+    sp_local_mtx->n_rows = local_mtx->n_rows;
+    sp_local_mtx->n_cols = local_mtx->n_cols;
+
+#ifdef HAVE_HALF_MATH
     hp_local_mtx->is_sorted = local_mtx->is_sorted;
     hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
     hp_local_mtx->n_rows = local_mtx->n_rows;
     hp_local_mtx->n_cols = local_mtx->n_cols;
+#endif
 
-    lp_local_mtx->is_sorted = local_mtx->is_sorted;
-    lp_local_mtx->is_symmetric = local_mtx->is_symmetric;
-    lp_local_mtx->n_rows = local_mtx->n_rows;
-    lp_local_mtx->n_cols = local_mtx->n_cols;
-
-    int lp_elem_ctr = 0;
+    int dp_elem_ctr = 0;
+    int sp_elem_ctr = 0;
     int hp_elem_ctr = 0;
 
-    std::vector<int> hp_local_I;
-    std::vector<int> hp_local_J;
-    std::vector<double> hp_local_vals;
+    // TODO: This practice of assigning pointers to vectors is dangerous...
+    std::vector<IT> dp_local_I;
+    std::vector<IT> dp_local_J;
+    std::vector<double> dp_local_vals;
+    dp_local_mtx->I = dp_local_I;
+    dp_local_mtx->J = dp_local_J;
+    dp_local_mtx->values = dp_local_vals;
+
+    std::vector<IT> sp_local_I;
+    std::vector<IT> sp_local_J;
+    std::vector<float> sp_local_vals;
+    sp_local_mtx->I = sp_local_I;
+    sp_local_mtx->J = sp_local_J;
+    sp_local_mtx->values = sp_local_vals;
+
+#ifdef HAVE_HALF_MATH
+    std::vector<IT> hp_local_I;
+    std::vector<IT> hp_local_J;
+    std::vector<_Float16> hp_local_vals;
     hp_local_mtx->I = hp_local_I;
     hp_local_mtx->J = hp_local_J;
     hp_local_mtx->values = hp_local_vals;
-
-    std::vector<int> lp_local_I;
-    std::vector<int> lp_local_J;
-    std::vector<float> lp_local_vals;
-    // std::vector<double> lp_local_vals;
-    lp_local_mtx->I = lp_local_I;
-    lp_local_mtx->J = lp_local_J;
-    lp_local_mtx->values = lp_local_vals;
+#endif
 
     // Scan local_mtx
     // TODO: If this is a bottleneck:
     // 1. Scan in parallel 
     // 2. Allocate space
     // 3. Assign in parallel
-    for(int i = 0; i < local_mtx->nnz; ++i){
-        // If element value below threshold, place in hp_local_mtx
-        if(is_equilibrated){
-            if(std::abs(local_mtx->values[i]) >= (long double) threshold / ( (*largest_col_elems)[local_mtx->J[i]] * (*largest_row_elems)[local_mtx->I[i]])) {   
-                hp_local_mtx->values.push_back(local_mtx->values[i]);
-                hp_local_mtx->I.push_back(local_mtx->I[i]);
-                hp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++hp_elem_ctr;
+    if(ap_value_type == "ap[dp_sp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(is_equilibrated){
+                // TODO: static casting just to make it compile... 
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1 / \
+                    ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else{
+                    // else, place in sp_local_mtx 
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
             }
             else{
-                // else, place in lp_local_mtx 
-                lp_local_mtx->values.push_back(local_mtx->values[i]);
-                lp_local_mtx->I.push_back(local_mtx->I[i]);
-                lp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++lp_elem_ctr;
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1){   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < ap_threshold_1){
+                    // else, place in sp_local_mtx 
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else{
+                    printf("partition_precisions ERROR: Element %i does not fit into either struct.\n", i);
+                    exit(1);
+                }
             }
-        }
-        else{
-            if(std::abs(local_mtx->values[i]) >= (long double) threshold){   
-                hp_local_mtx->values.push_back(local_mtx->values[i]);
-                hp_local_mtx->I.push_back(local_mtx->I[i]);
-                hp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++hp_elem_ctr;
-            }
-            else{
-                // else, place in lp_local_mtx 
-                lp_local_mtx->values.push_back(local_mtx->values[i]);
-                lp_local_mtx->I.push_back(local_mtx->I[i]);
-                lp_local_mtx->J.push_back(local_mtx->J[i]);
-                ++lp_elem_ctr;
-            } 
         }
 
+        dp_local_mtx->nnz = dp_elem_ctr;
+        sp_local_mtx->nnz = sp_elem_ctr;
+
+        if(local_mtx->nnz != (dp_elem_ctr + sp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into dp and sp structs.\n", local_mtx->nnz - (dp_elem_ctr + sp_elem_ctr));
+            exit(1);
+        }
     }
+#ifdef HAVE_HALF_MATH
+    else if(ap_value_type == "ap[dp_hp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(is_equilibrated){
+                // TODO: static casting just to make it compile... 
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1 / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else{
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+            }
+            else{
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1){   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < ap_threshold_1){
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+                else{
+                    printf("partition_precisions ERROR: Element %i does not fit into either struct.\n", i);
+                    exit(1);
+                }
+            }
+        }
 
-    hp_local_mtx->nnz = hp_elem_ctr;
-    lp_local_mtx->nnz = lp_elem_ctr;
+        dp_local_mtx->nnz = dp_elem_ctr;
+        hp_local_mtx->nnz = hp_elem_ctr;
+
+
+        if(local_mtx->nnz != (dp_elem_ctr + hp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into dp and hp structs: %i.\n", local_mtx->nnz - (dp_elem_ctr + hp_elem_ctr));
+            exit(1);
+        }
+    }
+    else if(ap_value_type == "ap[sp_hp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(is_equilibrated){
+                // TODO: static casting just to make it compile... 
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1 / \
+                    ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else{
+                    // else, place in sp_local_mtx 
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+            }
+            else{
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1){   
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < ap_threshold_1){
+                    // else, place in sp_local_mtx 
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+                else{
+                    printf("partition_precisions ERROR: Element %i does not fit into either struct.\n", i);
+                    exit(1);
+                }
+            }
+        }
+
+        sp_local_mtx->nnz = sp_elem_ctr;
+        hp_local_mtx->nnz = hp_elem_ctr;
+
+        if(local_mtx->nnz != (sp_elem_ctr + hp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into sp and hp structs: %i.\n", local_mtx->nnz - (sp_elem_ctr + hp_elem_ctr));
+            exit(1);
+        }
+    }
+    else if(ap_value_type == "ap[dp_sp_hp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(is_equilibrated){
+                // Element is larger than the largest threshold
+                if(
+                    (std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1 / \
+                    (static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]])))
+                    ) {   
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if(
+                    // Element is between thresholds
+                    (std::abs(static_cast<double>(local_mtx->values[i])) <= ap_threshold_1 / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) &&
+                    (std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_2 / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]])))
+                ){
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else
+                {
+                    // else, element is between 0 and lowest threshold
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+            }
+            else{
+                // Element is larger than the largest threshold
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_1){
+                    dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if(
+                    // Element is between thresholds
+                    (std::abs(static_cast<double>(local_mtx->values[i])) <= ap_threshold_1) &&
+                    (std::abs(static_cast<double>(local_mtx->values[i])) >= ap_threshold_2)
+                ){
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else
+                {
+                    // else, element is between 0 and lowest threshold
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+            }
+        }
+
+        dp_local_mtx->nnz = dp_elem_ctr;
+        sp_local_mtx->nnz = sp_elem_ctr;
+        hp_local_mtx->nnz = hp_elem_ctr;
+
+        if(local_mtx->nnz != (dp_elem_ctr + sp_elem_ctr + hp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into dp, sp, and hp structs.\n", local_mtx->nnz - (dp_elem_ctr + sp_elem_ctr + hp_elem_ctr));
+            exit(1);
+        }
+    }
+#endif
 }
 
 ////////////////////////////// CPU Kernels ////////////////////////////// 
@@ -712,16 +989,16 @@ void seperate_lp_from_hp(
 /**
  * Kernel for CSR format.
  */
-template <typename VT, typename IT>
+template <typename FT, typename VT, typename IT>
 static void
-uspmv_omp_csr_cpu(const ST C, // 1
+uspmv_csr_cpu(const ST C, // 1
              const ST num_rows, // n_chunks
              const IT * RESTRICT row_ptrs, // chunk_ptrs
              const IT * RESTRICT row_lengths, // unused
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
-             double * RESTRICT x,
-             double * RESTRICT y)
+             FT * RESTRICT x,
+             FT * RESTRICT y)
 {
     #pragma omp parallel
     {
@@ -731,7 +1008,8 @@ uspmv_omp_csr_cpu(const ST C, // 1
         #pragma omp for schedule(static)
         for (ST row = 0; row < num_rows; ++row) {
             VT sum{};
-            #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
+            // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
+            #pragma omp simd reduction(+:sum)
             for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
                 sum += values[j] * x[col_idxs[j]];
             }
@@ -746,16 +1024,16 @@ uspmv_omp_csr_cpu(const ST C, // 1
 /**
  * SpMV Kernel for Sell-C-Sigma. Supports all Cs > 0.
  */
-template <typename VT, typename IT>
+template <typename VT, typename FT, typename IT>
 static void
-uspmv_omp_scs_cpu(const IT C,
+uspmv_scs_cpu(const IT C,
              const IT n_chunks,
              const IT * RESTRICT chunk_ptrs,
              const IT * RESTRICT chunk_lengths,
              const IT * RESTRICT col_idxs,
              const VT * RESTRICT values,
-             VT * RESTRICT x,
-             VT * RESTRICT y)
+             FT * RESTRICT x,
+             FT * RESTRICT y)
 {
     #pragma omp parallel for schedule(static)
     for (int c = 0; c < n_chunks; ++c) {
@@ -821,7 +1099,7 @@ scs_impl_cpu(const ST n_chunks,
  */
 template <typename VT, typename IT>
 static void
-uspmv_omp_scs_c_cpu(
+uspmv_scs_c_cpu(
              const ST C,
              const ST n_chunks,
              const IT * RESTRICT chunk_ptrs,
@@ -852,124 +1130,612 @@ uspmv_omp_scs_c_cpu(
     }
 }
 
-template <typename VT, typename IT>
+template <typename IT>
 static void
-uspmv_omp_csr_ap_cpu(
-    const ST hp_n_rows, // TODO: (same for both)
-    const ST hp_C, // 1
-    const IT * RESTRICT hp_row_ptrs, // hp_chunk_ptrs
-    const IT * RESTRICT hp_row_lengths, // unused for now
+uspmv_csr_apdpsp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_rows,
+    const IT * RESTRICT dp_row_ptrs,
+    const IT * RESTRICT dp_row_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_rows,
+    const IT * RESTRICT sp_row_ptrs,
+    const IT * RESTRICT sp_row_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+#ifdef HAVE_HALF_MATH
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_rows,
+    const IT * RESTRICT hp_row_ptrs,
+    const IT * RESTRICT hp_row_lengths,
     const IT * RESTRICT hp_col_idxs,
-    const double * RESTRICT hp_values,
-    VT * RESTRICT hp_x,
-    VT * RESTRICT hp_y, 
-    const ST lp_n_rows, // TODO: (same for both)
-    const ST lp_C, // 1
-    const IT * RESTRICT lp_row_ptrs, // lp_chunk_ptrs
-    const IT * RESTRICT lp_row_lengths, // unused for now
-    const IT * RESTRICT lp_col_idxs,
-    const float * RESTRICT lp_values
-    // const double * RESTRICT lp_values
-    // float * RESTRICT lp_x,
-    // float * RESTRICT lp_y, // unused
-    // int my_rank
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+#else
+    float * RESTRICT sp_y
+#endif
     )
 {
     #pragma omp parallel
     {
-#ifdef USE_LIKWID
-        LIKWID_MARKER_START("uspmv_ap_crs_benchmark");
-#endif
-        #pragma omp for schedule(static)
-        for (ST row = 0; row < hp_n_rows; ++row) {
-            double hp_sum{};
-            #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:hp_sum)
-            for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row+1]; ++j) {
-                hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apdpsp_crs_benchmark");
+    #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *dp_n_rows; ++row) {
+                double dp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:dp_sum)
+                for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
+                    dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+    #endif
+                }
+
+                double sp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                #pragma omp simd reduction(+:sp_sum)
+                for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row + 1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    sp_sum += sp_values[j] * dp_x[sp_col_idxs[j]];
+
+    #ifdef DEBUG_MODE_FINE
+                    printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], dp_x[sp_col_idxs[j]]);
+                    printf("sp_sum += %5.16f * %f\n", sp_values[j], dp_x[sp_col_idxs[j]]);
+    #endif
+                }
+
+                dp_y[row] = dp_sum + sp_sum; // implicit conversion to VTU?
             }
 
-            double lp_sum{};
-            #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:lp_sum)
-            for (IT j = lp_row_ptrs[row]; j < lp_row_ptrs[row + 1]; ++j) {
-                // lp_sum += lp_values[j] * lp_x[lp_col_idxs[j]];
-                lp_sum += lp_values[j] * hp_x[lp_col_idxs[j]];
-
-            }
-
-            hp_y[row] = hp_sum + lp_sum; // implicit conversion to double
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apdpsp_crs_benchmark");
+    #endif
         }
-
-#ifdef USE_LIKWID
-        LIKWID_MARKER_STOP("uspmv_ap_crs_benchmark");
-#endif
-    }
 }
+
+#ifdef HAVE_HALF_MATH
+template <typename IT>
+static void
+uspmv_csr_apdphp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_rows,
+    const IT * RESTRICT dp_row_ptrs,
+    const IT * RESTRICT dp_row_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_rows,
+    const IT * RESTRICT sp_row_ptrs,
+    const IT * RESTRICT sp_row_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_rows,
+    const IT * RESTRICT hp_row_ptrs,
+    const IT * RESTRICT hp_row_lengths,
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+    )
+{
+    #pragma omp parallel
+    {
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apdphp_crs_benchmark");
+    #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *dp_n_rows; ++row) {
+                double dp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:dp_sum)
+                for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
+                    dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+    #endif
+                }
+
+                double hp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                #pragma omp simd reduction(+:hp_sum)
+                for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+                    // hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+                    hp_sum += hp_values[j] * dp_x[hp_col_idxs[j]]; // Conversion how???
+
+    #ifdef DEBUG_MODE_FINE
+                    printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], sp_x[sp_col_idxs[j]]);
+                    printf("sp_sum += %5.16f * %f\n", sp_values[j], sp_x[sp_col_idxs[j]]);
+    #endif
+                }
+
+                dp_y[row] = dp_sum + hp_sum;
+            }
+
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apdphp_crs_benchmark");
+    #endif
+        }
+}
+#endif
+
+#ifdef HAVE_HALF_MATH
+template <typename IT>
+static void
+uspmv_csr_apsphp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_rows,
+    const IT * RESTRICT dp_row_ptrs,
+    const IT * RESTRICT dp_row_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_rows,
+    const IT * RESTRICT sp_row_ptrs,
+    const IT * RESTRICT sp_row_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_rows,
+    const IT * RESTRICT hp_row_ptrs,
+    const IT * RESTRICT hp_row_lengths,
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+    )
+{
+    #pragma omp parallel
+    {
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apsphp_crs_benchmark");
+    #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *sp_n_rows; ++row) {
+                float sp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:sp_sum)
+                for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row+1]; ++j) {
+                    sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+    #endif
+                }
+
+                float hp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                #pragma omp simd reduction(+:hp_sum)
+                for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    hp_sum += hp_values[j] * sp_x[hp_col_idxs[j]];
+
+    #ifdef DEBUG_MODE_FINE
+                    printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], sp_x[sp_col_idxs[j]]);
+                    printf("sp_sum += %5.16f * %f\n", sp_values[j], sp_x[sp_col_idxs[j]]);
+    #endif
+                }
+
+                sp_y[row] = sp_sum + hp_sum; // implicit conversion to VTU?
+            }
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apsphp_crs_benchmark");
+    #endif
+        }
+}
+#endif
+
+#ifdef HAVE_HALF_MATH
+template <typename IT>
+static void
+uspmv_csr_apdpsphp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_rows,
+    const IT * RESTRICT dp_row_ptrs,
+    const IT * RESTRICT dp_row_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_rows,
+    const IT * RESTRICT sp_row_ptrs,
+    const IT * RESTRICT sp_row_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_rows,
+    const IT * RESTRICT hp_row_ptrs,
+    const IT * RESTRICT hp_row_lengths,
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+    )
+{
+    #pragma omp parallel
+    {
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apdpsphp_crs_benchmark");
+    #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *sp_n_rows; ++row) {
+
+                double dp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:dp_sum)
+                for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
+                    dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                    // printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    // printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+    #endif
+                }
+
+                double sp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:sp_sum)
+                for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row+1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    sp_sum += sp_values[j] * dp_x[sp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                    // printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    // printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+    #endif
+                }
+
+                double hp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                #pragma omp simd reduction(+:hp_sum)
+                for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    hp_sum += hp_values[j] * dp_x[hp_col_idxs[j]];
+
+    #ifdef DEBUG_MODE_FINE
+                    // printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], dp_x[sp_col_idxs[j]]);
+                    // printf("sp_sum += %5.16f * %f\n", sp_values[j], dp_x[sp_col_idxs[j]]);
+    #endif
+                }
+
+                dp_y[row] = dp_sum + sp_sum + hp_sum;
+            }
+
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apdpsphp_crs_benchmark");
+    #endif
+        }
+}
+#endif
 
 /**
  * Kernel for Sell-C-Sigma. Supports all Cs > 0.
  */
 template <typename VT, typename IT>
 static void
-uspmv_omp_scs_ap_cpu(
-    const ST hp_n_chunks, // n_chunks (same for both)
-    const ST hp_C, // 1
-    const IT * RESTRICT hp_chunk_ptrs, // hp_chunk_ptrs
-    const IT * RESTRICT hp_chunk_lengths, // unused
+uspmv_scs_apdpsp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_chunks,
+    const IT * RESTRICT dp_chunk_ptrs,
+    const IT * RESTRICT dp_chunk_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_chunks,
+    const IT * RESTRICT sp_chunk_ptrs,
+    const IT * RESTRICT sp_chunk_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+#ifdef HAVE_HALF_MATH
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_chunks,
+    const IT * RESTRICT hp_chunk_ptrs,
+    const IT * RESTRICT hp_chunk_lengths,
     const IT * RESTRICT hp_col_idxs,
-    const double * RESTRICT hp_values,
-    VT * RESTRICT hp_x,
-    VT * RESTRICT hp_y, 
-    const ST lp_n_chunks, // n_chunks (same for both)
-    const ST lp_C, // 1
-    const IT * RESTRICT lp_chunk_ptrs, // lp_chunk_ptrs
-    const IT * RESTRICT lp_chunk_lengths, // unused
-    const IT * RESTRICT lp_col_idxs,
-    const float * RESTRICT lp_values
-    // float * RESTRICT lp_x,
-    // float * RESTRICT lp_y, // unused
-    // int my_rank
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+#else
+    float * RESTRICT sp_y
+#endif
 )
 {
     #pragma omp parallel
     {
 #ifdef USE_LIKWID
-        LIKWID_MARKER_START("uspmv_ap_scs_benchmark");
+        LIKWID_MARKER_START("uspmv_apdpsp_scs_benchmark");
 #endif
         #pragma omp for
-        for (ST c = 0; c < hp_n_chunks; ++c) {
-            double hp_tmp[hp_C];
-            double lp_tmp[hp_C];
+        for (ST c = 0; c < *dp_n_chunks; ++c) {
+            double dp_tmp[*dp_C];
+            double sp_tmp[*dp_C];
 
-            for (ST i = 0; i < hp_C; ++i) {
-                hp_tmp[i] = 0.0;
+            for (ST i = 0; i < *dp_C; ++i) {
+                dp_tmp[i] = 0.0;
             }
-            for (ST i = 0; i < hp_C; ++i) {
-                lp_tmp[i] = 0.0f;
+            for (ST i = 0; i < *dp_C; ++i) {
+                sp_tmp[i] = 0.0;
             }
 
-            IT hp_cs = hp_chunk_ptrs[c];
-            IT lp_cs = lp_chunk_ptrs[c];
+            IT dp_cs = dp_chunk_ptrs[c];
+            IT sp_cs = sp_chunk_ptrs[c];
 
-            for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
-                for (IT i = 0; i < hp_C; ++i) {
-                    hp_tmp[i] += hp_values[hp_cs + j * hp_C + i] * hp_x[hp_col_idxs[hp_cs + j * hp_C + i]];
+            for (IT j = 0; j < dp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *dp_C; ++i) {
+                    dp_tmp[i] += dp_values[dp_cs + j * *dp_C + i] * dp_x[dp_col_idxs[dp_cs + j * *dp_C + i]];
                 }
             }
-            for (IT j = 0; j < lp_chunk_lengths[c]; ++j) {
-                for (IT i = 0; i < hp_C; ++i) {
-                    lp_tmp[i] += lp_values[lp_cs + j * hp_C + i] * hp_x[lp_col_idxs[lp_cs + j * hp_C + i]];
+            for (IT j = 0; j < sp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *dp_C; ++i) {
+                    sp_tmp[i] += sp_values[sp_cs + j * *dp_C + i] * dp_x[sp_col_idxs[sp_cs + j * *dp_C + i]];
                 }
             }
 
-            for (IT i = 0; i < hp_C; ++i) {
-                hp_y[c * hp_C + i] = hp_tmp[i] + lp_tmp[i];
+            for (IT i = 0; i < *dp_C; ++i) {
+                dp_y[c * *dp_C + i] = dp_tmp[i] + sp_tmp[i];
             }
 #ifdef USE_LIKWID
-            LIKWID_MARKER_STOP("uspmv_ap_scs_benchmark");
+            LIKWID_MARKER_STOP("uspmv_apdpsp_scs_benchmark");
 #endif
         }
     }
 }
+
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+#ifdef HAVE_HALF_MATH
+template <typename VT, typename IT>
+static void
+uspmv_scs_apdphp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_chunks,
+    const IT * RESTRICT dp_chunk_ptrs,
+    const IT * RESTRICT dp_chunk_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_chunks,
+    const IT * RESTRICT sp_chunk_ptrs,
+    const IT * RESTRICT sp_chunk_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_chunks,
+    const IT * RESTRICT hp_chunk_ptrs,
+    const IT * RESTRICT hp_chunk_lengths,
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+)
+{
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("uspmv_apdphp_scs_benchmark");
+#endif
+        #pragma omp for
+        for (ST c = 0; c < *dp_n_chunks; ++c) {
+            double dp_tmp[*dp_C];
+            double hp_tmp[*dp_C];
+
+            for (ST i = 0; i < *dp_C; ++i) {
+                dp_tmp[i] = 0.0;
+                hp_tmp[i] = 0.0;
+            }
+
+            IT dp_cs = dp_chunk_ptrs[c];
+            IT hp_cs = hp_chunk_ptrs[c];
+
+            for (IT j = 0; j < dp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *dp_C; ++i) {
+                    dp_tmp[i] += dp_values[dp_cs + j * *dp_C + i] * dp_x[dp_col_idxs[dp_cs + j * *dp_C + i]];
+                }
+            }
+            for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *dp_C; ++i) {
+                    hp_tmp[i] += hp_values[hp_cs + j * *dp_C + i] * dp_x[hp_col_idxs[hp_cs + j * *dp_C + i]];
+                }
+            }
+
+            for (IT i = 0; i < *dp_C; ++i) {
+                dp_y[c * *dp_C + i] = dp_tmp[i] + hp_tmp[i];
+            }
+#ifdef USE_LIKWID
+            LIKWID_MARKER_STOP("uspmv_apdphp_scs_benchmark");
+#endif
+        }
+    }
+}
+#endif
+
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+#ifdef HAVE_HALF_MATH
+template <typename VT, typename IT>
+static void
+uspmv_scs_apsphp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_chunks,
+    const IT * RESTRICT dp_chunk_ptrs,
+    const IT * RESTRICT dp_chunk_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_chunks,
+    const IT * RESTRICT sp_chunk_ptrs,
+    const IT * RESTRICT sp_chunk_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_chunks,
+    const IT * RESTRICT hp_chunk_ptrs,
+    const IT * RESTRICT hp_chunk_lengths,
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+)
+{
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("uspmv_apsphp_scs_benchmark");
+#endif
+        #pragma omp for
+        for (ST c = 0; c < *sp_n_chunks; ++c) {
+            double sp_tmp[*sp_C];
+            double hp_tmp[*sp_C];
+
+            for (ST i = 0; i < *sp_C; ++i) {
+                sp_tmp[i] = 0.0f;
+                hp_tmp[i] = 0.0;
+            }
+
+            IT sp_cs = sp_chunk_ptrs[c];
+            IT hp_cs = hp_chunk_ptrs[c];
+
+            for (IT j = 0; j < sp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *sp_C; ++i) {
+                    sp_tmp[i] += sp_values[sp_cs + j * *sp_C + i] * sp_x[sp_col_idxs[sp_cs + j * *sp_C + i]];
+                }
+            }
+            for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *sp_C; ++i) {
+                    hp_tmp[i] += hp_values[hp_cs + j * *sp_C + i] * sp_x[hp_col_idxs[hp_cs + j * *sp_C + i]];
+                }
+            }
+
+            for (IT i = 0; i < *sp_C; ++i) {
+                sp_y[c * *sp_C + i] = sp_tmp[i] + hp_tmp[i];
+            }
+#ifdef USE_LIKWID
+            LIKWID_MARKER_STOP("uspmv_apsphp_scs_benchmark");
+#endif
+        }
+    }
+}
+#endif
+
+/**
+ * Kernel for Sell-C-Sigma. Supports all Cs > 0.
+ */
+#ifdef HAVE_HALF_MATH
+template <typename VT, typename IT>
+static void
+uspmv_scs_apdpsphp_cpu(
+    const ST * dp_C,
+    const ST * dp_n_chunks,
+    const IT * RESTRICT dp_chunk_ptrs,
+    const IT * RESTRICT dp_chunk_lengths,
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C,
+    const ST * sp_n_chunks,
+    const IT * RESTRICT sp_chunk_ptrs,
+    const IT * RESTRICT sp_chunk_lengths,
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y,
+    const ST * hp_C,
+    const ST * hp_n_chunks,
+    const IT * RESTRICT hp_chunk_ptrs,
+    const IT * RESTRICT hp_chunk_lengths,
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y
+)
+{
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        LIKWID_MARKER_START("uspmv_apdpsphp_scs_benchmark");
+#endif
+        #pragma omp for
+        for (ST c = 0; c < *dp_n_chunks; ++c) {
+            double dp_tmp[*dp_C];
+            double sp_tmp[*dp_C];
+            double hp_tmp[*dp_C];
+
+            // Just fuse probably
+            for (ST i = 0; i < *dp_C; ++i) {
+                dp_tmp[i] = 0.0;
+                sp_tmp[i] = 0.0;
+                hp_tmp[i] = 0.0;
+            }
+
+            IT dp_cs = dp_chunk_ptrs[c];
+            IT sp_cs = sp_chunk_ptrs[c];
+            IT hp_cs = hp_chunk_ptrs[c];
+
+            for (IT j = 0; j < dp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *dp_C; ++i) {
+                    dp_tmp[i] += dp_values[dp_cs + j * *dp_C + i] * dp_x[dp_col_idxs[dp_cs + j * *dp_C + i]];
+                }
+            }
+            for (IT j = 0; j < sp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *dp_C; ++i) {
+                    sp_tmp[i] += sp_values[sp_cs + j * *dp_C + i] * dp_x[sp_col_idxs[sp_cs + j * *dp_C + i]];
+                }
+            }
+            for (IT j = 0; j < hp_chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *sp_C; ++i) {
+                    hp_tmp[i] += hp_values[hp_cs + j * *dp_C + i] * dp_x[hp_col_idxs[hp_cs + j * *dp_C + i]];
+                }
+            }
+
+            for (IT i = 0; i < *dp_C; ++i) {
+                dp_y[c * *dp_C + i] = dp_tmp[i] + sp_tmp[i] + hp_tmp[i];
+            }
+#ifdef USE_LIKWID
+            LIKWID_MARKER_STOP("uspmv_apdpsphp_scs_benchmark");
+#endif
+        }
+    }
+}
+#endif
 
 #ifdef __CUDACC__
 ////////////////////////////// GPU Kernels //////////////////////////////
@@ -992,33 +1758,6 @@ uspmv_csr_gpu(const ST num_rows,
         VT sum{};
         for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
             sum += values[j] * x[col_idxs[j]];
-        }
-        y[row] = sum;
-    }
-}
-
-/**
- * Kernel for ELL format, data structures use column major (CM) layout.
- */
-template <typename VT, typename IT>
-__global__
-static void
-uspmv_ell_cm_gpu(const ST num_rows,
-         const ST nelems_per_row,
-         const IT * RESTRICT col_idxs,
-         const VT * RESTRICT values,
-         const VT * RESTRICT x,
-         VT * RESTRICT y)
-{
-    ST row = threadIdx.x + blockDim.x * blockIdx.x;
-
-    if (row < num_rows) {
-        VT sum{};
-        for (ST i = 0; i < nelems_per_row; ++i) {
-            VT val = values[row + i * num_rows];
-            IT col = col_idxs[row + i * num_rows];
-
-            sum += val * x[col];
         }
         y[row] = sum;
     }
@@ -1131,5 +1870,324 @@ uspmv_scs_c_gpu(
     }
 }
 #endif
+
+
+template <typename VT, typename IT>
+void execute_uspmv(
+    const ST * C, // 1
+    const ST * n_chunks, // TODO: (same for both)
+    const IT * RESTRICT chunk_ptrs, // dp_chunk_ptrs
+    const IT * RESTRICT chunk_lengths, // unused for now
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT x,
+    VT * RESTRICT y,
+#ifdef USE_AP
+    const ST * dp_C, // 1
+    const ST * dp_n_chunks, // TODO: (same for both)
+    const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
+    const IT * RESTRICT dp_chunk_lengths, // unused for now
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y,
+    const ST * sp_C, // 1
+    const ST * sp_n_chunks, // TODO: (same for both)
+    const IT * RESTRICT sp_chunk_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT sp_chunk_lengths, // unused for now
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y,
+#ifdef HAVE_HALF_MATH
+    const ST * hp_C, // 1
+    const ST * hp_n_chunks, // TODO: (same for both)
+    const IT * RESTRICT hp_chunk_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y,
+#endif
+#endif
+    char *ap_value_type
+){
+    if(CHUNK_SIZE > 1 || SIGMA > 1){
+        // Use SELL-C-sigma kernels
+#ifdef USE_AP
+        if(ap_value_type == "ap[dp_sp]"){
+            uspmv_scs_apdpsp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_x,
+                dp_y,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                nullptr,
+#ifdef HAVE_HALF_MATH
+                nullptr,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+#else
+                nullptr
+#endif
+            );
+        }
+        else if(ap_value_type == "ap[dp_hp]"){
+#ifdef HAVE_HALF_MATH
+            uspmv_scs_apdphp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_x,
+                dp_y,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                nullptr,
+                nullptr,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+            );
+#endif
+        }
+        else if(ap_value_type == "ap[sp_hp]"){
+#ifdef HAVE_HALF_MATH
+            uspmv_scs_apsphp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                nullptr,
+                nullptr,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                sp_x,
+                sp_y,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+            );
+#endif
+        }
+        else if(ap_value_type == "ap[dp_sp_hp]"){
+#ifdef HAVE_HALF_MATH
+            uspmv_scs_apdpsphp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_x,
+                dp_y,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                nullptr,
+                nullptr,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+            );
+#endif
+        }
+#else
+        uspmv_scs_cpu<VT, VT, int>(
+            *C,
+            *n_chunks,
+            chunk_ptrs,
+            chunk_lengths,
+            col_idxs,
+            values,
+            x,
+            y
+        );
+#endif
+    }
+    else{
+        // Else, default to CRS kernels
+#ifdef USE_AP
+        if(ap_value_type == "ap[dp_sp]"){
+            uspmv_csr_apdpsp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_x,
+                dp_y,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                nullptr,
+#ifdef HAVE_HALF_MATH
+                nullptr,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+#else
+                nullptr
+#endif
+            );
+        }
+        else if(ap_value_type == "ap[dp_hp]"){
+#ifdef HAVE_HALF_MATH
+            uspmv_csr_apdphp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_x,
+                dp_y,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                nullptr,
+                nullptr,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+            );
+#endif
+        }
+        else if(ap_value_type == "ap[sp_hp]"){
+#ifdef HAVE_HALF_MATH
+            uspmv_csr_apsphp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                nullptr,
+                nullptr,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                sp_x,
+                sp_y,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+            );
+#endif
+        }
+        else if(ap_value_type == "ap[dp_sp_hp]"){
+#ifdef HAVE_HALF_MATH
+            uspmv_csr_apdpsphp_cpu<int>(
+                dp_C,
+                dp_n_chunks,
+                dp_chunk_ptrs,
+                dp_chunk_lengths,
+                dp_col_idxs,
+                dp_values,
+                dp_x,
+                dp_y,
+                sp_C,
+                sp_n_chunks,
+                sp_chunk_ptrs,
+                sp_chunk_lengths,
+                sp_col_idxs,
+                sp_values,
+                nullptr,
+                nullptr,
+                hp_C,
+                hp_n_chunks,
+                hp_chunk_ptrs,
+                hp_chunk_lengths,
+                hp_col_idxs,
+                hp_values,
+                nullptr,
+                nullptr
+            );
+#endif
+        }
+#else
+        uspmv_csr_cpu<VT, VT, int>(
+            *C,
+            *n_chunks,
+            chunk_ptrs,
+            chunk_lengths,
+            col_idxs,
+            values,
+            x,
+            y
+        );
+#endif
+    }
+}
 
 #endif /*INTERFACE_H*/

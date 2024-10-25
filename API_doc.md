@@ -11,14 +11,15 @@ As it currently stands, the functions in the API don't have or need any awarenes
 ## Functions
 - <strong>convert_to_scs</strong>
 	- Main routine. Converts a COO matrix (in this case, stored in the MtxData struct) into a Sell-C-sigma matrix. Parametarized by C and sigma.
+- <strong>partition_precisions</strong>
+	- Separate an MtxData struct into other, "smaller" MtxData structs to facilitate adaptive precision. 
 - <strong>apply_permutation</strong>
 	- Useful function to apply a permutation (e.g. the permutation vector obtained from permuting the rows/columns of your Sell-C-simga matrix) to a vector (e.g. the x vector for computing Ax=y) 
 - <strong>permute_scs_cols</strong>
 	- Permute the columns of your Sell-C-sigma matrix, i.e. for symmetric permutations
-- <strong>spmv_omp_scs</strong>
+- <strong>uspmv_scs_(cpu/gpu)</strong>
 	- The Sell-C-sigma SpMV kernel.
-- <strong>spmv_omp_csr</strong>
+- <strong>uspmv_csr_(cpu/gpu)</strong>
 	- A CRS format SpMV kernel to use as a reference.
-
-## Notes
-- GPGPU support coming soon
+- <strong>execute_spmv</strong>
+	- Wrapper function to facilitate adaptive precision SpMV. 

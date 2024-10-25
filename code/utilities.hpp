@@ -975,9 +975,14 @@ void cli_options_messge(
     std::string *seg_method,
     std::string *value_type,
     Config *config){
-    fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n"
-                                    "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], -dp/sp/hp/ap[dp_sp]/ap[dp_hp]/ap[sp_hp] [%s], -seg_metis/seg_nnz/seg_rows [%s], -validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], -par_pack [%i], -bucket_size [%Lf], -equilibrate [%i]\n",
-                            argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, config->par_pack, config->bucket_size, config->equilibrate);
+    fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n "
+            "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], "
+            "-dp/sp/hp/ap[dp_sp]/ap[dp_hp]/ap[sp_hp]/ap[dp_sp_hp] [%s], -seg_metis/seg_nnz/seg_rows [%s], "
+            "-validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], "
+            "-par_pack [%i], -ap_threshold_1 [%Lf], -ap_threshold_2 [%Lf], -dropout[%i], -dropout_threshold [%Lf], -equilibrate [%i]\n",
+        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, \
+        value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, \
+        config->par_pack, config->ap_threshold_1, config->ap_threshold_2, config->dropout, config->dropout_threshold, config->equilibrate);
                     
 }
 
@@ -1160,14 +1165,53 @@ void parse_cli_inputs(
                 }
             }
         }
-        else if (arg == "-bucket_size" || arg == "-bucket-size")
+        else if (arg == "-ap_threshold_1" || arg == "-apt1")
         {
-            config->bucket_size = atof(argv[++i]); // i.e. grab the NEXT
+            config->ap_threshold_1 = atof(argv[++i]); // i.e. grab the NEXT
 
-            if (config->bucket_size < 0)
+            if (config->ap_threshold_1 < 0)
             {
                 if(my_rank == 0){
-                    fprintf(stderr, "ERROR: bucket_size must be nonnegative.\n");
+                    fprintf(stderr, "ERROR: ap_threshold_1 must be nonnegative.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
+        else if (arg == "-ap_threshold_2" || arg == "-apt2")
+        {
+            config->ap_threshold_2 = atof(argv[++i]); // i.e. grab the NEXT
+
+            if (config->ap_threshold_2 < 0)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: ap_threshold_2 must be nonnegative.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
+        else if (arg == "-dropout" || arg == "-do")
+        {
+            config->dropout = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->dropout != 0 && config->dropout != 1)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to droupout elements during partitioning (1, i.e. yes) or not (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
+        else if (arg == "-dropout_threshold" || arg == "-dt")
+        {
+            config->dropout_threshold = atof(argv[++i]); // i.e. grab the NEXT
+
+            if (config->dropout_threshold < 0)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: dropout_threshold must be nonnegative.\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }
@@ -1209,6 +1253,10 @@ void parse_cli_inputs(
         else if (arg == "-ap[dp_hp]")
         {
             *value_type = "ap[dp_hp]";
+        }
+        else if (arg == "-ap[dp_sp_hp]")
+        {
+            *value_type = "ap[dp_sp_hp]";
         }
         else if (arg == "-seg_rows" || arg == "-seg-rows")
         {
@@ -1258,7 +1306,7 @@ void parse_cli_inputs(
         }
     }
 
-    if(*value_type == "ap[dp_sp]" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]"){
+    if(*value_type == "ap[dp_sp]" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]" || *value_type == "ap[dp_sp_hp]"){
         if(my_rank == 0){
             fprintf(stderr, "ERROR: cuSPARSE with Adaptive precision is not supported at this time.\n");
             exit(1);
@@ -1267,7 +1315,7 @@ void parse_cli_inputs(
 #endif
 
 #ifdef USE_MPI
-    if(*value_type == "ap[dp_sp]" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]"){
+    if(*value_type == "ap[dp_sp]" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]" || *value_type == "ap[dp_sp_hp]"){
         if(my_rank == 0){
             fprintf(stderr, "ERROR: Adaptive precision with MPI is not supported at this time.\n");
             exit(1);
@@ -1276,13 +1324,49 @@ void parse_cli_inputs(
 #endif
 
 #ifndef HAVE_HALF_MATH
-    if(*value_type == "hp" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]"){
+    if(*value_type == "hp" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]" || *value_type == "ap[dp_sp_hp]"){
         if(my_rank == 0){
             fprintf(stderr, "ERROR: Half precision selected, but HAVE_HALF_MATH not defined.\n");
             exit(1);
         }
     }
 #endif
+
+    if(*value_type != "ap[dp_sp]" && *value_type != "ap[sp_hp]" && *value_type != "ap[dp_hp]" && *value_type != "ap[dp_sp_hp]"){
+        if(config->ap_threshold_1 > 0.0){
+            fprintf(stderr, "WARNING: First adaptive precision threshold entered, but not used.\n");
+        }
+    }
+
+    if(*value_type != "ap[dp_sp_hp]"){
+        if(config->ap_threshold_2 > 0.0){
+            fprintf(stderr, "WARNING: Second adaptive precision threshold entered, but three-way partitioning is not used.\n");
+        }
+    }
+
+    if(*value_type == "ap[dp_sp]" || *value_type == "ap[sp_hp]" || *value_type == "ap[dp_hp]"){
+        if(config->ap_threshold_1 == 0.0){
+            fprintf(stderr, "WARNING: Two-way adaptive precision used, but the first threshold is not entered.\n");
+        }
+    }
+    if(*value_type == "ap[dp_sp_hp]"){
+        if(config->ap_threshold_1 == 0.0){
+            fprintf(stderr, "WARNING: Three-way adaptive precision used, but the first threshold is not entered.\n");
+        }
+        if(config->ap_threshold_2 == 0.0){
+            fprintf(stderr, "WARNING: Three-way adaptive precision used, but the second threshold is not entered.\n");
+        }
+        if(config->ap_threshold_1 <= config->ap_threshold_2){
+            fprintf(stderr, "ERROR: Three-way adaptive precision used, but the second threshold is larger than the first.\n");
+            exit(1);
+        }
+    }
+
+    if(config->dropout){
+        if(config->dropout_threshold == 0.0){
+            fprintf(stderr, "WARNING: Dropout selected, but dropout_threshold is 0.\n");
+        }
+    }
 
     // Is this even true?
     // if (config->sigma > config->chunk_size)
@@ -1292,7 +1376,7 @@ void parse_cli_inputs(
     //         if(my_rank == 0){cli_options_messge(argc, argv, seg_method, value_type, config);exit(1);}
     //     }
     // }
-    std::vector<std::string> acceptable_kernels{"crs", "csr", "scs", "ell_rm", "ell", "ell_cm"};
+    std::vector<std::string> acceptable_kernels{"crs", "csr", "scs"};
     if (std::find(std::begin(acceptable_kernels), std::end(acceptable_kernels), *kernel_format) == std::end(acceptable_kernels)){
         if(my_rank == 0){
             fprintf(stderr, "ERROR: kernel format not recognized.\n");
@@ -1522,7 +1606,7 @@ void convert_to_scs(
     scs->values   = std::vector<VT>(n_scs_elements + scs->sigma);
     scs->col_idxs = std::vector<IT>(n_scs_elements + scs->sigma);
 
-    printf("n_scs_elements = %i.\n", n_scs_elements);
+    printf("n_scs_elements = %i.\n\n", n_scs_elements);
     // exit(1);
 
     IT padded_col_idx = 0;
@@ -1565,6 +1649,7 @@ void convert_to_scs(
         IT idx = chunk_start + col_idx_in_row[row] * scs->C + chunk_row;
 
         scs->col_idxs[idx] = local_mtx->J[i];
+        // TODO: Do you convert values correctly?
         scs->values[idx]   = local_mtx->values[i];
 
         col_idx_in_row[row]++;
@@ -1678,15 +1763,14 @@ inline void sort_perm(int *arr, int *perm, int len, bool rev=false)
     }
 }
 
-template <typename VT, typename IT>
 void read_mtx(
     const std::string matrix_file_name,
     Config config,
-    MtxData<VT, IT> *total_mtx,
+    MtxData<double, int> *total_mtx,
     int my_rank)
 {
     char* filename = const_cast<char*>(matrix_file_name.c_str());
-    IT nrows, ncols, nnz;
+    int nrows, ncols, nnz;
 
     MM_typecode matcode;
     FILE *f;
@@ -1729,11 +1813,11 @@ void read_mtx(
     }
 
     //int ncols;
-    IT *row_unsorted;
-    IT *col_unsorted;
+    int *row_unsorted;
+    int *col_unsorted;
     double *val_unsorted; // <- always read as double, then convert
 
-    if(mm_read_unsymmetric_sparse<double, IT>(filename, &nrows, &ncols, &nnz, &val_unsorted, &row_unsorted, &col_unsorted) < 0)
+    if(mm_read_unsymmetric_sparse<double, int>(filename, &nrows, &ncols, &nnz, &val_unsorted, &row_unsorted, &col_unsorted) < 0)
     {
         printf("Error in file reading\n");
         exit(1);
@@ -1763,8 +1847,8 @@ void read_mtx(
 
         int new_nnz = ctr;
 
-        IT *row_general = new IT[new_nnz];
-        IT *col_general = new IT[new_nnz];
+        int *row_general = new int[new_nnz];
+        int *col_general = new int[new_nnz];
         double *val_general = new double[new_nnz];
 
         int idx_gen=0;
@@ -1802,7 +1886,7 @@ void read_mtx(
     }
 
     //permute the col and val according to row
-    IT* perm = new IT[nnz];
+    int* perm = new int[nnz];
 
     // pramga omp parallel for?
     for(int idx=0; idx<nnz; ++idx)
@@ -1812,15 +1896,15 @@ void read_mtx(
 
     sort_perm(row_unsorted, perm, nnz);
 
-    IT *col = new IT[nnz];
-    IT *row = new IT[nnz];
-    VT *val = new VT[nnz];
+    int *col = new int[nnz];
+    int *row = new int[nnz];
+    double *val = new double[nnz];
 
     // pramga omp parallel for?
     for(int idx=0; idx<nnz; ++idx)
     {
         col[idx] = col_unsorted[perm[idx]];
-        val[idx] = static_cast<VT>(val_unsorted[perm[idx]]);
+        val[idx] = val_unsorted[perm[idx]];
         row[idx] = row_unsorted[perm[idx]];
     }
 
@@ -1829,9 +1913,9 @@ void read_mtx(
     delete[] val_unsorted;
     delete[] row_unsorted;
 
-    total_mtx->values = std::vector<VT>(val, val + nnz);
-    total_mtx->I = std::vector<IT>(row, row + nnz);
-    total_mtx->J = std::vector<IT>(col, col + nnz);
+    total_mtx->values = std::vector<double>(val, val + nnz);
+    total_mtx->I = std::vector<int>(row, row + nnz);
+    total_mtx->J = std::vector<int>(col, col + nnz);
     total_mtx->n_rows = nrows;
     total_mtx->n_cols = ncols;
     total_mtx->nnz = nnz;
@@ -2102,14 +2186,20 @@ void register_likwid_markers(
     #pragma omp parallel
     {
         if(config->kernel_format == "crs"){
-            if(config->value_type == "ap"){
-                LIKWID_MARKER_REGISTER("spmv_ap_crs_benchmark");
+            if(config->value_type == "ap[dp_sp]"){
+                LIKWID_MARKER_REGISTER("spmv_apdpsp_crs_benchmark");
+            }
+            else if(config->value_type == "ap[dp_hp]"){
+                LIKWID_MARKER_REGISTER("spmv_apdphp_crs_benchmark");
+            }
+            else if(config->value_type == "ap[sp_hp]"){
+                LIKWID_MARKER_REGISTER("spmv_apsphp_crs_benchmark");
+            }
+            if(config->value_type == "ap[dp_sp_hp]"){
+                LIKWID_MARKER_REGISTER("spmv_apdpsphp_crs_benchmark");
             }
             else{
-                // if(config->value_type == "hp")
-                //     LIKWID_MARKER_REGISTER("half_prec_spmv_crs_benchmark");
-                // else
-                    LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
+                LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
             }
         }
         else if(config->kernel_format == "scs"){
@@ -2580,7 +2670,8 @@ void partition_precisions(
     std::vector<VT> *largest_col_elems,
     int my_rank = NULL)
 {
-    double threshold = config->bucket_size;
+    double threshold_1 = config->ap_threshold_1;
+    double threshold_2 = config->ap_threshold_2;
 
     dp_local_mtx->is_sorted = local_mtx->is_sorted;
     dp_local_mtx->is_symmetric = local_mtx->is_symmetric;
@@ -2592,14 +2683,18 @@ void partition_precisions(
     sp_local_mtx->n_rows = local_mtx->n_rows;
     sp_local_mtx->n_cols = local_mtx->n_cols;
 
+#ifdef HAVE_HALF_MATH
     hp_local_mtx->is_sorted = local_mtx->is_sorted;
     hp_local_mtx->is_symmetric = local_mtx->is_symmetric;
     hp_local_mtx->n_rows = local_mtx->n_rows;
     hp_local_mtx->n_cols = local_mtx->n_cols;
+#endif
 
     int dp_elem_ctr = 0;
     int sp_elem_ctr = 0;
+#ifdef HAVE_HALF_MATH
     int hp_elem_ctr = 0;
+#endif
 
     // TODO: This practice of assigning pointers to vectors is dangerous...
     std::vector<IT> dp_local_I;
@@ -2635,7 +2730,7 @@ void partition_precisions(
             // If element value below threshold, place in dp_local_mtx
             if(config->equilibrate){
                 // TODO: static casting just to make it compile... 
-                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold / \
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1 / \
                     ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
                     dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
                     dp_local_mtx->I.push_back(local_mtx->I[i]);
@@ -2651,13 +2746,13 @@ void partition_precisions(
                 }
             }
             else{
-                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold){   
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1){   
                     dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
                     dp_local_mtx->I.push_back(local_mtx->I[i]);
                     dp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++dp_elem_ctr;
                 }
-                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold){
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold_1){
                     // else, place in sp_local_mtx 
                     sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
                     sp_local_mtx->I.push_back(local_mtx->I[i]);
@@ -2686,7 +2781,7 @@ void partition_precisions(
             // If element value below threshold, place in dp_local_mtx
             if(config->equilibrate){
                 // TODO: static casting just to make it compile... 
-                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1 / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
                     dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
                     dp_local_mtx->I.push_back(local_mtx->I[i]);
                     dp_local_mtx->J.push_back(local_mtx->J[i]);
@@ -2700,13 +2795,13 @@ void partition_precisions(
                 }
             }
             else{
-                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold){   
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1){   
                     dp_local_mtx->values.push_back(static_cast<double>(local_mtx->values[i]));
                     dp_local_mtx->I.push_back(local_mtx->I[i]);
                     dp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++dp_elem_ctr;
                 }
-                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold){
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold_1){
                     hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
@@ -2733,7 +2828,7 @@ void partition_precisions(
             // If element value below threshold, place in dp_local_mtx
             if(config->equilibrate){
                 // TODO: static casting just to make it compile... 
-                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold / \
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1 / \
                     ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) {   
                     sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
                     sp_local_mtx->I.push_back(local_mtx->I[i]);
@@ -2745,17 +2840,17 @@ void partition_precisions(
                     hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
-                    ++sp_elem_ctr;
+                    ++hp_elem_ctr;
                 }
             }
             else{
-                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold){   
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1){   
                     sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
                     sp_local_mtx->I.push_back(local_mtx->I[i]);
                     sp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++sp_elem_ctr;
                 }
-                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold){
+                else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold_1){
                     // else, place in sp_local_mtx 
                     hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
@@ -2775,6 +2870,78 @@ void partition_precisions(
         if(local_mtx->nnz != (sp_elem_ctr + hp_elem_ctr)){
             printf("partition_precisions ERROR: %i Elements have been lost when seperating \
             into sp and hp structs on rank: %i.\n", local_mtx->nnz - (sp_elem_ctr + hp_elem_ctr), my_rank);
+            exit(1);
+        }
+    }
+    else if(config->value_type == "ap[dp_sp_hp]"){
+        for(int i = 0; i < local_mtx->nnz; ++i){
+            // If element value below threshold, place in dp_local_mtx
+            if(config->equilibrate){
+                // Element is larger than the largest threshold
+                if(
+                    (std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1 / \
+                    (static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]])))
+                    ) {   
+                    dp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if(
+                    // Element is between thresholds
+                    (std::abs(static_cast<double>(local_mtx->values[i])) <= threshold_1 / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]]))) &&
+                    (std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_2 / ( static_cast<double>((*largest_col_elems)[local_mtx->J[i]]) * static_cast<double>((*largest_row_elems)[local_mtx->I[i]])))
+                ){
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else
+                {
+                    // else, element is between 0 and lowest threshold
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+            }
+            else{
+                // Element is larger than the largest threshold
+                if(std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_1){
+                    dp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    dp_local_mtx->I.push_back(local_mtx->I[i]);
+                    dp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++dp_elem_ctr;
+                }
+                else if(
+                    // Element is between thresholds
+                    (std::abs(static_cast<double>(local_mtx->values[i])) <= threshold_1) &&
+                    (std::abs(static_cast<double>(local_mtx->values[i])) >= threshold_2)
+                ){
+                    sp_local_mtx->values.push_back(static_cast<float>(local_mtx->values[i]));
+                    sp_local_mtx->I.push_back(local_mtx->I[i]);
+                    sp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++sp_elem_ctr;
+                }
+                else
+                {
+                    // else, element is between 0 and lowest threshold
+                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+                    hp_local_mtx->I.push_back(local_mtx->I[i]);
+                    hp_local_mtx->J.push_back(local_mtx->J[i]);
+                    ++hp_elem_ctr;
+                }
+            }
+        }
+
+        dp_local_mtx->nnz = dp_elem_ctr;
+        sp_local_mtx->nnz = sp_elem_ctr;
+        hp_local_mtx->nnz = hp_elem_ctr;
+
+        if(local_mtx->nnz != (dp_elem_ctr + sp_elem_ctr + hp_elem_ctr)){
+            printf("partition_precisions ERROR: %i Elements have been lost when seperating \
+            into dp, sp, and hp structs on rank: %i.\n", local_mtx->nnz - (dp_elem_ctr + sp_elem_ctr + hp_elem_ctr), my_rank);
             exit(1);
         }
     }

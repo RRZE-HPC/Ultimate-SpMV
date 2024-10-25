@@ -283,8 +283,7 @@ spmv_omp_csr(const ST * C, // 1
         for (ST row = 0; row < *num_rows; ++row) {
             VT sum{};
 
-            // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
-            // #pragma omp simd reduction(+:sum)
+            #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
             for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
                 sum += values[j] * x[col_idxs[j]];
             }
@@ -293,68 +292,6 @@ spmv_omp_csr(const ST * C, // 1
 #ifdef USE_LIKWID
         LIKWID_MARKER_STOP("spmv_crs_benchmark");
 #endif
-    }
-}
-
-// TODO: known to be wrong
-/**
- * Kernel for ELL format, data structures use row major (RM) layout.
- */
-template <typename VT, typename IT>
-static void
-spmv_omp_ell_rm(
-    const ST *C, // unused
-    const ST *num_rows,
-    const IT * RESTRICT chunk_ptrs, // unused
-    const IT * RESTRICT chunk_lengths,
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT x,
-    VT * RESTRICT y,
-    const int * my_rank = NULL)
-{
-    ST nelems_per_row = chunk_lengths[1] - chunk_lengths[0];
-    #pragma omp parallel for schedule(static)
-    for (ST row = 0; row < *num_rows; row++) {
-        VT sum{};
-        for (ST i = 0; i < nelems_per_row; i++) {
-            VT val = values[  row * nelems_per_row + i];
-            IT col = col_idxs[row * nelems_per_row + i];
-
-            sum += val * x[col];
-        }
-        y[row] = sum;
-    }
-}
-
-// TODO: known to be wrong
-/**
- * Kernel for ELL format, data structures use column major (CM) layout.
- */
-template <typename VT, typename IT>
-static void
-spmv_omp_ell_cm(
-    const ST *C, // unused
-    const ST *num_rows,
-    const IT * RESTRICT chunk_ptrs, // unused
-    const IT * RESTRICT chunk_lengths,
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT x,
-    VT * RESTRICT y,
-    const int * my_rank = NULL)
-{
-    ST nelems_per_row = chunk_lengths[1] - chunk_lengths[0];
-    #pragma omp parallel for schedule(static)
-    for (ST row = 0; row < *num_rows; row++) {
-        VT sum{};
-        for (ST i = 0; i < nelems_per_row; i++) {
-            VT val = values[row + i * *num_rows];
-            IT col = col_idxs[row + i * *num_rows];
-
-            sum += val * x[col];
-        }
-        y[row] = sum;
     }
 }
 
@@ -533,7 +470,7 @@ spmv_omp_scs_adv(
  */
 template <ST C, typename IT>
 static void
-scs_mp_impl_cpu(
+scs_ap_impl_cpu(
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
     const IT * RESTRICT dp_chunk_lengths, // unused
@@ -596,7 +533,7 @@ scs_mp_impl_cpu(
  */
 template <typename IT>
 static void
-spmv_omp_scs_mp_adv(
+spmv_omp_scs_ap_adv(
     const ST * dp_C, // 1
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
@@ -613,6 +550,16 @@ spmv_omp_scs_mp_adv(
     const float * RESTRICT sp_values,
     float * RESTRICT sp_x,
     float * RESTRICT sp_y,
+#ifdef HAVE_HALF_MATH
+    const ST * hp_C, // lp_C
+    const ST * hp_n_chunks, // lp_n_chunks // TODO same, for now.
+    const IT * RESTRICT hp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // lp_chunk_lengths
+    const IT * RESTRICT hp_col_idxs, // lp_col_idxs
+    const _Float16 * RESTRICT hp_values, // lp_values
+    _Float16 * RESTRICT hp_x, // lp_x
+    _Float16 * RESTRICT hp_y, // lp_y
+#endif
     const int * my_rank = NULL
 )
 {
@@ -620,13 +567,13 @@ spmv_omp_scs_mp_adv(
     {
         #define INSTANTIATE_CS X(1) X(2) X(4) X(8) X(16) X(32) X(64) X(128) X(256)
 
-        #define X(CC) case CC: scs_mp_impl_cpu<CC,IT>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y); break;
+        #define X(CC) case CC: scs_ap_impl_cpu<CC,IT>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y); break;
         INSTANTIATE_CS
         #undef X
 
 #ifdef SCS_C
     case SCS_C:
-        case SCS_C: scs_mp_impl_cpu<SCS_C, IT>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y);
+        case SCS_C: scs_ap_impl_cpu<SCS_C, IT>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y);
         break;
 #endif
     default:
@@ -639,7 +586,7 @@ spmv_omp_scs_mp_adv(
 
 template <typename IT>
 static void
-spmv_warmup_omp_csr_mp(
+spmv_warmup_omp_csr_ap(
     const ST * dp_C, // 1
     const ST * dp_n_rows, // TODO: (same for both)
     const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
@@ -746,6 +693,7 @@ spmv_omp_csr_apdpsp(
             for (ST row = 0; row < *dp_n_rows; ++row) {
                 double dp_sum{};
                 // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                // #pragma omp simd reduction(+:dp_sum)
                 for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
                     dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
     #ifdef DEBUG_MODE_FINE
@@ -759,6 +707,7 @@ spmv_omp_csr_apdpsp(
                 double sp_sum{};
                 // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
                 // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd reduction(+:sp_sum)
                 for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row + 1]; ++j) {
                     // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
                     sp_sum += sp_values[j] * dp_x[sp_col_idxs[j]];
@@ -781,6 +730,7 @@ spmv_omp_csr_apdpsp(
         }
 }
 
+#ifdef HAVE_HALF_MATH
 template <typename IT>
 static void
 spmv_omp_csr_apdphp(
@@ -800,7 +750,6 @@ spmv_omp_csr_apdphp(
     const float * RESTRICT sp_values,
     float * RESTRICT sp_x,
     float * RESTRICT sp_y, // unused
-#ifdef HAVE_HALF_MATH
     const ST * hp_C, // 1
     const ST * hp_n_rows, // TODO: (same for both)
     const IT * RESTRICT hp_row_ptrs, // sp_chunk_ptrs
@@ -809,19 +758,19 @@ spmv_omp_csr_apdphp(
     const _Float16 * RESTRICT hp_values,
     _Float16 * RESTRICT hp_x,
     _Float16 * RESTRICT hp_y, // unused
-#endif
     const int * my_rank = NULL
     )
 {
     #pragma omp parallel
     {
-    // #ifdef USE_LIKWID
-    //         LIKWID_MARKER_START("spmv_apdpsp_crs_benchmark");
-    // #endif
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apdphp_crs_benchmark");
+    #endif
             #pragma omp for schedule(static)
             for (ST row = 0; row < *dp_n_rows; ++row) {
                 double dp_sum{};
                 // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:dp_sum)
                 for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
                     dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
     #ifdef DEBUG_MODE_FINE
@@ -835,9 +784,10 @@ spmv_omp_csr_apdphp(
                 double hp_sum{};
                 // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
                 // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                #pragma omp simd reduction(+:hp_sum)
                 for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
-                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
-                    hp_sum += hp_values[j] * dp_x[hp_col_idxs[j]];
+                    hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
+                    // hp_sum += hp_values[j] * dp_x[hp_col_idxs[j]]; // Conversion how???
 
     #ifdef DEBUG_MODE_FINE
                 if(my_rank == 0){
@@ -848,12 +798,12 @@ spmv_omp_csr_apdphp(
     #endif
                 }
 
-                dp_y[row] = dp_sum + hp_sum; // implicit conversion to VTU?
+                dp_y[row] = dp_sum + hp_sum;
             }
 
-    // #ifdef USE_LIKWID
-    //     LIKWID_MARKER_STOP("spmv_apdpsp_crs_benchmark");
-    // #endif
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apdphp_crs_benchmark");
+    #endif
         }
 }
 
@@ -876,7 +826,6 @@ spmv_omp_csr_apsphp(
     const float * RESTRICT sp_values,
     float * RESTRICT sp_x,
     float * RESTRICT sp_y, // unused
-#ifdef HAVE_HALF_MATH
     const ST * hp_C, // 1
     const ST * hp_n_rows, // TODO: (same for both)
     const IT * RESTRICT hp_row_ptrs, // sp_chunk_ptrs
@@ -885,19 +834,19 @@ spmv_omp_csr_apsphp(
     const _Float16 * RESTRICT hp_values,
     _Float16 * RESTRICT hp_x,
     _Float16 * RESTRICT hp_y, // unused
-#endif
     const int * my_rank = NULL
     )
 {
     #pragma omp parallel
     {
-    // #ifdef USE_LIKWID
-    //         LIKWID_MARKER_START("spmv_apdpsp_crs_benchmark");
-    // #endif
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apsphp_crs_benchmark");
+    #endif
             #pragma omp for schedule(static)
             for (ST row = 0; row < *sp_n_rows; ++row) {
                 double sp_sum{};
                 // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:sp_sum)
                 for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row+1]; ++j) {
                     sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
     #ifdef DEBUG_MODE_FINE
@@ -911,6 +860,7 @@ spmv_omp_csr_apsphp(
                 double hp_sum{};
                 // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
                 // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                #pragma omp simd reduction(+:hp_sum)
                 for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
                     // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
                     hp_sum += hp_values[j] * sp_x[hp_col_idxs[j]];
@@ -926,16 +876,107 @@ spmv_omp_csr_apsphp(
 
                 sp_y[row] = sp_sum + hp_sum; // implicit conversion to VTU?
             }
-
-    // #ifdef USE_LIKWID
-    //     LIKWID_MARKER_STOP("spmv_apdpsp_crs_benchmark");
-    // #endif
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apsphp_crs_benchmark");
+    #endif
         }
 }
 
 template <typename IT>
 static void
-spmv_omp_csr_mp(
+spmv_omp_csr_apdpsphp(
+    const ST * dp_C, // 1
+    const ST * dp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
+    const IT * RESTRICT dp_row_lengths, // unused for now
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C, // 1
+    const ST * sp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT sp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT sp_row_lengths, // unused for now
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y, // unused
+    const ST * hp_C, // 1
+    const ST * hp_n_rows, // TODO: (same for both)
+    const IT * RESTRICT hp_row_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT hp_row_lengths, // unused for now
+    const IT * RESTRICT hp_col_idxs,
+    const _Float16 * RESTRICT hp_values,
+    _Float16 * RESTRICT hp_x,
+    _Float16 * RESTRICT hp_y, // unused
+    const int * my_rank = NULL
+    )
+{
+    #pragma omp parallel
+    {
+    #ifdef USE_LIKWID
+            LIKWID_MARKER_START("spmv_apdpsphp_crs_benchmark");
+    #endif
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < *sp_n_rows; ++row) {
+
+                double dp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:dp_sum)
+                for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
+                    dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+                }
+    #endif
+                }
+
+                double sp_sum{};
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                #pragma omp simd reduction(+:sp_sum)
+                for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row+1]; ++j) {
+                    sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, dp_col_idxs[j] = %i, dp_x[dp_col_idxs[j]] = %f\n", j, dp_col_idxs[j], dp_x[dp_col_idxs[j]]);
+                    printf("dp_sum += %f * %f\n", dp_values[j], dp_x[dp_col_idxs[j]]);
+                }
+    #endif
+                }
+
+                double hp_sum{};
+                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                #pragma omp simd reduction(+:hp_sum)
+                for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
+                    // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
+                    hp_sum += hp_values[j] * sp_x[hp_col_idxs[j]];
+
+    #ifdef DEBUG_MODE_FINE
+                if(my_rank == 0){
+                    printf("j = %i, sp_col_idxs[j] = %i, sp_x[sp_col_idxs[j]] = %f\n", j, sp_col_idxs[j], sp_x[sp_col_idxs[j]]);
+                    printf("sp_sum += %5.16f * %f\n", sp_values[j], sp_x[sp_col_idxs[j]]);
+
+                }
+    #endif
+                }
+
+                dp_y[row] = dp_sum + sp_sum + hp_sum;
+            }
+
+    #ifdef USE_LIKWID
+        LIKWID_MARKER_STOP("spmv_apdpsphp_crs_benchmark");
+    #endif
+        }
+}
+
+#endif
+
+template <typename IT>
+static void
+spmv_omp_csr_ap(
     const ST * dp_C, // 1
     const ST * dp_n_rows, // TODO: (same for both)
     const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
@@ -1016,7 +1057,7 @@ spmv_omp_csr_mp(
  */
 template <typename IT>
 static void
-spmv_warmup_omp_scs_mp(
+spmv_warmup_omp_scs_ap(
     const ST * dp_C, // 1
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
@@ -1032,7 +1073,17 @@ spmv_warmup_omp_scs_mp(
     const IT * RESTRICT sp_col_idxs,
     const float * RESTRICT sp_values,
     float * RESTRICT sp_x,
-    float * RESTRICT sp_y, // unused
+    float * RESTRICT sp_y,
+#ifdef HAVE_HALF_MATH
+    const ST * hp_C, // lp_C
+    const ST * hp_n_chunks, // lp_n_chunks // TODO same, for now.
+    const IT * RESTRICT hp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // lp_chunk_lengths
+    const IT * RESTRICT hp_col_idxs, // lp_col_idxs
+    const _Float16 * RESTRICT hp_values, // lp_values
+    _Float16 * RESTRICT hp_x, // lp_x
+    _Float16 * RESTRICT hp_y, // lp_y
+#endif
     const int * my_rank = NULL
 )
 {
@@ -1076,7 +1127,7 @@ spmv_warmup_omp_scs_mp(
  */
 template <typename IT>
 static void
-spmv_omp_scs_mp(
+spmv_omp_scs_ap(
     const ST * dp_C, // 1
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
@@ -1092,7 +1143,17 @@ spmv_omp_scs_mp(
     const IT * RESTRICT sp_col_idxs,
     const float * RESTRICT sp_values,
     float * RESTRICT sp_x,
-    float * RESTRICT sp_y, // unused
+    float * RESTRICT sp_y,
+#ifdef HAVE_HALF_MATH
+    const ST * hp_C, // lp_C
+    const ST * hp_n_chunks, // lp_n_chunks // TODO same, for now.
+    const IT * RESTRICT hp_chunk_ptrs, // lp_chunk_ptrs
+    const IT * RESTRICT hp_chunk_lengths, // lp_chunk_lengths
+    const IT * RESTRICT hp_col_idxs, // lp_col_idxs
+    const _Float16 * RESTRICT hp_values, // lp_values
+    _Float16 * RESTRICT hp_x, // lp_x
+    _Float16 * RESTRICT hp_y, // lp_y
+#endif
     const int * my_rank = NULL
 )
 {
@@ -1185,7 +1246,7 @@ void spmv_gpu_scs_launcher(
 
 template <typename IT>
 __global__ void
-spmv_gpu_mp_scs(
+spmv_gpu_ap_scs(
     const ST * dp_C, // 1
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
@@ -1229,7 +1290,7 @@ spmv_gpu_mp_scs(
 }
 
 template <typename IT>
-void spmv_gpu_mp_scs_launcher(
+void spmv_gpu_ap_scs_launcher(
     const ST * dp_C, // 1
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
@@ -1249,7 +1310,7 @@ void spmv_gpu_mp_scs_launcher(
     const ST * n_blocks,
     const int * my_rank = NULL
 ){
-    spmv_gpu_mp_scs<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
+    spmv_gpu_ap_scs<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
         dp_C,
         dp_n_chunks,
         dp_chunk_ptrs,
@@ -1329,7 +1390,7 @@ void spmv_gpu_csr_launcher(
 
 template <typename IT>
 __global__ void 
-spmv_gpu_mp_csr(
+spmv_gpu_ap_csr(
     const ST * dp_C, // 1
     const ST * dp_n_rows, // TODO: (same for both)
     const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
@@ -1370,7 +1431,7 @@ spmv_gpu_mp_csr(
 }
 
 template <typename IT>
-void spmv_gpu_mp_csr_launcher(
+void spmv_gpu_ap_csr_launcher(
     const ST * dp_C, // 1
     const ST * dp_n_rows, // TODO: (same for both)
     const IT * RESTRICT dp_row_ptrs, // dp_chunk_ptrs
@@ -1390,7 +1451,7 @@ void spmv_gpu_mp_csr_launcher(
     const ST * n_blocks,
     const int * my_rank = NULL
 ){
-    spmv_gpu_mp_csr<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
+    spmv_gpu_ap_csr<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
         dp_C,  
         dp_n_rows,
         dp_row_ptrs, 
@@ -1513,7 +1574,7 @@ void spmv_gpu_scs_adv_launcher(
 template <ST C, typename IT>
 __device__
 static void
-scs_mp_impl_gpu(
+scs_ap_impl_gpu(
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
     const IT * RESTRICT dp_chunk_lengths, // unused
@@ -1560,7 +1621,7 @@ scs_mp_impl_gpu(
 template <typename IT>
 __global__
 static void
-spmv_gpu_scs_mp_adv(
+spmv_gpu_scs_ap_adv(
     const ST * dp_C, // 1
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
@@ -1584,13 +1645,13 @@ spmv_gpu_scs_mp_adv(
     {
         #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128) X(256)
 
-        #define X(CC) case CC: scs_mp_impl_gpu<CC>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y); break;
+        #define X(CC) case CC: scs_ap_impl_gpu<CC>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y); break;
         INSTANTIATE_CS
         #undef X
 
 #ifdef SCS_C
     case SCS_C:
-        case SCS_C: scs_mp_impl_gpu<SCS_C>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y);
+        case SCS_C: scs_ap_impl_gpu<SCS_C>(dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y);
         break;
 #endif
     default:
@@ -1602,7 +1663,7 @@ spmv_gpu_scs_mp_adv(
 }
 
 template <typename IT>
-void spmv_gpu_mp_scs_adv_launcher(
+void spmv_gpu_ap_scs_adv_launcher(
     const ST * dp_C, // 1
     const ST * dp_n_chunks, // n_chunks (same for both)
     const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
@@ -1623,7 +1684,7 @@ void spmv_gpu_mp_scs_adv_launcher(
     const int * my_rank = NULL
 ){
     // printf("Do I get to the launcher? n_blocks = %i\n", *n_blocks);
-    spmv_gpu_scs_mp_adv<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
+    spmv_gpu_scs_ap_adv<IT><<<*n_blocks, THREADS_PER_BLOCK>>>(
         dp_C, // 1
         dp_n_chunks, // n_chunks (same for both)
         dp_chunk_ptrs, // dp_chunk_ptrs
