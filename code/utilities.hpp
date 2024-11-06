@@ -1732,7 +1732,9 @@ void convert_to_scs(
     for(int i = 0; i < scs->n_rows; ++i){
         inv_perm_temp[i] = i;
     }
-    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm,  scs->n_rows + scs->sigma);
+    // generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm, scs->n_rows + scs->sigma);
+    generate_inv_perm<IT>(scs->old_to_new_idx.data(), inv_perm, scs->n_rows);
+
 
     scs->new_to_old_idx = inv_perm;
 
@@ -2997,5 +2999,120 @@ void partition_precisions(
     }
 #endif
 }
+
+template <typename VT, typename IT>
+void assign_spmv_kernel_cpu_data(
+    Config *config,
+    OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded,
+    MultiPrecKernelArgs<IT> *multi_prec_kernel_args_encoded,
+    ScsData<VT, IT> *local_scs,
+    ScsData<double, IT> *dp_local_scs,
+    ScsData<float, IT> *sp_local_scs,
+#ifdef HAVE_HALF_MATH
+    ScsData<_Float16, IT> *hp_local_scs,
+#endif
+    VT *local_y,
+    double *dp_local_y,
+    float *sp_local_y,
+#ifdef HAVE_HALF_MATH
+    _Float16 *hp_local_y,
+#endif
+    VT *local_x,
+    VT *local_x_permuted,
+    double *dp_local_x,
+    double *dp_local_x_permuted,
+    float *sp_local_x,
+    float *sp_local_x_permuted,
+#ifdef HAVE_HALF_MATH
+    _Float16 *hp_local_x,
+    _Float16 *hp_local_x_permuted,
+#endif
+    void *kernel_args_void_ptr
+){
+    if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+        multi_prec_kernel_args_encoded->dp_C = &dp_local_scs->C;
+        multi_prec_kernel_args_encoded->dp_n_chunks = &dp_local_scs->n_chunks; //shared for now
+        multi_prec_kernel_args_encoded->dp_chunk_ptrs = dp_local_scs->chunk_ptrs.data();
+        multi_prec_kernel_args_encoded->dp_chunk_lengths = dp_local_scs->chunk_lengths.data();
+        multi_prec_kernel_args_encoded->dp_col_idxs = dp_local_scs->col_idxs.data();
+        multi_prec_kernel_args_encoded->dp_values = dp_local_scs->values.data();
+        multi_prec_kernel_args_encoded->dp_local_x = dp_local_x_permuted;
+        multi_prec_kernel_args_encoded->dp_local_y = dp_local_y;
+        multi_prec_kernel_args_encoded->sp_C = &sp_local_scs->C;
+        multi_prec_kernel_args_encoded->sp_n_chunks = &dp_local_scs->n_chunks; //shared for now
+        multi_prec_kernel_args_encoded->sp_chunk_ptrs = sp_local_scs->chunk_ptrs.data();
+        multi_prec_kernel_args_encoded->sp_chunk_lengths = sp_local_scs->chunk_lengths.data();
+        multi_prec_kernel_args_encoded->sp_col_idxs = sp_local_scs->col_idxs.data();
+        multi_prec_kernel_args_encoded->sp_values = sp_local_scs->values.data();
+        multi_prec_kernel_args_encoded->sp_local_x = sp_local_x_permuted;
+        multi_prec_kernel_args_encoded->sp_local_y = sp_local_y;
+#ifdef HAVE_HALF_MATH
+        multi_prec_kernel_args_encoded->hp_C = &hp_local_scs->C;
+        multi_prec_kernel_args_encoded->hp_n_chunks = &dp_local_scs->n_chunks; //shared for now
+        multi_prec_kernel_args_encoded->hp_chunk_ptrs = hp_local_scs->chunk_ptrs.data();
+        multi_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
+        multi_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
+        multi_prec_kernel_args_encoded->hp_values = hp_local_scs->values.data();
+        multi_prec_kernel_args_encoded->hp_local_x = hp_local_x_permuted;
+        multi_prec_kernel_args_encoded->hp_local_y = hp_local_y;
+#endif
+    }
+    else{
+        // Encode kernel args into struct
+        one_prec_kernel_args_encoded->C = &local_scs->C;
+        one_prec_kernel_args_encoded->n_chunks = &local_scs->n_chunks;
+        one_prec_kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
+        one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
+        one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
+        one_prec_kernel_args_encoded->values = local_scs->values.data();
+        one_prec_kernel_args_encoded->local_x = local_x_permuted;
+        one_prec_kernel_args_encoded->local_y = local_y;
+    }
+
+}
+
+
+template <typename VT, typename IT>
+void assign_mpi_args(
+    CommArgs<VT, IT> *comm_args_encoded,
+    void *comm_args_void_ptr,
+#ifdef USE_MPI
+    ScsData<VT, IT> *local_scs,
+    ContextData<IT> *local_context,
+    const IT *work_sharing_arr,
+    VT **to_send_elems,
+    MPI_Request *recv_requests,
+    MPI_Request *send_requests,
+    int nzs_size,
+    int nzr_size,
+#endif
+    int my_rank,
+    int comm_size
+){
+#ifdef USE_MPI
+    // Encode comm args into struct
+    comm_args_encoded->local_context = local_context;
+    comm_args_encoded->work_sharing_arr = work_sharing_arr;
+    comm_args_encoded->to_send_elems = to_send_elems;
+    comm_args_encoded->perm = local_scs->old_to_new_idx.data();
+    comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
+    comm_args_encoded->nzs_size = &nzs_size;
+    comm_args_encoded->send_requests = send_requests;
+    comm_args_encoded->nzr_size = &nzr_size;
+    comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
+#endif
+
+    comm_args_encoded->my_rank = &my_rank;
+    comm_args_encoded->comm_size = &comm_size;
+}
+
+#ifdef __CUDACC__
+// TODO
+// assign_spmv_kernel_gpu_data(
+    
+// ){
+
+// }
+#endif
 
 #endif

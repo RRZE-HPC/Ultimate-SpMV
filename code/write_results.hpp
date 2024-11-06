@@ -313,7 +313,7 @@ void write_result_to_file(
         {
             // Setting the width of the index column to be the number of digits of the result vector size
             working_file << std::left << std::setw(n_result_digits + 6) << i
-                        << std::left << std::setprecision(16) << std::setw(width) << (double)((*x)[i])
+                        << std::left << std::setprecision(16) << std::scientific << std::setw(width) << (double)((*x)[i])
                         << std::left << std::setw(width) << static_cast<double>(r->total_uspmv_result[i])
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;

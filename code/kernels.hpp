@@ -43,6 +43,7 @@ spmv_warmup_omp_csr(const ST *C, // 1
     }
 }
 
+#ifdef HAVE_HALF_MATH
 // SpMV kernel using _Float16 with AVX-512
 template <typename VT, typename IT>
 static void spmv_avx512_float16(
@@ -258,6 +259,7 @@ static void spmv_avx256_float16(
 #endif
     }
 }
+#endif
 
 /**
  * Kernel for CSR format.

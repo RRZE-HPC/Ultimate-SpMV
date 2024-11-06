@@ -70,6 +70,7 @@ void bench_spmv(
     std::vector<_Float16> hp_local_x_permuted(hp_local_x->size(), 0);
 #endif
 
+    // TODO: Something here seems iffy. I think something is going wrong with the inverse perm vec
     apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
 
     if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
@@ -83,8 +84,8 @@ void bench_spmv(
 
     OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded = new OnePrecKernelArgs<VT, IT>;
     MultiPrecKernelArgs<IT> *multi_prec_kernel_args_encoded = new MultiPrecKernelArgs<IT>;
-    void *comm_args_void_ptr;
     void *kernel_args_void_ptr;
+    void *comm_args_void_ptr;
     void *cusparse_args_void_ptr;
 #ifdef USE_CUSPARSE
     CuSparseArgs *cusparse_args_encoded = new CuSparseArgs;
@@ -645,69 +646,63 @@ void bench_spmv(
     cusparse_args_void_ptr = (void*) cusparse_args_encoded;
 #endif
 #else
-    if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
-        multi_prec_kernel_args_encoded->dp_C = &dp_local_scs->C;
-        multi_prec_kernel_args_encoded->dp_n_chunks = &dp_local_scs->n_chunks; //shared for now
-        multi_prec_kernel_args_encoded->dp_chunk_ptrs = dp_local_scs->chunk_ptrs.data();
-        multi_prec_kernel_args_encoded->dp_chunk_lengths = dp_local_scs->chunk_lengths.data();
-        multi_prec_kernel_args_encoded->dp_col_idxs = dp_local_scs->col_idxs.data();
-        multi_prec_kernel_args_encoded->dp_values = dp_local_scs->values.data();
-        multi_prec_kernel_args_encoded->dp_local_x = &(dp_local_x_permuted)[0];
-        multi_prec_kernel_args_encoded->dp_local_y = &(*dp_local_y)[0];
-        multi_prec_kernel_args_encoded->sp_C = &sp_local_scs->C;
-        multi_prec_kernel_args_encoded->sp_n_chunks = &dp_local_scs->n_chunks; //shared for now
-        multi_prec_kernel_args_encoded->sp_chunk_ptrs = sp_local_scs->chunk_ptrs.data();
-        multi_prec_kernel_args_encoded->sp_chunk_lengths = sp_local_scs->chunk_lengths.data();
-        multi_prec_kernel_args_encoded->sp_col_idxs = sp_local_scs->col_idxs.data();
-        multi_prec_kernel_args_encoded->sp_values = sp_local_scs->values.data();
-        multi_prec_kernel_args_encoded->sp_local_x = &(sp_local_x_permuted)[0];
-        multi_prec_kernel_args_encoded->sp_local_y = &(*sp_local_y)[0];
+    assign_spmv_kernel_cpu_data<VT, int>(
+        config,
+        one_prec_kernel_args_encoded,
+        multi_prec_kernel_args_encoded,
+        local_scs,
+        dp_local_scs,
+        sp_local_scs,
 #ifdef HAVE_HALF_MATH
-        multi_prec_kernel_args_encoded->hp_C = &hp_local_scs->C;
-        multi_prec_kernel_args_encoded->hp_n_chunks = &dp_local_scs->n_chunks; //shared for now
-        multi_prec_kernel_args_encoded->hp_chunk_ptrs = hp_local_scs->chunk_ptrs.data();
-        multi_prec_kernel_args_encoded->hp_chunk_lengths = hp_local_scs->chunk_lengths.data();
-        multi_prec_kernel_args_encoded->hp_col_idxs = hp_local_scs->col_idxs.data();
-        multi_prec_kernel_args_encoded->hp_values = hp_local_scs->values.data();
-        multi_prec_kernel_args_encoded->hp_local_x = &(hp_local_x_permuted)[0];
-        multi_prec_kernel_args_encoded->hp_local_y = &(*hp_local_y)[0];
+        hp_local_scs,
 #endif
+        local_y->data(),
+        dp_local_y->data(),
+        sp_local_y->data(),
+#ifdef HAVE_HALF_MATH
+        hp_local_y->data(),
+#endif
+        local_x->data(),
+        local_x_permuted.data(),
+        dp_local_x->data(),
+        dp_local_x_permuted.data(),
+        sp_local_x->data(),
+        sp_local_x_permuted.data(),
+#ifdef HAVE_HALF_MATH
+        hp_local_x->data(),
+        hp_local_x_permuted.data(),
+#endif
+        kernel_args_void_ptr
+    );
+
+    
+    assign_mpi_args<VT, int>(
+        comm_args_encoded,
+        comm_args_void_ptr,
+#ifdef USE_MPI
+        local_scs,
+        local_context,
+        work_sharing_arr,
+        to_send_elems,
+        recv_requests,
+        send_requests,
+        nzs_size,
+        nzr_size,
+#endif
+        my_rank,
+        comm_size
+    );
+#endif
+
+    // Pass args to construct spmv_kernel object
+    if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
         kernel_args_void_ptr = (void*) multi_prec_kernel_args_encoded;
     }
     else{
-        // Encode kernel args into struct
-        one_prec_kernel_args_encoded->C = &local_scs->C;
-        one_prec_kernel_args_encoded->n_chunks = &local_scs->n_chunks;
-        one_prec_kernel_args_encoded->chunk_ptrs = local_scs->chunk_ptrs.data();
-        one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
-        one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
-        one_prec_kernel_args_encoded->values = local_scs->values.data();
-        one_prec_kernel_args_encoded->local_x = &(local_x_permuted)[0];
-        one_prec_kernel_args_encoded->local_y = &(*local_y)[0];
         kernel_args_void_ptr = (void*) one_prec_kernel_args_encoded;
     }
 
-#ifdef USE_MPI
-    // Encode comm args into struct
-    comm_args_encoded->local_context = local_context;
-    comm_args_encoded->to_send_elems = to_send_elems;
-    comm_args_encoded->work_sharing_arr = work_sharing_arr;
-    comm_args_encoded->perm = local_scs->old_to_new_idx.data();
-    comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
-    comm_args_encoded->nzs_size = &nzs_size;
-    comm_args_encoded->send_requests = send_requests;
-    comm_args_encoded->nzr_size = &nzr_size;
-    comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
-#endif
-#endif
-
-    comm_args_encoded->my_rank = &my_rank;
-    comm_args_encoded->comm_size = &comm_size;
     comm_args_void_ptr = (void*) comm_args_encoded;
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-
-    // Pass args to construct spmv_kernel object
-
     SpmvKernel<VT, IT> spmv_kernel(
         config, 
         kernel_args_void_ptr, 
@@ -1001,7 +996,6 @@ void bench_spmv(
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = (sorted_local_y)[i];
             }
-
         }
 
         // Manually resize for ease later on (and I don't see a better way)
@@ -1387,6 +1381,21 @@ void init_local_structs(
     // convert local_mtx to local_scs (and permute rows if sigma > 1)
     convert_to_scs<VT, VT, IT>(local_mtx, config->chunk_size, config->sigma, local_scs, NULL, work_sharing_arr, my_rank);
 
+
+#ifdef DEBUG_MODE_FINE
+    printf("perm = [");
+    for(int i = 0; i < local_scs->n_rows; ++i){
+        printf("%i, ", local_scs->old_to_new_idx[i]);
+    }
+    printf("]\n");
+
+    printf("inv_perm = [");
+    for(int i = 0; i < local_scs->n_rows; ++i){
+        printf("%i, ", local_scs->new_to_old_idx[i]);
+    }
+    printf("]\n");
+#endif
+
     // Only used for adaptive precision
     MtxData<double, int> *dp_local_mtx = new MtxData<double, int>;
     MtxData<float, int> *sp_local_mtx = new MtxData<float, int>;
@@ -1553,8 +1562,8 @@ void init_local_structs(
 #endif
     local_context->scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
 
-    // TODO: For symmetric permutation of matrix data
-    // permute_scs_cols(local_scs, &(local_scs->old_to_new_idx)[0]);
+    // TODO: For symmetric permutation of matrix data, validate this works as intended
+    permute_scs_cols(local_scs, &(local_scs->old_to_new_idx)[0]);
 
     // TODO: How to permute columns with here?
     // if (config->value_type == "ap"){
