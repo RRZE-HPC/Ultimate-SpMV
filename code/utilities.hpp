@@ -1291,6 +1291,15 @@ void parse_cli_inputs(
     }
 
     // Sanity checks //
+#ifndef USE_MKL
+    if (config->mode == 's'){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Solve mode (-mode s) selected, but USE_MKL not defined in Makefile.\n");
+            exit(1);
+        }
+    }
+#endif
+
 #ifndef USE_METIS
     if (*seg_method == "seg-metis"){
         if(my_rank == 0){

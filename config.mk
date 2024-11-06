@@ -9,7 +9,7 @@ DEBUG_MODE_FINE = 0
 # [1/0]
 OUTPUT_SPARSITY = 0
 # [c++14]
-CPP_VERSION = c++23
+CPP_VERSION = c++14
 
 # [none, a40, a100]
 GPGPU_ARCH = a100
@@ -17,8 +17,16 @@ GPGPU_ARCH = a100
 THREADS_PER_BLOCK=128 # GPU only
 
 ### External Libraries ###
+
 # [1/0]
-USE_MPI = 0
+USE_MKL = 1
+# MKL_INC = 
+# MKL_LIB = 
+
+# [1/0]
+USE_MPI = 1
+# MPI_INC = 
+# MPI_LIB = 
 
 # [1/0]
 USE_METIS = 0

@@ -44,10 +44,12 @@ ifeq ($(COMPILER),gcc)
   OPT_LEVEL = -O3
   # OPT_LEVEL = -ffast-math
   OPT_ARCH  = -march=native
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
+ifeq ($(USE_MKL),1)
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH)
-
+  CXXFLAGS += $(MKL)
   LIBS += -L${MKLROOT}/lib/intel64 
+endif
   ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH
   endif
@@ -58,9 +60,11 @@ ifeq ($(COMPILER),icc)
   MPICXX     = mpiicpc
   OPT_LEVEL = -Ofast
   OPT_ARCH  = -march=native
+ifeq ($(USE_MKL),1)
   MKL = -qmkl
-
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH)
+  CXXFLAGS += $(MKL)
+endif
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
 endif
 
 ifeq ($(COMPILER),icx)
@@ -68,10 +72,13 @@ ifeq ($(COMPILER),icx)
   MPICXX     = mpiicpc -cxx=icpx
   OPT_LEVEL = -O3
   OPT_ARCH  = -xhost
-  MKL = -qmkl
+  
   AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
-
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(AVX512_fix) $(OPT_ARCH)
+ifeq ($(USE_MKL),1)
+  MKL = -qmkl
+  CXXFLAGS += $(MKL)
+endif
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(AVX512_fix) $(OPT_ARCH)
   ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH 
   endif
@@ -82,8 +89,11 @@ ifeq ($(COMPILER),llvm)
   # MPICXX     = mpiicpc
   OPT_LEVEL = -Ofast
   OPT_ARCH  = -march=native
+ifeq ($(USE_MKL),1)
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(MKL) $(OPT_ARCH)
+  CXXFLAGS += $(MKL)
+endif
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
   ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH 
   endif
@@ -98,8 +108,10 @@ ifeq ($(COMPILER),nvcc)
 			GPGPU_ARCH_FLAGS += -gencode arch=compute_80,code=sm_80 -Xcompiler -fopenmp
 		endif
 	endif
+ifeq ($(USE_MKL),1)
 	MKL += -I${MKLROOT}/include -L${MKLROOT}/lib/intel64 -lmkl_intel_ilp64 -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl
 	CXXFLAGS += $(MKL)
+endif
 endif
 
 ifeq ($(DEBUG_MODE),1)
@@ -154,6 +166,10 @@ ifeq ($(USE_MPI),1)
   CXXFLAGS  += -DUSE_MPI
 else
   MPICXX = $(CXX)
+endif
+
+ifeq ($(USE_MKL),1)
+  CXXFLAGS  += -DUSE_MKL
 endif
 
 # Further memory debugging options

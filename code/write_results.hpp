@@ -1,7 +1,9 @@
 #ifndef WRITE_RESULTS
 #define WRITE_RESULTS
 
+#ifdef USE_MKL
 #include <mkl.h>
+#endif
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -250,17 +252,22 @@ void write_result_to_file(
     working_file << ", revisions: " << config->n_repetitions << std::endl;
 #endif
 
+    int result_size = r->total_uspmv_result.size();
+    int n_result_digits = result_size > 0 ? (int) log10 ((double) result_size) + 1 : 1;
+
     // Print header
     if(config->verbose_validation == 1){
         width = 24;
 
-        working_file << std::left << std::setw(width) << "mkl results:"
+        working_file << std::left << std::setw(n_result_digits + 6) << "idx:"
+                    << std::left << std::setw(width) << "mkl results:"
                     << std::left << std::setw(width) << "uspmv results:"
                     << std::left << std::setw(width) << "rel. diff(%):" 
                     << std::left << std::setw(width) << "abs. diff:" 
                     << std::endl;
 
-        working_file << std::left << std::setw(width) << "-----------"
+        working_file << std::left << std::setw(n_result_digits + 6) << "----"
+                    << std::left << std::setw(width) << "-----------"
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "---------" << std::endl;
@@ -288,6 +295,7 @@ void write_result_to_file(
                     << std::left << std::setw(width+4) << "-----------------"
                     << std::left << std::setw(width+4) << "-------------------------" << std::endl;
     }
+
     for(int i = 0; i < r->total_uspmv_result.size(); ++i){
         // TODO: static casting just to make it compile... 
         relative_diff = std::abs( (static_cast<double>((*x)[i]) - r->total_uspmv_result[i]) /static_cast<double>((*x)[i]));
@@ -303,8 +311,9 @@ void write_result_to_file(
         
         if(config->verbose_validation == 1)
         {
-            // TODO: Do I need this?
-            working_file << std::left << std::setprecision(16) << std::setw(width) << (double)((*x)[i])
+            // Setting the width of the index column to be the number of digits of the result vector size
+            working_file << std::left << std::setw(n_result_digits + 6) << i
+                        << std::left << std::setprecision(16) << std::setw(width) << (double)((*x)[i])
                         << std::left << std::setw(width) << static_cast<double>(r->total_uspmv_result[i])
                         << std::left << std::setw(width) << 100 * relative_diff
                         << std::left  << std::setw(width) << absolute_diff;
@@ -363,6 +372,7 @@ void write_result_to_file(
     working_file.close();
 }
 
+#ifdef USE_MKL
 /**
     @brief Read in the mtx struct to csr format, and use the mkl_dcsrmv to validate our double precision result against mkl
     @param *matrix_file_name : name of the matrix-matket format data, taken from the cli
@@ -514,7 +524,7 @@ void validate_sp_result(
 }
 
 // TODO
-// #ifdef HAVE_HALF_MATH
+#ifdef HAVE_HALF_MATH
 void validate_hp_result(
     MtxData<_Float16, int> *total_mtx,
     Config *config,
@@ -575,5 +585,7 @@ void validate_hp_result(
 
 //     delete scs;
 }
-// #endif
+
+#endif
+#endif
 #endif

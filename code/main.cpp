@@ -1864,6 +1864,7 @@ void standalone_bench(
 
     if(my_rank == 0){
         if(config.mode == 's'){
+#ifdef USE_MKL
             if(config.validate_result){
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Validating results.\n");}
@@ -1898,6 +1899,7 @@ void standalone_bench(
 #endif
                 }
             }
+#endif
         }
         else if(config.mode == 'b'){
 #ifdef DEBUG_MODE
