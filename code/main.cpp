@@ -209,8 +209,10 @@ void bench_spmv(
                     + dp_local_scs->chunk_lengths[dp_local_scs->n_chunks - 1] * dp_local_scs->C;
         long n_scs_elements_sp = sp_local_scs->chunk_ptrs[sp_local_scs->n_chunks - 1]
                     + sp_local_scs->chunk_lengths[sp_local_scs->n_chunks - 1] * sp_local_scs->C;
+#ifdef HAVE_HALF_MATH
         long n_scs_elements_hp = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
                     + hp_local_scs->chunk_lengths[hp_local_scs->n_chunks - 1] * hp_local_scs->C;
+#endif
 
         // TODO: temporary way to get around memory courruption problem
         for(int i = 0; i < n_scs_elements_dp; ++i){
@@ -229,6 +231,7 @@ void bench_spmv(
                 sp_local_scs->col_idxs[i] = 0;
             }
         }
+#ifdef HAVE_HALF_MATH
         for(int i = 0; i < n_scs_elements_hp; ++i){
             if(hp_local_scs->col_idxs[i] >= local_scs->n_rows){
 #ifdef DEBUG_MODE
@@ -237,6 +240,7 @@ void bench_spmv(
                 hp_local_scs->col_idxs[i] = 0;
             }
         }
+#endif
 
 
         // Allocate space for MP structs on device
@@ -332,8 +336,10 @@ void bench_spmv(
         delete local_y_dp_hardcopy;
         delete local_x_sp_hardcopy;
         delete local_y_sp_hardcopy;
+#ifdef HAVE_HALF_MATH
         delete local_x_hp_hardcopy;
         delete local_y_hp_hardcopy;
+#endif
 
         // Pack pointers into struct 
         // TODO: allow for each struct to have it's own C
@@ -353,6 +359,7 @@ void bench_spmv(
         multi_prec_kernel_args_encoded->sp_values =        d_values_sp;
         multi_prec_kernel_args_encoded->sp_local_x =       d_x_sp;
         multi_prec_kernel_args_encoded->sp_local_y =       d_y_sp;
+#ifdef HAVE_HALF_MATH
         multi_prec_kernel_args_encoded->hp_C =             d_C_dp; // shared maybe don't?
         multi_prec_kernel_args_encoded->hp_n_chunks =      d_n_chunks_dp; //shared for now
         multi_prec_kernel_args_encoded->hp_chunk_ptrs =    d_chunk_ptrs_hp;
@@ -361,6 +368,7 @@ void bench_spmv(
         multi_prec_kernel_args_encoded->hp_values =        d_values_hp;
         multi_prec_kernel_args_encoded->hp_local_x =       d_x_hp;
         multi_prec_kernel_args_encoded->hp_local_y =       d_y_hp;
+#endif
         multi_prec_kernel_args_encoded->n_blocks =         &n_blocks;
         kernel_args_void_ptr = (void*) multi_prec_kernel_args_encoded;
 
@@ -692,8 +700,7 @@ void bench_spmv(
         my_rank,
         comm_size
     );
-#endif
-
+    
     // Pass args to construct spmv_kernel object
     if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
         kernel_args_void_ptr = (void*) multi_prec_kernel_args_encoded;
@@ -703,6 +710,7 @@ void bench_spmv(
     }
 
     comm_args_void_ptr = (void*) comm_args_encoded;
+#endif
     SpmvKernel<VT, IT> spmv_kernel(
         config, 
         kernel_args_void_ptr, 
