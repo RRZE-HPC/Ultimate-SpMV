@@ -984,14 +984,46 @@ void cli_options_messge(
     std::string *seg_method,
     std::string *value_type,
     Config *config){
-    fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n "
-            "options [defaults]: -c [%li], -s [%li], -rev [%li], -rand_x [%c], "
-            "-dp/sp/hp/ap[dp_sp]/ap[dp_hp]/ap[sp_hp]/ap[dp_sp_hp] [%s], -seg_metis/seg_nnz/seg_rows [%s], "
-            "-validate [%i], -verbose [%i], -mode [%c], -bench_time [%g], -ba_synch [%i], -comm_halos [%i], "
-            "-par_pack [%i], -ap_threshold_1 [%Lf], -ap_threshold_2 [%Lf], -dropout[%i], -dropout_threshold [%Lf], -equilibrate [%i]\n",
-        argv[0], config->chunk_size, config->sigma, config->n_repetitions, config->random_init_x, \
-        value_type->c_str(), seg_method->c_str(), config->validate_result, config->verbose_validation, config->mode, config->bench_time, config->ba_synch, config->comm_halos, \
-        config->par_pack, config->ap_threshold_1, config->ap_threshold_2, config->dropout, config->dropout_threshold, config->equilibrate);
+    fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n " 
+        "options [defaults] (description): \n \\
+        -c [%li] (int: chunk size (required for scs)) \n \\
+        -s [%li] (int: sigma (required for scs)) \n \\
+        -rev [%li] (int: number of back-to-back revisions to perform) \n \\
+        -rand_x [%c] (0/1: random x vector option) \n \\
+        -dp / sp / hp / ap[dp_sp] / ap[dp_hp] / ap[sp_hp] / ap[dp_sp_hp] [%s] (numerical precision of matrix data) \n \\
+        -seg_metis / seg_nnz / seg_rows [%s] (global matrix partitioning for MPI) \n \\
+        -validate [%i] (0/1: check result against MKL option) \n \\
+        -verbose [%i] (0/1: verbose validation of results) \n \\
+        -mode [%c] ('s'/'b': either in solve mode or bench mode) \n \\
+        -bench_time [%g] (float: minimum number of seconds for SpMV benchmark) \n \\
+        -ba_synch [%i] (0/1: synch processes each benchmark loop) \n \\
+        -comm_halos [%i] (0/1: communicate halo elements each benchmark loop) \n \\
+        -par_pack [%i] (0/1: pack elements contigously for MPI_Isend in parallel) \n \\
+        -equilibrate [%i] (0/1: normalize rows of matrix) \n \\
+        --------------------------- Adaptive Precision Options --------------------------- \n \\
+        -ap_threshold_1 [%f] (float: threshold for two-way matrix partitioning for adaptive precision `-ap`) \n \\
+        -ap_threshold_2 [%f] (float: threshold for three-way matrix partitioning for adaptive precision `-ap`) \n \\
+        -dropout[%f] (0/1: enable dropout of elements below theh designated threshold) \n \\
+        -dropout_threshold [%f] (float: remove matrix elements below this range) \n\n",
+        argv[0], \
+        config->chunk_size, \
+        config->sigma, \
+        config->n_repetitions, \
+        config->random_init_x, \
+        value_type->c_str(), \
+        seg_method->c_str(), \
+        config->validate_result, \
+        config->verbose_validation, \
+        config->mode, \
+        config->bench_time, \
+        config->ba_synch, \
+        config->comm_halos, \
+        config->par_pack, \
+        config->equilibrate, \
+        config->ap_threshold_1, \
+        config->ap_threshold_2, \
+        config->dropout, \
+        config->dropout_threshold);
                     
 }
 

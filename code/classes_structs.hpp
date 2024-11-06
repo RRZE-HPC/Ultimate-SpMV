@@ -89,7 +89,7 @@ struct Config
     // Mixed Precision bucket size, used for partitioning matrix
     double ap_threshold_2 = 0.0;
 
-    int dropout = 0;
+    double dropout = 0;
 
     double dropout_threshold = 0.0;
 
