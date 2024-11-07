@@ -32,7 +32,8 @@ Options:
  
  
 Notes:
-- This is a work in progress. Please report all issues, build failures, seg faults, and bug on Github issues. Email any suggestions/inquiries to `dane.c.lacey at fau.de`
+- This is a work in progress. Please report all issues, seg faults, and bugs on Github issues. 
+- Please direct any suggestions/inquiries to my email `dane.c.lacey at fau.de`
 - The -c and -s options are only relevant when the scs kernel is selected
 - Select compiler in Makefile (gcc, icc, icx, llvm, nvcc)
 	- icc is legacy, and not advised
