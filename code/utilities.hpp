@@ -3003,8 +3003,6 @@ void partition_precisions(
 template <typename VT, typename IT>
 void assign_spmv_kernel_cpu_data(
     Config *config,
-    OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded,
-    MultiPrecKernelArgs<IT> *multi_prec_kernel_args_encoded,
     ScsData<VT, IT> *local_scs,
     ScsData<double, IT> *dp_local_scs,
     ScsData<float, IT> *sp_local_scs,
@@ -3027,7 +3025,8 @@ void assign_spmv_kernel_cpu_data(
     _Float16 *hp_local_x,
     _Float16 *hp_local_x_permuted,
 #endif
-    void *kernel_args_void_ptr
+    OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded,
+    MultiPrecKernelArgs<IT> *multi_prec_kernel_args_encoded
 ){
     if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
         multi_prec_kernel_args_encoded->dp_C = &dp_local_scs->C;
@@ -3107,12 +3106,605 @@ void assign_mpi_args(
 }
 
 #ifdef __CUDACC__
-// TODO
-// assign_spmv_kernel_gpu_data(
-    
-// ){
-
-// }
+template <typename VT, typename IT>
+void assign_spmv_kernel_gpu_data(
+    Config *config,
+    ScsData<VT, IT> *local_scs,
+    ScsData<double, IT> *dp_local_scs,
+    ScsData<float, IT> *sp_local_scs,
+#ifdef HAVE_HALF_MATH
+    ScsData<_Float16, IT> *hp_local_scs,
 #endif
+    VT *local_y,
+    double *dp_local_y,
+    float *sp_local_y,
+#ifdef HAVE_HALF_MATH
+    _Float16 *hp_local_y,
+#endif
+    VT *local_x,
+    VT *local_x_permuted,
+    double *dp_local_x,
+    double *dp_local_x_permuted,
+    float *sp_local_x,
+    float *sp_local_x_permuted,
+#ifdef HAVE_HALF_MATH
+    _Float16 *hp_local_x,
+    _Float16 *hp_local_x_permuted,
+#endif
+    VT *d_x,
+    VT *d_y,
+    ST *d_C,
+    ST *d_n_chunks,
+    IT *d_chunk_ptrs,
+    IT *d_chunk_lengths,
+    IT *d_col_idxs,
+    VT *d_values,
+    ST *d_n_blocks,
+    double *d_x_dp,
+    double *d_y_dp,
+    ST *d_C_dp,
+    ST *d_n_chunks_dp,
+    IT *d_chunk_ptrs_dp,
+    IT *d_chunk_lengths_dp,
+    IT *d_col_idxs_dp,
+    double *d_values_dp,
+    float *d_x_sp,
+    float *d_y_sp,
+    ST *d_C_sp,
+    ST *d_n_chunks_sp,
+    IT *d_chunk_ptrs_sp,
+    IT *d_chunk_lengths_sp,
+    IT *d_col_idxs_sp,
+    float *d_values_sp,
+#ifdef HAVE_HALF_MATH
+    _Float16 *d_x_sp,
+    _Float16 *d_y_sp,
+    ST *d_C_sp,
+    ST *d_n_chunks_sp,
+    IT *d_chunk_ptrs_sp,
+    IT *d_chunk_lengths_sp,
+    IT *d_col_idxs_sp,
+    _Float16  *d_values_sp,
+#endif
+    ST n_blocks,
+#ifdef USE_CUSPARSE
+    CuSparseArgs *cusparse_args_encoded,
+#endif
+    OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded,
+    MultiPrecKernelArgs<IT> *multi_prec_kernel_args_encoded
+){
+
+#ifdef USE_CUSPARSE
+    cusparseHandle_t     handle = NULL;
+    cusparseSpMatDescr_t matA;
+    cusparseDnVecDescr_t vecX, vecY;
+    void*                dBuffer    = NULL;
+    size_t               bufferSize = 0;
+    float     alpha           = 1.0f;
+    float     beta            = 0.0f;
+
+    cusparseCreate(&handle);
+
+    if (config->kernel_format == "crs"){
+        if(config->value_type == "dp"){
+            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+                d_chunk_ptrs, d_col_idxs, d_values,
+                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F
+            );
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F);
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F);
+
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else if(config->value_type == "sp"){
+            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+                d_chunk_ptrs, d_col_idxs, d_values,
+                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F);
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F);
+
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else if(config->value_type == "hp"){
+            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+                d_chunk_ptrs, d_col_idxs, d_values,
+                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_16F);
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_16F);
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_16F);
+
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_16F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else{
+            printf("CuSparse SpMV only enabled with CRS format in DP, SP, or HP\n");
+            exit(1);
+        }
+
+    }
+    else{
+        if(config->value_type == "dp"){
+            cusparseCreateSlicedEll(
+                &matA, 
+                local_scs->n_rows, 
+                local_scs->n_cols, 
+                local_scs->nnz,
+                local_scs->n_elements,
+                local_scs->C,
+                d_chunk_ptrs,
+                d_col_idxs,
+                d_values,
+                CUSPARSE_INDEX_32I, 
+                CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, 
+                CUDA_R_64F
+            );
+            // Create dense vector X
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F);
+            // Create dense vector y
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F);
+            // allocate an external buffer if needed
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else if(config->value_type == "sp"){
+            cusparseCreateSlicedEll(
+                &matA, 
+                local_scs->n_rows, 
+                local_scs->n_cols, 
+                local_scs->nnz,
+                local_scs->n_elements,
+                local_scs->C,
+                d_chunk_ptrs,
+                d_col_idxs,
+                d_values,
+                CUSPARSE_INDEX_32I, 
+                CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, 
+                CUDA_R_32F
+            );
+            // Create dense vector X
+            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F);
+            // Create dense vector y
+            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F);
+            // allocate an external buffer if needed
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else if(config->value_type == "hp"){
+            cusparseCreateSlicedEll(
+                &matA, 
+                local_scs->n_rows_padded, 
+                local_scs->n_cols, 
+                local_scs->nnz,
+                local_scs->n_elements,
+                local_scs->C,
+                d_chunk_ptrs,
+                d_col_idxs,
+                d_values,
+                CUSPARSE_INDEX_32I, 
+                CUSPARSE_INDEX_32I,
+                CUSPARSE_INDEX_BASE_ZERO, 
+                CUDA_R_16F
+            );
+            // Create dense vector X
+            cusparseCreateDnVec(&vecX, local_scs->n_rows_padded, d_x, CUDA_R_16F);
+            // Create dense vector y
+            cusparseCreateDnVec(&vecY, local_scs->n_rows_padded, d_y, CUDA_R_16F);
+            // allocate an external buffer if needed
+            cusparseSpMV_bufferSize(
+                handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                &alpha, matA, vecX, &beta, vecY, CUDA_R_16F,
+                CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
+            );
+        }
+        else{
+            printf("CuSparse SELL-P only enabled with SCS format in DP, SP, or HP\n");
+            exit(1);
+        }
+    }
+
+    cudaMalloc(&dBuffer, bufferSize);
+
+    cusparse_args_encoded->handle = handle;
+    cusparse_args_encoded->opA = CUSPARSE_OPERATION_NON_TRANSPOSE;
+    cusparse_args_encoded->alpha = &alpha;
+    cusparse_args_encoded->matA = matA;
+    cusparse_args_encoded->vecX = vecX;
+    cusparse_args_encoded->beta = &beta;
+    cusparse_args_encoded->vecY = vecY;
+
+    if(config->value_type == "dp"){
+        cusparse_args_encoded->computeType = CUDA_R_64F;
+    }
+    else if(config->value_type == "sp"){
+        cusparse_args_encoded->computeType = CUDA_R_32F;
+    }
+    else if(config->value_type == "hp"){
+        cusparse_args_encoded->computeType = CUDA_R_16F;
+    }
+
+    cusparse_args_encoded->alg = CUSPARSE_SPMV_ALG_DEFAULT;
+    cusparse_args_encoded->externalBuffer = dBuffer;
+#else
+
+    if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+        long n_scs_elements_dp = dp_local_scs->chunk_ptrs[dp_local_scs->n_chunks - 1]
+                    + dp_local_scs->chunk_lengths[dp_local_scs->n_chunks - 1] * dp_local_scs->C;
+        long n_scs_elements_sp = sp_local_scs->chunk_ptrs[sp_local_scs->n_chunks - 1]
+                    + sp_local_scs->chunk_lengths[sp_local_scs->n_chunks - 1] * sp_local_scs->C;
+#ifdef HAVE_HALF_MATH
+        long n_scs_elements_hp = hp_local_scs->chunk_ptrs[hp_local_scs->n_chunks - 1]
+                    + hp_local_scs->chunk_lengths[hp_local_scs->n_chunks - 1] * hp_local_scs->C;
+#endif
+
+        // TODO: temporary way to get around memory courruption problem
+        for(int i = 0; i < n_scs_elements_dp; ++i){
+            if(dp_local_scs->col_idxs[i] >= local_scs->n_rows){
+#ifdef DEBUG_MODE
+                printf("Bad dp element %i found at idx %i\n", dp_local_scs->col_idxs[i], i);
+#endif
+                dp_local_scs->col_idxs[i] = 0;
+            }
+        }
+        for(int i = 0; i < n_scs_elements_sp; ++i){
+            if(sp_local_scs->col_idxs[i] >= local_scs->n_rows){
+#ifdef DEBUG_MODE
+                printf("Bad sp %i element found at idx %i\n", sp_local_scs->col_idxs[i], i);
+#endif
+                sp_local_scs->col_idxs[i] = 0;
+            }
+        }
+#ifdef HAVE_HALF_MATH
+        for(int i = 0; i < n_scs_elements_hp; ++i){
+            if(hp_local_scs->col_idxs[i] >= local_scs->n_rows){
+#ifdef DEBUG_MODE
+                printf("Bad sp %i element found at idx %i\n", hp_local_scs->col_idxs[i], i);
+#endif
+                hp_local_scs->col_idxs[i] = 0;
+            }
+        }
+#endif
+
+
+        // Allocate space for MP structs on device
+        cudaMalloc(&d_values_dp, n_scs_elements_dp*sizeof(double));
+        cudaMemcpy(d_values_dp, &(dp_local_scs->values)[0], n_scs_elements_dp*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMalloc(&d_values_sp, n_scs_elements_sp*sizeof(float));
+        cudaMemcpy(d_values_sp, &(sp_local_scs->values)[0], n_scs_elements_sp*sizeof(float), cudaMemcpyHostToDevice);
+#ifdef HAVE_HALF_MATH
+        cudaMalloc(&d_values_hp, n_scs_elements_hp*sizeof(_Float16));
+        cudaMemcpy(d_values_hp, &(hp_local_scs->values)[0], n_scs_elements_hp*sizeof(_Float16), cudaMemcpyHostToDevice);
+#endif
+
+        cudaMalloc(&d_C_dp, sizeof(long));
+        cudaMalloc(&d_n_chunks_dp, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs_dp, (dp_local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths_dp, dp_local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs_dp, n_scs_elements_dp*sizeof(int));
+        cudaMalloc(&d_C_sp, sizeof(long));
+        cudaMalloc(&d_n_chunks_sp, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs_sp, (sp_local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths_sp, sp_local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs_sp, n_scs_elements_sp*sizeof(int));
+#ifdef HAVE_HALF_MATH
+        cudaMalloc(&d_C_hp, sizeof(long));
+        cudaMalloc(&d_n_chunks_hp, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs_hp, (hp_local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths_hp, hp_local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs_hp, n_scs_elements_hp*sizeof(int));
+#endif
+
+        // Copy matrix data to device
+        cudaMemcpy(d_chunk_ptrs_dp, &(dp_local_scs->chunk_ptrs)[0], (dp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths_dp, &(dp_local_scs->chunk_lengths)[0], dp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs_dp, &(dp_local_scs->col_idxs)[0], n_scs_elements_dp*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C_dp, &dp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks_dp, &dp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+
+        cudaMemcpy(d_chunk_ptrs_sp, &(sp_local_scs->chunk_ptrs)[0], (sp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths_sp, &(sp_local_scs->chunk_lengths)[0], sp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs_sp, &(sp_local_scs->col_idxs)[0], n_scs_elements_sp*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C_sp, &sp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks_sp, &sp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+
+#ifdef HAVE_HALF_MATH
+        cudaMemcpy(d_chunk_ptrs_hp, &(hp_local_scs->chunk_ptrs)[0], (hp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths_hp, &(hp_local_scs->chunk_lengths)[0], hp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs_hp, &(hp_local_scs->col_idxs)[0], n_scs_elements_hp*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C_hp, &hp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks_hp, &hp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+#endif
+
+        // Copy x and y data to device
+        double *local_x_dp_hardcopy = new double[local_scs->n_rows_padded];
+        double *local_y_dp_hardcopy = new double[local_scs->n_rows_padded];
+        float *local_x_sp_hardcopy = new float[local_scs->n_rows_padded];
+        float *local_y_sp_hardcopy = new float[local_scs->n_rows_padded];
+#ifdef HAVE_HALF_MATH
+        _Float16 *local_x_hp_hardcopy = new _Float16[local_scs->n_rows_padded];
+        _Float16 *local_y_hp_hardcopy = new _Float16[local_scs->n_rows_padded];
+#endif
+
+        #pragma omp parallel for
+        for(int i = 0; i < local_scs->n_rows_padded; ++i){
+            local_x_dp_hardcopy[i] = dp_local_x_permuted[i];
+            local_y_dp_hardcopy[i] = dp_local_y[i];
+            local_x_sp_hardcopy[i] = sp_local_x_permuted[i];
+            local_y_sp_hardcopy[i] = sp_local_y[i];
+#ifdef HAVE_HALF_MATH
+            local_x_hp_hardcopy[i] = hp_local_x_permuted[i];
+            local_y_hp_hardcopy[i] = hp_local_y[i];
+#endif
+        }
+
+        cudaMalloc(&d_x_dp, local_scs->n_rows_padded*sizeof(double));
+        cudaMalloc(&d_y_dp, local_scs->n_rows_padded*sizeof(double));
+        cudaMalloc(&d_x_sp, local_scs->n_rows_padded*sizeof(float));
+        cudaMalloc(&d_y_sp, local_scs->n_rows_padded*sizeof(float));
+#ifdef HAVE_HALF_MATH
+        cudaMalloc(&d_x_sp, local_scs->n_rows_padded*sizeof(_Float16));
+        cudaMalloc(&d_y_sp, local_scs->n_rows_padded*sizeof(_Float16));
+#endif
+
+        cudaMemcpy(d_x_dp, local_x_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_dp, local_y_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_x_sp, local_x_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_sp, local_y_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+#ifdef HAVE_HALF_MATH
+        cudaMemcpy(d_x_hp, local_x_hp_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_y_hp, local_y_hp_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);
+#endif
+
+        delete local_x_dp_hardcopy;
+        delete local_y_dp_hardcopy;
+        delete local_x_sp_hardcopy;
+        delete local_y_sp_hardcopy;
+#ifdef HAVE_HALF_MATH
+        delete local_x_hp_hardcopy;
+        delete local_y_hp_hardcopy;
+#endif
+
+        // Pack pointers into struct 
+        // TODO: allow for each struct to have it's own C
+        multi_prec_kernel_args_encoded->dp_C =             d_C_dp;
+        multi_prec_kernel_args_encoded->dp_n_chunks =      d_n_chunks_dp; //shared for now
+        multi_prec_kernel_args_encoded->dp_chunk_ptrs =    d_chunk_ptrs_dp;
+        multi_prec_kernel_args_encoded->dp_chunk_lengths = d_chunk_lengths_dp;
+        multi_prec_kernel_args_encoded->dp_col_idxs =      d_col_idxs_dp;
+        multi_prec_kernel_args_encoded->dp_values =        d_values_dp;
+        multi_prec_kernel_args_encoded->dp_local_x =       d_x_dp;
+        multi_prec_kernel_args_encoded->dp_local_y =       d_y_dp;
+        multi_prec_kernel_args_encoded->sp_C =             d_C_dp; // shared maybe don't?
+        multi_prec_kernel_args_encoded->sp_n_chunks =      d_n_chunks_dp; //shared for now
+        multi_prec_kernel_args_encoded->sp_chunk_ptrs =    d_chunk_ptrs_sp;
+        multi_prec_kernel_args_encoded->sp_chunk_lengths = d_chunk_lengths_sp;
+        multi_prec_kernel_args_encoded->sp_col_idxs =      d_col_idxs_sp;
+        multi_prec_kernel_args_encoded->sp_values =        d_values_sp;
+        multi_prec_kernel_args_encoded->sp_local_x =       d_x_sp;
+        multi_prec_kernel_args_encoded->sp_local_y =       d_y_sp;
+#ifdef HAVE_HALF_MATH
+        multi_prec_kernel_args_encoded->hp_C =             d_C_dp; // shared maybe don't?
+        multi_prec_kernel_args_encoded->hp_n_chunks =      d_n_chunks_dp; //shared for now
+        multi_prec_kernel_args_encoded->hp_chunk_ptrs =    d_chunk_ptrs_hp;
+        multi_prec_kernel_args_encoded->hp_chunk_lengths = d_chunk_lengths_hp;
+        multi_prec_kernel_args_encoded->hp_col_idxs =      d_col_idxs_hp;
+        multi_prec_kernel_args_encoded->hp_values =        d_values_hp;
+        multi_prec_kernel_args_encoded->hp_local_x =       d_x_hp;
+        multi_prec_kernel_args_encoded->hp_local_y =       d_y_hp;
+#endif
+        multi_prec_kernel_args_encoded->n_blocks =         &n_blocks;
+    }
+    else{
+        long n_scs_elements = local_scs->chunk_ptrs[local_scs->n_chunks - 1]
+                    + local_scs->chunk_lengths[local_scs->n_chunks - 1] * local_scs->C;
+
+        if(config->value_type == "dp"){
+            cudaMalloc(&d_values, n_scs_elements*sizeof(double));
+            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(double), cudaMemcpyHostToDevice);
+        }
+        else if(config->value_type == "sp"){
+            cudaMalloc(&d_values, n_scs_elements*sizeof(float));
+            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(float), cudaMemcpyHostToDevice);
+        }
+        else if(config->value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+            cudaMalloc(&d_values, n_scs_elements*sizeof(_Float16));
+            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(_Float16), cudaMemcpyHostToDevice);
+#endif
+        }
+        
+        cudaMalloc(&d_C, sizeof(long));
+        cudaMalloc(&d_n_chunks, sizeof(long));
+        cudaMalloc(&d_chunk_ptrs, (local_scs->n_chunks + 1)*sizeof(int));
+        cudaMalloc(&d_chunk_lengths, local_scs->n_chunks*sizeof(int));
+        cudaMalloc(&d_col_idxs, n_scs_elements*sizeof(int));
+
+        cudaMemcpy(d_chunk_ptrs, &(local_scs->chunk_ptrs)[0], (local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_chunk_lengths, &(local_scs->chunk_lengths)[0], local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_col_idxs, &(local_scs->col_idxs)[0], n_scs_elements*sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C, &local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_n_chunks, &local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+
+        if(config->value_type == "dp"){
+            // Make type-specific copy to send to device
+            double *local_x_hardcopy = new double[local_scs->n_rows_padded];
+            double *local_y_hardcopy = new double[local_scs->n_rows_padded];
+
+            #pragma omp parallel for
+            for(int i = 0; i < local_scs->n_rows_padded; ++i){
+                local_x_hardcopy[i] = local_x_permuted[i];
+                local_y_hardcopy[i] = local_y[i];
+            }
+
+            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(double));
+            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(double));
+
+            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
+
+            delete local_x_hardcopy;
+            delete local_y_hardcopy;
+        }
+        else if (config->value_type == "sp"){
+            // Make type-specific copy to send to device
+            float *local_x_hardcopy = new float[local_scs->n_rows_padded];
+            float *local_y_hardcopy = new float[local_scs->n_rows_padded];
+
+            #pragma omp parallel for
+            for(int i = 0; i < local_scs->n_rows_padded; ++i){
+                local_x_hardcopy[i] = local_x_permuted[i];
+                local_y_hardcopy[i] = local_y[i];
+            }
+
+            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(float));
+            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(float));
+
+            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);   
+
+            delete local_x_hardcopy;
+            delete local_y_hardcopy;
+        }
+        else if (config->value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+            // Make type-specific copy to send to device
+            _Float16 *local_x_hardcopy = new _Float16[local_scs->n_rows_padded];
+            _Float16 *local_y_hardcopy = new _Float16[local_scs->n_rows_padded];
+
+            #pragma omp parallel for
+            for(int i = 0; i < local_scs->n_rows_padded; ++i){
+                local_x_hardcopy[i] = local_x_permuted[i];
+                local_y_hardcopy[i] = (*local_y)[i];
+            }
+
+            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(_Float16));
+            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(_Float16));
+
+            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);
+            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);   
+
+            delete local_x_hardcopy;
+            delete local_y_hardcopy;
+#endif
+        }
+
+
+        // All args for kernel reside on the device
+        one_prec_kernel_args_encoded->C =             d_C;
+        one_prec_kernel_args_encoded->n_chunks =      d_n_chunks;
+        one_prec_kernel_args_encoded->chunk_ptrs =    d_chunk_ptrs;
+        one_prec_kernel_args_encoded->chunk_lengths = d_chunk_lengths;
+        one_prec_kernel_args_encoded->col_idxs =      d_col_idxs;
+        one_prec_kernel_args_encoded->values =        d_values;
+        one_prec_kernel_args_encoded->local_x =       d_x;
+        one_prec_kernel_args_encoded->local_y =       d_y;
+        one_prec_kernel_args_encoded->n_blocks =      &n_blocks;
+    }
+#endif
+}
+#endif
+
+template <typename VT, typename IT>
+void copy_back_result(
+    Config *config,
+    ScsData<VT, IT> *local_scs,
+    ScsData<double, IT> *dp_local_scs,
+    ScsData<float, IT> *sp_local_scs,
+#ifdef HAVE_HALF_MATH
+    ScsData<_Float16, IT> *hp_local_scs,
+#endif
+    std::vector<VT> *local_y,
+    VT * RESTRICT spmv_kernel_result,
+    double *dp_local_x_permuted,
+    float *sp_local_x_permuted,
+#ifdef HAVE_HALF_MATH
+    _Float16 *hp_local_x_permuted,
+#endif
+    ContextData<IT> *local_context
+){
+
+        // Selects the first (n_rows)-many elements of a sorted y vector, and chops off padding
+        std::vector<double> sorted_dp_local_y(local_y->size(), 0.0);
+        std::vector<float> sorted_sp_local_y(local_y->size(), 0.0f);
+#ifdef HAVE_HALF_MATH
+        std::vector<_Float16> sorted_hp_local_y(local_y->size(), 0.0f16);
+#endif
+
+
+        if(config->value_type == "dp" || config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+#ifdef __CUDACC__
+            cudaMemcpy(dp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+#else
+            for(int i = 0; i < local_y->size(); ++i){
+                dp_local_x_permuted[i] = spmv_kernel_result[i];
+            }
+#endif
+            if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]")
+                apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(dp_local_scs->old_to_new_idx)[0], dp_local_scs->n_rows);
+            else if(config->value_type == "dp")
+                apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+
+            for(int i = 0; i < local_y->size(); ++i){
+                (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
+            }
+        }
+        else if(config->value_type == "sp" || config->value_type == "ap[sp_hp]"){
+#ifdef __CUDACC__
+            cudaMemcpy(sp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(float), cudaMemcpyDeviceToHost);
+#else
+            for(int i = 0; i < local_y->size(); ++i){
+                sp_local_x_permuted[i] = spmv_kernel_result[i];
+            }
+#endif
+            if(config->value_type == "ap[sp_hp]")
+                apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(sp_local_scs->old_to_new_idx)[0], sp_local_scs->n_rows);
+            else if(config->value_type == "sp")
+                apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+
+
+            for(int i = 0; i < local_y->size(); ++i){
+                (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i]);
+            }
+        }
+        else if(config->value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+#ifdef __CUDACC__
+            cudaMemcpy(hp_local_x_permuted->data(), spmv_kernel_result, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyDeviceToHost);
+
+#else
+            for(int i = 0; i < local_y->size(); ++i){
+                hp_local_x_permuted[i] = spmv_kernel_result[i];
+            }
+#endif
+            apply_permutation<_Float16, IT>(sorted_hp_local_y.data(), hp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+            for(int i = 0; i < local_y->size(); ++i){
+                (*local_y)[i] = static_cast<double>(sorted_hp_local_y[i]);
+            }
+#endif
+        }
+
+        // Manually resize for ease later on (and I don't see a better way)
+        local_y->resize(local_context->num_local_rows);
+}
 
 #endif
