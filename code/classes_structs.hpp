@@ -999,17 +999,28 @@ class SpmvKernel {
             if(config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                 std::swap(local_x, local_y);
             }
-            else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_hp]"){
-                printf("ERROR: swap_local_vectors not yet implemented for ap.\n");
-                exit(1);
-                // std::swap(sp_local_x, sp_local_y);
-                // std::swap(dp_local_x, dp_local_y);
+            else if(config->value_type == "ap[dp_sp]"){
+                std::swap(sp_local_x, sp_local_y);
+                std::swap(dp_local_x, dp_local_y);
+            }
+            else if(config->value_type == "ap[sp_hp]"){
+                std::swap(sp_local_x, sp_local_y);
+#ifdef HAVE_HALF_MATH
+                std::swap(hp_local_x, hp_local_y);
+#endif
+            }
+            else if(config->value_type == "ap[dp_hp]"){
+                std::swap(dp_local_x, dp_local_y);
+#ifdef HAVE_HALF_MATH
+                std::swap(hp_local_x, hp_local_y);
+#endif
             }
             else if(config->value_type == "ap[dp_sp_hp]"){
-                printf("ERROR: swap_local_vectors not yet implemented for ap.\n");
-                exit(1);
-                // std::swap(sp_local_x, sp_local_y);
-                // std::swap(dp_local_x, dp_local_y);
+                std::swap(dp_local_x, dp_local_y);
+                std::swap(sp_local_x, sp_local_y);
+#ifdef HAVE_HALF_MATH
+                std::swap(hp_local_x, hp_local_y);
+#endif
             }
 #endif
         }

@@ -3635,6 +3635,11 @@ void copy_back_result(
 #endif
     std::vector<VT> *local_y,
     VT * RESTRICT spmv_kernel_result,
+    double * RESTRICT dp_spmv_kernel_result,
+    float * RESTRICT sp_spmv_kernel_result,
+#ifdef HAVE_HALF_MATH
+    _Float16 * RESTRICT hp_spmv_kernel_result,
+#endif
     double *dp_local_x_permuted,
     float *sp_local_x_permuted,
 #ifdef HAVE_HALF_MATH
@@ -3651,7 +3656,7 @@ void copy_back_result(
 #endif
 
 
-        if(config->value_type == "dp" || config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+        if(config->value_type == "dp"){
 #ifdef __CUDACC__
             cudaMemcpy(dp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
 #else
@@ -3659,16 +3664,13 @@ void copy_back_result(
                 dp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]")
-                apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(dp_local_scs->old_to_new_idx)[0], dp_local_scs->n_rows);
-            else if(config->value_type == "dp")
-                apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+            apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
 
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
             }
         }
-        else if(config->value_type == "sp" || config->value_type == "ap[sp_hp]"){
+        else if(config->value_type == "sp"){
 #ifdef __CUDACC__
             cudaMemcpy(sp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(float), cudaMemcpyDeviceToHost);
 #else
@@ -3676,11 +3678,7 @@ void copy_back_result(
                 sp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            if(config->value_type == "ap[sp_hp]")
-                apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(sp_local_scs->old_to_new_idx)[0], sp_local_scs->n_rows);
-            else if(config->value_type == "sp")
-                apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-
+            apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
 
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i]);
@@ -3702,6 +3700,37 @@ void copy_back_result(
             }
 #endif
         }
+        else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+            // TODO: Validate this!
+#ifdef __CUDACC__
+            cudaMemcpy(dp_local_x_permuted, dp_spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+#else
+            for(int i = 0; i < local_y->size(); ++i){
+                dp_local_x_permuted[i] = dp_spmv_kernel_result[i];
+            }
+#endif
+            apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(dp_local_scs->old_to_new_idx)[0], dp_local_scs->n_rows);
+
+            for(int i = 0; i < local_y->size(); ++i){
+                (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
+            }
+        }
+        else if(config->value_type == "ap[sp_hp]"){
+            // TODO: Validate this!
+#ifdef __CUDACC__
+            cudaMemcpy(sp_local_x_permuted, sp_spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+#else
+            for(int i = 0; i < local_y->size(); ++i){
+                sp_local_x_permuted[i] = sp_spmv_kernel_result[i];
+            }
+#endif
+            apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(sp_local_scs->old_to_new_idx)[0], sp_local_scs->n_rows);
+
+            for(int i = 0; i < local_y->size(); ++i){
+                (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i]);
+            }
+        }
+        // With AP, we need to permute w.r.t. the local_scs of the highest precision
 
         // Manually resize for ease later on (and I don't see a better way)
         local_y->resize(local_context->num_local_rows);

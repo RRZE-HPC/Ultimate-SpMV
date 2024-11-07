@@ -523,6 +523,11 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
             local_y,
             spmv_kernel.local_x,
+            spmv_kernel.dp_local_x,
+            spmv_kernel.sp_local_x,
+#ifdef HAVE_HALF_MATH
+            spmv_kernel.hp_local_x,
+#endif
             dp_local_x_permuted.data(),
             sp_local_x_permuted.data(),
 #ifdef HAVE_HALF_MATH

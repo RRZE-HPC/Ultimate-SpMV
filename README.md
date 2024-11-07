@@ -32,10 +32,8 @@ Options:
  
  
 Notes:
-- This is a work in progress. Please email any problems or suggestions to `dane.c.lacey at fau.de`
+- This is a work in progress. Please report all issues, build failures, seg faults, and bug on Github issues. Email any suggestions/inquiries to `dane.c.lacey at fau.de`
 - The -c and -s options are only relevant when the scs kernel is selected
-- Dependencies:
-	- mkl (used for validation of results)
 - Select compiler in Makefile (gcc, icc, icx, llvm, nvcc)
 	- icc is legacy, and not advised
 - VECTOR_LENGTH for SIMD instructions is also defined at the top of the Makefile, useful for non-SELL_C_SIGMA kernels
