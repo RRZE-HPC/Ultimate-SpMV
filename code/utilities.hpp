@@ -3030,11 +3030,11 @@ void assign_mpi_args(
     VT **to_send_elems,
     MPI_Request *recv_requests,
     MPI_Request *send_requests,
-    int nzs_size,
-    int nzr_size,
+    int *nzs_size,
+    int *nzr_size,
 #endif
-    int my_rank,
-    int comm_size
+    int *my_rank,
+    int *comm_size
 ){
 #ifdef USE_MPI
     // Encode comm args into struct
@@ -3043,14 +3043,14 @@ void assign_mpi_args(
     comm_args_encoded->to_send_elems = to_send_elems;
     comm_args_encoded->perm = local_scs->old_to_new_idx.data();
     comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
-    comm_args_encoded->nzs_size = &nzs_size;
+    comm_args_encoded->nzs_size = nzs_size;
     comm_args_encoded->send_requests = send_requests;
-    comm_args_encoded->nzr_size = &nzr_size;
+    comm_args_encoded->nzr_size = nzr_size;
     comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
 #endif
 
-    comm_args_encoded->my_rank = &my_rank;
-    comm_args_encoded->comm_size = &comm_size;
+    comm_args_encoded->my_rank = my_rank;
+    comm_args_encoded->comm_size = comm_size;
 }
 
 #ifdef __CUDACC__

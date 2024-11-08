@@ -268,11 +268,11 @@ assign_spmv_kernel_gpu_data<VT>(
         to_send_elems,
         recv_requests,
         send_requests,
-        nzs_size,
-        nzr_size,
+        &nzs_size,
+        &nzr_size,
 #endif
-        my_rank,
-        comm_size
+        &my_rank,
+        &comm_size
     );
 
     // Pass args to construct spmv_kernel object
