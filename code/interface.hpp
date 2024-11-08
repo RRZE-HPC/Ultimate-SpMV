@@ -1,7 +1,6 @@
 #ifndef INTERFACE_H
 #define INTERFACE_H
 
-#include "vectors.h"
 #include <numeric>
 #include <limits>
 #include <algorithm>
@@ -530,7 +529,7 @@ void convert_to_scs(
 
     // construct permutation vector
     scs->old_to_new_idx = std::vector<IT>(scs->n_rows + scs->sigma);
-
+ke
     for (ST i = 0; i < scs->n_rows_padded; ++i) {
         IT old_row_idx = n_els_per_row[i].first;
 
@@ -539,9 +538,6 @@ void convert_to_scs(
         }
     }
     
-
-    // scs->values   = V<VT, IT>(n_scs_elements + scs->sigma);
-    // scs->col_idxs = V<IT, IT>(n_scs_elements + scs->sigma);
     scs->values   = std::vector<VT>(n_scs_elements + scs->sigma);
     scs->col_idxs = std::vector<IT>(n_scs_elements + scs->sigma);
 

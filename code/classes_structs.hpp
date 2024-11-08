@@ -1,9 +1,17 @@
 #ifndef CLASSES_STRUCTS
 #define CLASSES_STRUCTS
 
-#include "vectors.h"
 #include "mmio.h"
 #include "kernels.hpp"
+
+#include <complex>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <type_traits>
+#include <vector>
+#include <cstring>
+#include <string>
 #include <functional> 
 #include <ctime>
 
@@ -1179,11 +1187,6 @@ struct ScsData
     ST n_elements{}; // No. of nz + padding.
     ST nnz{};        // No. of nz only.
 
-    // V<IT, IT> chunk_ptrs;    // Chunk start offsets into col_idxs & values.
-    // V<IT, IT> chunk_lengths; // Length of one row in a chunk.
-    // V<IT, IT> col_idxs;
-    // V<VT, IT> values;
-    // V<IT, IT> old_to_new_idx;
     std::vector<IT> chunk_ptrs;    // Chunk start offsets into col_idxs & values.
     std::vector<IT> chunk_lengths; // Length of one row in a chunk.
     std::vector<IT> col_idxs;
@@ -1191,8 +1194,6 @@ struct ScsData
     std::vector<IT> old_to_new_idx;
     // std::vector<int> new_to_old_idx; //inverse of above
     IT * new_to_old_idx;
-    // TODO: ^ make V object as well?
-
 
     void permute(IT *_perm_, IT*  _invPerm_);
     void write_to_mtx_file(int my_rank, std::string file_out_name);
@@ -1610,7 +1611,6 @@ void ScsData<VT, IT>::permute(IT *_perm_, IT*  _invPerm_){
 
 template <typename VT, typename IT>
 void ScsData<VT, IT>::assign_explicit_test_data(ScsExplicitData<VT, IT> *explicit_test_data){
-    // Uses new V operator
     chunk_ptrs=(&explicit_test_data->chunk_ptrs);
     chunk_lengths=(&explicit_test_data->chunk_lengths);
     col_idxs=(&explicit_test_data->col_idxs);

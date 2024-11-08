@@ -55,9 +55,6 @@ struct max_rel_error<std::complex<double>>
     constexpr static double value = 1e-13;
 };
 
-template <typename VT, typename IT>
-using V = Vector<VT, IT>;
-
 void dummy_pin(void){
     volatile int dummy = 0;
     #pragma omp parallel
@@ -78,13 +75,6 @@ void print_vector(const std::string &name,
         std::cout << " " << *it;
     }
     std::cout << "\n";
-}
-
-template <typename VT, typename IT>
-void print_vector(const std::string &name,
-             const V<VT, IT> &v)
-{
-    print_vector(name, v.data(), v.data() + v.n_rows);
 }
 
 template <typename T,
@@ -557,24 +547,6 @@ get_matrix_stats(const MtxData<VT, IT> &mtx)
     return stats;
 }
 
-template <typename IT>
-void
-convert_idxs_to_ptrs(const std::vector<IT> &idxs,
-                     V<IT, IT> &ptrs)
-{
-    std::fill(ptrs.data(), ptrs.data() + ptrs.n_rows, 0);
-
-    for (const auto idx : idxs)
-    {
-        if (idx + 1 < ptrs.n_rows)
-        {
-            ++ptrs[idx + 1];
-        }
-    }
-
-    std::partial_sum(ptrs.data(), ptrs.data() + ptrs.n_rows, ptrs.data());
-}
-
 /**
  * Compute maximum number of elements in a row.
  * \p num_rows: Number of rows.
@@ -598,6 +570,24 @@ IT calculate_max_nnz_per_row(
     }
 
     return *std::max_element(rptr.begin(), rptr.end());
+}
+
+template <typename IT>
+void
+convert_idxs_to_ptrs(const std::vector<IT> &idxs,
+                    std::vector<IT> &ptrs)
+{
+    std::fill(ptrs.data(), ptrs.data() + ptrs.size(), 0);
+
+    for (const auto idx : idxs)
+    {
+        if (idx + 1 < ptrs.size())
+        {
+            ++ptrs[idx + 1];
+        }
+    }
+
+    std::partial_sum(ptrs.data(), ptrs.data() + ptrs.size(), ptrs.data());
 }
 
 /**
@@ -893,48 +883,6 @@ void random_init(
     {
         // *it = ((VT) rand() / ((VT) RAND_MAX)) + 1;
         *it = dist(engine);
-    }
-}
-
-template <typename VT, typename IT>
-void random_init(V<VT, IT> &v)
-{
-    random_init(v.data(), v.data() + v.n_rows);
-}
-
-template <typename VT, typename IT>
-void init_with_ptr_or_value(V<VT, IT> &x,
-                       ST n_x,
-                       const std::vector<VT> *x_in,
-                       VT default_value,
-                       bool init_with_random_numbers = false)
-{
-    if (!init_with_random_numbers)
-    {
-        if (x_in)
-        {
-            if (x_in->size() != size_t(n_x))
-            {
-                fprintf(stderr, "ERROR: x_in has incorrect size.\n");
-                exit(1);
-            }
-
-            for (ST i = 0; i < n_x; ++i)
-            {
-                x[i] = (*x_in)[i];
-            }
-        }
-        else
-        {
-            for (ST i = 0; i < n_x; ++i)
-            {
-                x[i] = default_value;
-            }
-        }
-    }
-    else
-    {
-        random_init(x);
     }
 }
 
@@ -1478,7 +1426,7 @@ void permute_scs_cols(
 
     // std::vector<IT> col_idx_in_row(scs->n_rows_padded);
 
-    V<IT, IT> col_perm_idxs(n_scs_elements);
+    std::vector<IT> col_perm_idxs(n_scs_elements);
 
     // TODO: parallelize
 

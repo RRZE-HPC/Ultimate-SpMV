@@ -1,5 +1,5 @@
 # [gcc, icc, icx, llvm, nvcc]
-COMPILER = icx
+COMPILER = gcc
 # [int]
 VECTOR_LENGTH = 32 # CPU only
 # [1/0]
@@ -19,12 +19,12 @@ THREADS_PER_BLOCK=128 # GPU only
 ### External Libraries ###
 
 # [1/0]
-USE_MKL = 1
+USE_MKL = 0
 # MKL_INC = 
 # MKL_LIB = 
 
 # [1/0]
-USE_MPI = 1
+USE_MPI = 0
 # MPI_INC = 
 # MPI_LIB = 
 

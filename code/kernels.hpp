@@ -9,9 +9,12 @@
 #include <omp.h>
 #endif
 
+#ifdef HAVE_HALF_MATH
+// Experimenting with half precision AVX
 #include <immintrin.h>  // AVX512 and F16C intrinsics
 #include <stdint.h>     // For standard integer types (e.g., int32_t)
 #include <x86intrin.h>  // For F16C and AVX512 intrinsics
+#endif
 
 #define RESTRICT				__restrict__
 

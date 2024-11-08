@@ -131,56 +131,56 @@ declare -a sigmas=("1" "2" "3" "4" "8" "10" "16" "32" "64")
 #     done
 # done
 
-# Config 11. Check scs kernel with C>1, sigma>1 MPI off
-export I_MPI_PIN_DOMAIN="72:compact"
-export OMP_NUM_THREADS=72
-export OMP_PLACES=cores
-export OMP_PROC_BIND=close
-for C in "${Cs[@]}";
-do
-    for sigma in "${sigmas[@]}";
-    do
-        for seg_method in "${seg_types[@]}";
-        do
-            for rand_opt in 0 1;
-            do
-                export I_MPI_PIN_DOMAIN="36:compact"
-                export OMP_NUM_THREADS=36
-                export OMP_PLACES=cores
-                export OMP_PROC_BIND=close
-                ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                ./../../uspmv_no_mpi ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-                ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-            done
-        done
-    done
-done
+# # Config 11. Check scs kernel with C>1, sigma>1 MPI off
+# export I_MPI_PIN_DOMAIN="72:compact"
+# export OMP_NUM_THREADS=72
+# export OMP_PLACES=cores
+# export OMP_PROC_BIND=close
+# for C in "${Cs[@]}";
+# do
+#     for sigma in "${sigmas[@]}";
+#     do
+#         for seg_method in "${seg_types[@]}";
+#         do
+#             for rand_opt in 0 1;
+#             do
+#                 export I_MPI_PIN_DOMAIN="36:compact"
+#                 export OMP_NUM_THREADS=36
+#                 export OMP_PLACES=cores
+#                 export OMP_PROC_BIND=close
+#                 ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                 ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                 ./../../uspmv_no_mpi ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                 ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#                 ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#             done
+#         done
+#     done
+# done
 
-# Bench!
-export I_MPI_PIN_DOMAIN="72:compact"
-export OMP_NUM_THREADS=72
-export OMP_PLACES=cores
-export OMP_PROC_BIND=close
-for C in "${Cs[@]}";
-do
-    for sigma in "${sigmas[@]}";
-    do
-        for seg_method in "${seg_types[@]}";
-        do
-            for rand_opt in 0 1;
-            do
-                export I_MPI_PIN_DOMAIN="36:compact"
-                export OMP_NUM_THREADS=36
-                export OMP_PLACES=cores
-                export OMP_PROC_BIND=close
-                ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -dp
-                ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -dp
-                ./../../uspmv_no_mpi ../../matrices/impcol_e.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -dp
-                ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -sp
-                ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -sp
-            done
-        done
-    done
-done
+# # Bench!
+# export I_MPI_PIN_DOMAIN="72:compact"
+# export OMP_NUM_THREADS=72
+# export OMP_PLACES=cores
+# export OMP_PROC_BIND=close
+# for C in "${Cs[@]}";
+# do
+#     for sigma in "${sigmas[@]}";
+#     do
+#         for seg_method in "${seg_types[@]}";
+#         do
+#             for rand_opt in 0 1;
+#             do
+#                 export I_MPI_PIN_DOMAIN="36:compact"
+#                 export OMP_NUM_THREADS=36
+#                 export OMP_PLACES=cores
+#                 export OMP_PROC_BIND=close
+#                 ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -dp
+#                 ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -dp
+#                 ./../../uspmv_no_mpi ../../matrices/impcol_e.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -dp
+#                 ./../../uspmv_no_mpi ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -sp
+#                 ./../../uspmv_no_mpi ../../matrices/matrix1.mtx scs -c $C -s $sigma  -mode b $seg_method -rand_x $rand_opt -sp
+#             done
+#         done
+#     done
+# done

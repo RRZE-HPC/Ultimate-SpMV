@@ -406,7 +406,7 @@ void validate_result(
 
     convert_to_scs<double, double, int>(total_mtx, 1, 1, scs);
 
-    V<int, int>row_ptrs(total_mtx->n_rows + 1);
+    std::vector<int> row_ptrs(total_mtx->n_rows + 1);
 
     convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
         
@@ -487,7 +487,7 @@ void validate_sp_result(
 
     convert_to_scs<float, float, int>(total_mtx, 1, 1, scs);
 
-    V<int, int>row_ptrs(total_mtx->n_rows + 1);
+    std::vector<int> row_ptrs(total_mtx->n_rows + 1);
 
     convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
         

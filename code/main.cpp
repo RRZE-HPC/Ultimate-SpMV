@@ -1,5 +1,4 @@
 #include "mmio.h"
-#include "vectors.h"
 #include "utilities.hpp"
 #include "kernels.hpp"
 #include "mpi_funcs.hpp"
@@ -17,7 +16,7 @@
 #include <sstream>
 #include <vector>
 
-
+// Constants for benchmarking harness
 #define WARM_UP_REPS 100
 #define MILLI_TO_SEC 0.001
 
@@ -25,14 +24,18 @@
 #include <omp.h>
 #endif
 
+
 /**
     @brief Perform SPMV kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
-    @param *local_scs : pointer to process-local scs struct 
+    @param *local_scs : pointer to process-local scs struct
+    @param *(dp/sp/hp)_local_scs : precision-specific copies, used in adaptive precision
     @param *local_context : struct containing communication information
     @param *work_sharing_arr : the array describing the partitioning of the rows
     @param *local_y : Process-local results vector, instance of SimpleDenseMatrix class
+    @param *(dp/sp/hp)_local_y : precision-specific copies, used in adaptive precision
     @param *local_x : local RHS vector, instance of SimpleDenseMatrix class
+    @param *(dp/sp/hp)_local_x : precision-specific copies, used in adaptive precision
     @param *r : a Result struct, in which results of the benchmark are stored
 */
 template <typename VT, typename IT>
@@ -120,7 +123,7 @@ void bench_spmv(
     config->num_blocks = n_blocks; // Just for ease of results printing later
     config->tpb = THREADS_PER_BLOCK;
     
-    // Allocating all these pointers out here isn't the cleanest...
+    // NOTE: Allocating all these pointers out here isn't the cleanest...
     VT *d_x = new VT;
     VT *d_y = new VT;
     ST *d_C = new ST;
@@ -846,12 +849,14 @@ void gather_results(
 }
 
 /** 
-    @brief Initialize total_mtx, segment and send this to local_mtx, convert to local_scs format, init comm information
+    @brief Perform initialization routines on relevant structures
     @param *local_scs : pointer to process-local scs struct
+    @param *(dp/sp/hp)_local_scs : precision-specific copies, used in adaptive precision
     @param *local_context : struct containing local_scs + communication information
     @param *total_mtx : global mtx struct
     @param *config : struct to initialze default values and user input
     @param *work_sharing_arr : the array describing the partitioning of the rows
+    @param *metis_ : various pointers needed by metis graph partitioner
 */
 template<typename VT, typename IT>
 void init_local_structs(
@@ -1298,6 +1303,10 @@ void compute_result(
 #endif
 }
 
+/**
+    @brief Entry point for program functionality
+    @param *config : struct to initialze default values and user input
+*/
 void standalone_bench(
     Config config,
     std::string matrix_file_name,
