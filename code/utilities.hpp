@@ -3093,8 +3093,6 @@ void assign_mpi_args(
 
     comm_args_encoded->my_rank = my_rank;
     comm_args_encoded->comm_size = comm_size;
-
-    // std::cout << "my_rank = " << my_rank << std::endl;
 }
 
 #ifdef __CUDACC__
