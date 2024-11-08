@@ -26,7 +26,7 @@
 
 
 /**
-    @brief Perform SPMV kernel, either in "solve" mode or "bench" mode
+    @brief Perform spmv kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
     @param *local_scs : pointer to process-local scs struct
     @param *(dp/sp/hp)_local_scs : precision-specific copies, used in adaptive precision
@@ -67,15 +67,18 @@ void bench_spmv(
 {
     // Permute x, in order to match the permutation which was done to the columns
     // std::vector<VT> local_x_permuted(local_x->size(), VT{}); <- is this more correct?
-    std::vector<VT> local_x_permuted(local_x->size(), 0.0);
+    std::vector<VT> local_x_permuted(local_x->size(), VT{});
     std::vector<double> dp_local_x_permuted(dp_local_x->size(), 0.0);
     std::vector<float> sp_local_x_permuted(sp_local_x->size(), 0.0f);
 #ifdef HAVE_HALF_MATH
     std::vector<_Float16> hp_local_x_permuted(hp_local_x->size(), 0.0f16);
 #endif
-
     // TODO: Something here seems iffy. I think something is going wrong with the inverse perm vec
-    apply_permutation<VT, IT>(&(local_x_permuted)[0], &(*local_x)[0], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    // TODO: Skipping these permutation concerns now for SpMM
+    // TODO: Bandaid
+    for(int i = 0; i < config->x_block_width; ++i){
+        apply_permutation<VT, IT>(&(local_x_permuted)[i * local_scs->n_rows], &(*local_x)[i * local_scs->n_rows], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+    }
 
     if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
         // Currently, we fix one sigma. That is, we permute dp and sp exactly the same
@@ -118,9 +121,9 @@ void bench_spmv(
 #ifdef __CUDACC__
     // If using cuda compiler, move data to device and assign device pointers
     printf("Moving data to device...\n");
-    long n_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    long n_thread_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
-    config->num_blocks = n_blocks; // Just for ease of results printing later
+    config->num_blocks = n_thread_blocks; // Just for ease of results printing later
     config->tpb = THREADS_PER_BLOCK;
     
     // NOTE: Allocating all these pointers out here isn't the cleanest...
@@ -132,7 +135,7 @@ void bench_spmv(
     IT *d_chunk_lengths = new IT;
     IT *d_col_idxs = new IT;
     VT *d_values = new VT;
-    ST *d_n_blocks = new ST;
+    ST *d_n_thread_blocks = new ST;
 
     double *d_x_dp = new double;
     double *d_y_dp = new double;
@@ -193,7 +196,7 @@ assign_spmv_kernel_gpu_data<VT>(
     d_chunk_lengths,
     d_col_idxs,
     d_values,
-    d_n_blocks,
+    d_n_thread_blocks,
     d_x_dp,
     d_y_dp,
     d_C_dp,
@@ -220,7 +223,7 @@ assign_spmv_kernel_gpu_data<VT>(
     d_col_idxs_sp,
     d_values_sp,
 #endif
-    n_blocks,
+    n_thread_blocks,
 #ifdef USE_CUSPARSE
     cusparse_args_encoded,
 #endif
@@ -268,11 +271,11 @@ assign_spmv_kernel_gpu_data<VT>(
         to_send_elems,
         recv_requests,
         send_requests,
-        nzs_size,
-        nzr_size,
+        &nzs_size,
+        &nzr_size,
 #endif
-        my_rank,
-        comm_size
+        &my_rank,
+        &comm_size
     );
 
     // Pass args to construct spmv_kernel object
@@ -296,7 +299,7 @@ assign_spmv_kernel_gpu_data<VT>(
         comm_args_void_ptr
     );
 
-    // Enter main COMM-SPMV-SWAP loop, bench mode
+    // Enter main COMM-spmv-SWAP loop, bench mode
     if(config->mode == 'b'){
 #ifdef __CUDACC__
     cudaEvent_t start, stop, warmup_start, warmup_stop;
@@ -326,7 +329,7 @@ assign_spmv_kernel_gpu_data<VT>(
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
 #endif
-            spmv_kernel.execute_warmup_spmv();
+            spmv_kernel.execute_warmup();
 
 #ifdef USE_MPI
             if(config->ba_synch)
@@ -376,7 +379,7 @@ assign_spmv_kernel_gpu_data<VT>(
                 for(int k=0; k<n_iter; ++k) {
                     spmv_kernel.init_halo_exchange();
                     spmv_kernel.finalize_halo_exchange();
-                    spmv_kernel.execute_spmv();
+                    spmv_kernel.execute();
                     spmv_kernel.swap_local_vectors();
                     if(config->ba_synch)
                         MPI_Barrier(MPI_COMM_WORLD);
@@ -407,7 +410,7 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
                 
                 for(int k=0; k<n_iter; ++k) {
-                    spmv_kernel.execute_spmv();
+                    spmv_kernel.execute();
 #ifdef USE_MPI
                     if(config->ba_synch)
                         MPI_Barrier(MPI_COMM_WORLD);
@@ -444,11 +447,11 @@ assign_spmv_kernel_gpu_data<VT>(
         r->duration_total_s = runtime;
 #endif
         r->duration_kernel_s = r->duration_total_s/ r->n_calls;
-        r->perf_gflops = (double)local_context->total_nnz * 2.0
+        r->perf_gflops = (double)local_context->total_nnz * 2.0 * config->x_block_width
                             / r->duration_kernel_s
                             / 1e9;                   // Only count usefull flops
     }
-    else if(config->mode == 's') { // Enter main COMM-SPMV-SWAP loop, solve mode
+    else if(config->mode == 's') { // Enter main COMM-spmv-SWAP loop, solve mode
         for (int i = 0; i < config->n_repetitions; ++i)
         {
 #ifdef DEBUG_MODE_FINE
@@ -480,7 +483,7 @@ assign_spmv_kernel_gpu_data<VT>(
             }
 #endif
 #endif
-            spmv_kernel.execute_spmv();
+            spmv_kernel.execute();
 
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
@@ -1126,9 +1129,9 @@ void init_local_structs(
 }
 
 /**
-    @brief The main harness for the SpMV kernel, in which we:
+    @brief The main harness for the spmv kernel, in which we:
         1. Segment and distribute the needed structs to each MPI process (init_local_structs),
-        2. Benchmark the selected SpMV kernel (bench_spmv),
+        2. Benchmark the selected spmv kernel (bench_spmv),
         3. Gather benchmark results to the root MPI process (gather_results).
     @param *total_mtx : global mtx struct, read from a .mtx file (or generated with ScaMaC TODO)
     @param *config : struct to initialze default values and user input
@@ -1202,23 +1205,23 @@ void compute_result(
     );
 
     // Declare local vectors to be used
-    SimpleDenseMatrix<VT, IT> local_x(&local_context);
+    SimpleDenseMatrix<VT, IT> local_x(&local_context, config);
 
     // Must be declared, but only used for mixed precision case
     // TODO: not efficient for storage, but used later for mp interop
-    SimpleDenseMatrix<double, IT> dp_local_x(&local_context);
-    SimpleDenseMatrix<float, IT> sp_local_x(&local_context);
+    SimpleDenseMatrix<double, IT> dp_local_x(&local_context, config);
+    SimpleDenseMatrix<float, IT> sp_local_x(&local_context, config);
 #ifdef HAVE_HALF_MATH
-    SimpleDenseMatrix<_Float16, IT> hp_local_x(&local_context);
+    SimpleDenseMatrix<_Float16, IT> hp_local_x(&local_context, config);
 #endif
 
-    SimpleDenseMatrix<VT, IT> local_y(&local_context);
+    SimpleDenseMatrix<VT, IT> local_y(&local_context, config);
 
     // NOTE: a low precision y vector is needed for swapping with low precision x
-    SimpleDenseMatrix<double, IT> dp_local_y(&local_context);
-    SimpleDenseMatrix<float, IT> sp_local_y(&local_context);
+    SimpleDenseMatrix<double, IT> dp_local_y(&local_context, config);
+    SimpleDenseMatrix<float, IT> sp_local_y(&local_context, config);
 #ifdef HAVE_HALF_MATH
-    SimpleDenseMatrix<_Float16, IT> hp_local_y(&local_context);
+    SimpleDenseMatrix<_Float16, IT> hp_local_y(&local_context, config);
 #endif
 
     // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp,
@@ -1226,23 +1229,20 @@ void compute_result(
     local_x.init(config, 'x');
     local_y.init(config, 'y');
 
-    // Copy initialized RHS and LHS into other precisions
-    // TODO: wrap in method or something
-    for(int i = 0; i < (local_x.vec).size(); ++i){
-        dp_local_x.vec[i] = static_cast<double>(local_x.vec[i]);
-        sp_local_x.vec[i] = static_cast<float>(local_x.vec[i]);
+    copy_data_to_ap_vectors(
+        &dp_local_x,
+        &sp_local_x,
 #ifdef HAVE_HALF_MATH
-        hp_local_x.vec[i] = static_cast<_Float16>(local_x.vec[i]);
+        &hp_local_x,
 #endif
-    }
-
-    for(int i = 0; i < (local_y.vec).size(); ++i){
-        dp_local_y.vec[i] = 0.0;
-        sp_local_y.vec[i] = 0.0f;
+        &local_x,
+        &dp_local_y,
+        &sp_local_y,
 #ifdef HAVE_HALF_MATH
-        hp_local_y.vec[i] = 0.0f16;
+        &hp_local_y,
 #endif
-    }
+        &local_y
+    );
 
     // Copy contents of local_x for output, and validation against mkl
     std::vector<VT> local_x_copy = local_x.vec;
@@ -1486,7 +1486,7 @@ int main(int argc, char *argv[]){
 #endif
 
 #ifdef DEBUG_MODE
-    if(my_rank == 0){printf("Beginning of USpMV main execution.\n");}
+    if(my_rank == 0){printf("Beginning of uspmv main execution.\n");}
 #endif
 
 #ifdef USE_LIKWID
@@ -1532,7 +1532,7 @@ int main(int argc, char *argv[]){
 #endif
 
 #ifdef DEBUG_MODE
-    if(my_rank == 0){printf("End of USpMV main execution.\n");}
+    if(my_rank == 0){printf("End of uspmv main execution.\n");}
 #endif
 
     return 0;

@@ -1004,7 +1004,7 @@ uspmv_csr_cpu(const ST C, // 1
         #pragma omp for schedule(static)
         for (ST row = 0; row < num_rows; ++row) {
             VT sum{};
-            // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sum)
+            // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sum)
             #pragma omp simd reduction(+:sum)
             for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
                 sum += values[j] * x[col_idxs[j]];
@@ -1167,7 +1167,7 @@ uspmv_csr_apdpsp_cpu(
             #pragma omp for schedule(static)
             for (ST row = 0; row < *dp_n_rows; ++row) {
                 double dp_sum{};
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:dp_sum)
                 #pragma omp simd reduction(+:dp_sum)
                 for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
                     dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
@@ -1178,8 +1178,8 @@ uspmv_csr_apdpsp_cpu(
                 }
 
                 double sp_sum{};
-                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(2*SIMD_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sp_sum)
                 #pragma omp simd reduction(+:sp_sum)
                 for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row + 1]; ++j) {
                     // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
@@ -1238,7 +1238,7 @@ uspmv_csr_apdphp_cpu(
             #pragma omp for schedule(static)
             for (ST row = 0; row < *dp_n_rows; ++row) {
                 double dp_sum{};
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:dp_sum)
                 #pragma omp simd reduction(+:dp_sum)
                 for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
                     dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
@@ -1249,8 +1249,8 @@ uspmv_csr_apdphp_cpu(
                 }
 
                 double hp_sum{};
-                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(2*SIMD_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sp_sum)
                 #pragma omp simd reduction(+:hp_sum)
                 for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
                     // hp_sum += hp_values[j] * hp_x[hp_col_idxs[j]];
@@ -1310,7 +1310,7 @@ uspmv_csr_apsphp_cpu(
             #pragma omp for schedule(static)
             for (ST row = 0; row < *sp_n_rows; ++row) {
                 float sp_sum{};
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:dp_sum)
                 #pragma omp simd reduction(+:sp_sum)
                 for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row+1]; ++j) {
                     sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
@@ -1321,8 +1321,8 @@ uspmv_csr_apsphp_cpu(
                 }
 
                 float hp_sum{};
-                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(2*SIMD_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sp_sum)
                 #pragma omp simd reduction(+:hp_sum)
                 for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
                     // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
@@ -1382,7 +1382,7 @@ uspmv_csr_apdpsphp_cpu(
             for (ST row = 0; row < *sp_n_rows; ++row) {
 
                 double dp_sum{};
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:dp_sum)
                 #pragma omp simd reduction(+:dp_sum)
                 for (IT j = dp_row_ptrs[row]; j < dp_row_ptrs[row+1]; ++j) {
                     dp_sum += dp_values[j] * dp_x[dp_col_idxs[j]];
@@ -1393,7 +1393,7 @@ uspmv_csr_apdpsphp_cpu(
                 }
 
                 double sp_sum{};
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:dp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:dp_sum)
                 #pragma omp simd reduction(+:sp_sum)
                 for (IT j = sp_row_ptrs[row]; j < sp_row_ptrs[row+1]; ++j) {
                     // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];
@@ -1405,8 +1405,8 @@ uspmv_csr_apdpsphp_cpu(
                 }
 
                 double hp_sum{};
-                // #pragma omp simd simdlen(2*VECTOR_LENGTH) reduction(+:sp_sum)
-                // #pragma omp simd simdlen(VECTOR_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(2*SIMD_LENGTH) reduction(+:sp_sum)
+                // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sp_sum)
                 #pragma omp simd reduction(+:hp_sum)
                 for (IT j = hp_row_ptrs[row]; j < hp_row_ptrs[row + 1]; ++j) {
                     // sp_sum += sp_values[j] * sp_x[sp_col_idxs[j]];

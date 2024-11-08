@@ -1,7 +1,7 @@
 include config.mk
 
 # apply user-defined variables
-CXXFLAGS += -DVECTOR_LENGTH=$(VECTOR_LENGTH) -DTHREADS_PER_BLOCK=$(THREADS_PER_BLOCK)
+CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH) -DTHREADS_PER_BLOCK=$(THREADS_PER_BLOCK)
 
 
 # Validate Makefile options (sanity checks)

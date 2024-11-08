@@ -934,6 +934,7 @@ void cli_options_messge(
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n " 
         "options [defaults] (description): \n \\
+        -x_size [%i] (int: width of X vector for SpMM) \n \\
         -c [%li] (int: chunk size (required for scs)) \n \\
         -s [%li] (int: sigma (required for scs)) \n \\
         -rev [%li] (int: number of back-to-back revisions to perform) \n \\
@@ -954,6 +955,7 @@ void cli_options_messge(
         -dropout[%f] (0/1: enable dropout of elements below theh designated threshold) \n \\
         -dropout_threshold [%f] (float: remove matrix elements below this range) \n\n",
         argv[0], \
+        config->x_block_width, \
         config->chunk_size, \
         config->sigma, \
         config->n_repetitions, \
@@ -1029,6 +1031,20 @@ void parse_cli_inputs(
             {
                 if(my_rank == 0){
                     fprintf(stderr, "ERROR: sigma must be >= 1.\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
+        else if (arg == "-x_size")
+        {
+
+            config->x_block_width = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->x_block_width < 1)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: number of x vectors must be > 1.\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }
@@ -1271,6 +1287,25 @@ void parse_cli_inputs(
     }
 
     // Sanity checks //
+#ifdef __CUDACC__
+    if (config->x_block_width > 1){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: SpMM is not yet implemented on GPUs.\n");
+            exit(1);
+        }
+    }
+#endif
+
+#ifdef USE_MPI
+    if (config->x_block_width > 1){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: MPI parallel SpMM is not yet implemented.\n");
+            exit(1);
+        }
+    }
+#endif
+
+
 #ifndef USE_MKL
     if (config->mode == 's'){
         if(my_rank == 0){
@@ -1936,7 +1971,7 @@ class SimpleDenseMatrix {
         SimpleDenseMatrix(void){
         }
 
-        SimpleDenseMatrix(const ContextData<IT> *local_context){
+        SimpleDenseMatrix(const ContextData<IT> *local_context, Config *config){
             // TODO: not too sure about this
             IT padding_from_heri = 0;
 
@@ -1944,7 +1979,9 @@ class SimpleDenseMatrix {
             padding_from_heri = (local_context->recv_counts_cumsum).back();   
 #endif
             IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
-            vec.resize(needed_padding + local_context->num_local_rows, 0);
+
+            // For SCS, Each x column needs to be padded
+            vec.resize(config->x_block_width * (needed_padding + local_context->num_local_rows), VT{});
         }
 
         // SimpleDenseMatrix(std::vector<VT> vec_to_copy, const ContextData<VT, IT> *local_context){
@@ -2199,7 +2236,12 @@ void register_likwid_markers(
                 LIKWID_MARKER_REGISTER("spmv_apdpsphp_crs_benchmark");
             }
             else{
-                LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
+                if(config->x_block_width > 1){
+                    LIKWID_MARKER_REGISTER("block_colwise_spmv_crs_benchmark");    
+                }
+                else{
+                    LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
+                }
             }
         }
         else if(config->kernel_format == "scs"){
@@ -3030,11 +3072,11 @@ void assign_mpi_args(
     VT **to_send_elems,
     MPI_Request *recv_requests,
     MPI_Request *send_requests,
-    int nzs_size,
-    int nzr_size,
+    int *nzs_size,
+    int *nzr_size,
 #endif
-    int my_rank,
-    int comm_size
+    int *my_rank,
+    int *comm_size
 ){
 #ifdef USE_MPI
     // Encode comm args into struct
@@ -3043,14 +3085,16 @@ void assign_mpi_args(
     comm_args_encoded->to_send_elems = to_send_elems;
     comm_args_encoded->perm = local_scs->old_to_new_idx.data();
     comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
-    comm_args_encoded->nzs_size = &nzs_size;
+    comm_args_encoded->nzs_size = nzs_size;
     comm_args_encoded->send_requests = send_requests;
-    comm_args_encoded->nzr_size = &nzr_size;
+    comm_args_encoded->nzr_size = nzr_size;
     comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
 #endif
 
-    comm_args_encoded->my_rank = &my_rank;
-    comm_args_encoded->comm_size = &comm_size;
+    comm_args_encoded->my_rank = my_rank;
+    comm_args_encoded->comm_size = comm_size;
+
+    // std::cout << "my_rank = " << my_rank << std::endl;
 }
 
 #ifdef __CUDACC__
@@ -3612,7 +3656,10 @@ void copy_back_result(
                 dp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
+            // TODO: Bandaid
+            for(int i = 0; i < config->x_block_width; ++i){
+                apply_permutation<double, IT>(&((sorted_dp_local_y.data())[i * local_scs->n_rows]), &(dp_local_x_permuted[i * local_scs->n_rows]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+            }
 
             for(int i = 0; i < local_y->size(); ++i){
                 (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
@@ -3681,7 +3728,41 @@ void copy_back_result(
         // With AP, we need to permute w.r.t. the local_scs of the highest precision
 
         // Manually resize for ease later on (and I don't see a better way)
-        local_y->resize(local_context->num_local_rows);
+        // TODO: Think of a way around this
+        // local_y->resize(local_context->num_local_rows);
+}
+
+template <typename VT, typename IT>
+void copy_data_to_ap_vectors(
+    SimpleDenseMatrix<double, IT> *dp_local_x,
+    SimpleDenseMatrix<float, IT> *sp_local_x,
+#ifdef HAVE_HALF_MATH
+    SimpleDenseMatrix<_Float16, IT> *hp_local_x,
+#endif
+    SimpleDenseMatrix<VT, IT> *local_x,
+    SimpleDenseMatrix<double, IT> *dp_local_y,
+    SimpleDenseMatrix<float, IT> *sp_local_y,
+#ifdef HAVE_HALF_MATH
+    SimpleDenseMatrix<_Float16, IT> *hp_local_y,
+#endif
+    SimpleDenseMatrix<VT, IT> *local_y
+){
+    // Copy initialized RHS and LHS into other precisions
+    for(int i = 0; i < (local_x->vec).size(); ++i){
+        dp_local_x->vec[i] = static_cast<double>(local_x->vec[i]);
+        sp_local_x->vec[i] = static_cast<float>(local_x->vec[i]);
+#ifdef HAVE_HALF_MATH
+        hp_local_x->vec[i] = static_cast<_Float16>(local_x->vec[i]);
+#endif
+    }
+
+    for(int i = 0; i < (local_y->vec).size(); ++i){
+        dp_local_y->vec[i] = 0.0;
+        sp_local_y->vec[i] = 0.0f;
+#ifdef HAVE_HALF_MATH
+        hp_local_y->vec[i] = 0.0f16;
+#endif
+    }
 }
 
 #endif

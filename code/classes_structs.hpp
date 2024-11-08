@@ -60,9 +60,6 @@ struct Config
     // Verify result of SpVM.
     int validate_result = 1;
 
-    // Verify result against solution of COO kernel.
-    int verify_result_with_coo = 0;
-
     // Sort rows/columns of sparse matrix before
     // converting it to a specific format.
     int sort_matrix = 1;
@@ -71,6 +68,9 @@ struct Config
 
     // activate profile logs, only root process
     int log_prof = 0;
+
+    // width of X vector for SpMM
+    int x_block_width = 1;
 
     // communicate the halo elements in benchmark loop
     int comm_halos = 1;
@@ -170,8 +170,8 @@ struct CommArgs
     const IT *nzr_size;
     const IT *num_local_elems;
 #endif
-    const IT *my_rank;
-    const IT* comm_size;
+    int *my_rank = nullptr;
+    int *comm_size = nullptr;
 
 };
 
@@ -187,7 +187,7 @@ struct OnePrecKernelArgs
     VT * RESTRICT local_x;
     VT * RESTRICT local_y;
 #ifdef __CUDACC__
-    ST * n_blocks;
+    ST * n_thread_blocks;
 #endif
 };
 
@@ -221,7 +221,7 @@ struct MultiPrecKernelArgs
     _Float16 * RESTRICT hp_local_y;
 #endif
 #ifdef __CUDACC__
-    ST * n_blocks;
+    ST * n_thread_blocks;
 #endif
 };
 
@@ -242,7 +242,6 @@ struct CuSparseArgs
 };
 #endif
 
-// VTU and VTL only used for ap kernels
 template <typename VT, typename IT>
 class SpmvKernel {
     private:
@@ -255,8 +254,9 @@ class SpmvKernel {
             const VT *, // values
             VT *, // x
             VT *, //y
+            int *, // x_block_width
 #ifdef __CUDACC__
-            const ST *, // n_blocks
+            const ST *, // n_thread_blocks
 #endif
             const int * // my_rank
         )> OnePrecFuncPtr;
@@ -289,7 +289,7 @@ class SpmvKernel {
             _Float16 * RESTRICT, // lp_y
 #endif
 #ifdef __CUDACC__
-            const ST *, // n_blocks
+            const ST *, // n_thread_blocks
 #endif
             const int *
         )> MultiPrecFuncPtr;
@@ -318,7 +318,7 @@ class SpmvKernel {
         const IT * RESTRICT col_idxs = one_prec_kernel_args_decoded->col_idxs;
         const VT * RESTRICT values = one_prec_kernel_args_decoded->values;
 #ifdef __CUDACC__
-        const ST * n_blocks_1 = one_prec_kernel_args_decoded->n_blocks;
+        const ST * n_thread_blocks_1 = one_prec_kernel_args_decoded->n_thread_blocks;
 #endif
 
         // Need different names on all of unpacked args
@@ -344,7 +344,7 @@ class SpmvKernel {
 #endif
 
 #ifdef __CUDACC__
-        const ST * n_blocks_2 = multi_prec_kernel_args_decoded->n_blocks;
+        const ST * n_thread_blocks_2 = multi_prec_kernel_args_decoded->n_thread_blocks;
 #endif
 
 #ifdef USE_CUSPARSE
@@ -373,8 +373,8 @@ class SpmvKernel {
         const IT nzr_size = *(comm_args_decoded->nzr_size);
         const IT num_local_elems = *(comm_args_decoded->num_local_elems);
 #endif
-        const IT my_rank = *(comm_args_decoded->my_rank);
-        const IT comm_size = *(comm_args_decoded->comm_size);
+        int my_rank = *(comm_args_decoded->my_rank);
+        int comm_size = *(comm_args_decoded->comm_size);
 
 
     public:
@@ -400,26 +400,36 @@ class SpmvKernel {
         kernel_args_encoded(kernel_args_encoded_), 
         cusparse_args_encoded(cusparse_args_encoded_),
         comm_args_encoded(comm_args_encoded_){
-                                            // CRS kernel selection //
+
+            // CRS kernel selection //
             if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                 if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
+                    if(config->x_block_width > 1){
+                        if(my_rank == 0){printf("Block CRS kernel selected\n");}
+                        one_prec_kernel_func_ptr = block_colwise_spmv_omp_csr<VT, IT>;
+                        one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
+                    }
+                    else{
 #ifdef USE_CUSPARSE
-                    if(my_rank == 0){printf("CUSPARSE CRS kernel selected\n");}
+                        if(my_rank == 0){printf("CUSPARSE CRS kernel selected\n");}
 #else
-                    if(my_rank == 0){printf("CRS kernel selected\n");}
+                        if(my_rank == 0){printf("CRS kernel selected\n");}
 #endif
 #ifdef __CUDACC__
-                    one_prec_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
-                    one_prec_warmup_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
+                        one_prec_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
+                        one_prec_warmup_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
 #else
-                    if(my_rank == 0){printf("CRS kernel selected\n");}
-                    one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
-                    one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
-                    // one_prec_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
-                    // one_prec_warmup_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
-                    // one_prec_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
-                    // one_prec_warmup_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
+                        if(my_rank == 0){printf("CRS kernel selected\n");}
+                        one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
+                        one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
+
+                        // Experiments with half precision AVX
+                        // one_prec_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
+                        // one_prec_warmup_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
+                        // one_prec_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
+                        // one_prec_warmup_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
 #endif
+                    }
                 }
                 else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
 #ifdef __CUDACC__
@@ -742,7 +752,7 @@ class SpmvKernel {
 
         // Warmup kernel picker //
         // TODO: You really should think of a way around these warmup kernels...
-        inline void execute_warmup_one_prec_spmv(void){
+        inline void execute_warmup_one_prec(void){
 #ifdef USE_CUSPARSE
             cusparseSpMV(
                 handle,
@@ -766,8 +776,9 @@ class SpmvKernel {
                 values,
                 local_x,
                 local_y,
+                &(config->x_block_width),
 #ifdef __CUDACC__
-                n_blocks_1,
+                n_thread_blocks_1,
 #endif
                 &my_rank
             );
@@ -778,7 +789,7 @@ class SpmvKernel {
 #endif
         }
 
-        inline void execute_warmup_two_prec_spmv(void){
+        inline void execute_warmup_two_prec(void){
             multi_prec_warmup_kernel_func_ptr(
                 dp_C,
                 dp_n_chunks,
@@ -807,7 +818,7 @@ class SpmvKernel {
                 hp_local_y,
 #endif
 #ifdef __CUDACC__
-                n_blocks_2,
+                n_thread_blocks_2,
 #endif
                 &my_rank
             );
@@ -817,7 +828,7 @@ class SpmvKernel {
 #endif
         }
 
-        inline void execute_warmup_three_prec_spmv(void){
+        inline void execute_warmup_three_prec(void){
             multi_prec_warmup_kernel_func_ptr(
                 dp_C,
                 dp_n_chunks,
@@ -846,7 +857,7 @@ class SpmvKernel {
                 hp_local_y,
 #endif
 #ifdef __CUDACC__
-                n_blocks_2,
+                n_thread_blocks_2,
 #endif
                 &my_rank
             );
@@ -856,20 +867,20 @@ class SpmvKernel {
 #endif
         }
 
-        void execute_warmup_spmv(void){
+        void execute_warmup(void){
             if(config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
-                execute_warmup_one_prec_spmv();
+                execute_warmup_one_prec();
             }
             else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_hp]"){
-                execute_warmup_two_prec_spmv();
+                execute_warmup_two_prec();
             }
             else if(config->value_type == "ap[dp_sp_hp]"){
-                execute_warmup_three_prec_spmv();
+                execute_warmup_three_prec();
             }
         }
 
 
-        inline void execute_one_prec_spmv(void){
+        inline void execute_one_prec(void){
 #ifdef USE_CUSPARSE
             cusparseSpMV(
                 handle,
@@ -893,8 +904,9 @@ class SpmvKernel {
                 values,
                 local_x,
                 local_y,
+                &(config->x_block_width),
 #ifdef __CUDACC__
-                n_blocks_1,
+                n_thread_blocks_1,
 #endif
                 &my_rank
             );
@@ -905,7 +917,7 @@ class SpmvKernel {
 #endif
         }
 
-        inline void execute_two_prec_spmv(void){
+        inline void execute_two_prec(void){
             multi_prec_kernel_func_ptr(
                 dp_C,
                 dp_n_chunks,
@@ -934,7 +946,7 @@ class SpmvKernel {
                 hp_local_y,
 #endif
 #ifdef __CUDACC__
-                n_blocks_2,
+                n_thread_blocks_2,
 #endif
                 &my_rank
             );
@@ -944,7 +956,7 @@ class SpmvKernel {
 #endif
         }
 
-        inline void execute_three_prec_spmv(void){
+        inline void execute_three_prec(void){
             multi_prec_kernel_func_ptr(
                 dp_C,
                 dp_n_chunks,
@@ -973,7 +985,7 @@ class SpmvKernel {
                 hp_local_y,
 #endif
 #ifdef __CUDACC__
-                n_blocks_2,
+                n_thread_blocks_2,
 #endif
                 &my_rank
             );
@@ -983,15 +995,15 @@ class SpmvKernel {
 #endif
         }
 
-        void execute_spmv(void){
+        void execute(void){
             if(config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
-                execute_one_prec_spmv();
+                execute_one_prec();
             }
             else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_hp]"){
-                execute_two_prec_spmv();
+                execute_two_prec();
             }
             else if(config->value_type == "ap[dp_sp_hp]"){
-                execute_three_prec_spmv();
+                execute_three_prec();
             }
         }
 

@@ -18,7 +18,7 @@ void compute_euclid_dist(
     double tmp = 0.0; // NOTE: does this need to be VT?
 
     #pragma omp parallel for reduction(+:tmp)
-    for(int i = 0; i < r->total_rows; ++i){
+    for(int i = 0; i < x->size(); ++i){
         tmp += (double)((r->total_uspmv_result[i] - (*x)[i]) * (r->total_uspmv_result[i] - (*x)[i]));
     }
 
@@ -33,7 +33,7 @@ void compute_euclid_magnitude(
     double tmp = 0.0; // NOTE: does this need to be VT?
 
     #pragma omp parallel for reduction(+:tmp)
-    for(int i = 0; i < r->total_rows; ++i){
+    for(int i = 0; i < x->size(); ++i){
         tmp += (double)((*x)[i] * (*x)[i]);
     }
     r->mkl_magnitude = std::sqrt(tmp);
@@ -70,6 +70,7 @@ void write_bench_to_file(
     working_file << num_omp_threads << " thread(s) per proc" << std::endl;
 #endif 
     working_file << "kernel: " << config->kernel_format; 
+    working_file << ", x_width: " << config->x_block_width; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
         if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]"){
@@ -259,14 +260,16 @@ void write_result_to_file(
     if(config->verbose_validation == 1){
         width = 24;
 
-        working_file << std::left << std::setw(n_result_digits + 6) << "idx:"
+        working_file<< std::left << std::setw(n_result_digits + 8) << "vec idx:" 
+                    << std::left << std::setw(n_result_digits + 8) << "row idx:"
                     << std::left << std::setw(width) << "mkl results:"
                     << std::left << std::setw(width) << "uspmv results:"
                     << std::left << std::setw(width) << "rel. diff(%):" 
                     << std::left << std::setw(width) << "abs. diff:" 
                     << std::endl;
 
-        working_file << std::left << std::setw(n_result_digits + 6) << "----"
+        working_file<< std::left << std::setw(n_result_digits + 8) << "--------" 
+                    << std::left << std::setw(n_result_digits + 8) << "--------"
                     << std::left << std::setw(width) << "-----------"
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "------------"
@@ -296,7 +299,9 @@ void write_result_to_file(
                     << std::left << std::setw(width+4) << "-------------------------" << std::endl;
     }
 
+    int vec_count = 0;
     for(int i = 0; i < r->total_uspmv_result.size(); ++i){
+
         // TODO: static casting just to make it compile... 
         relative_diff = std::abs( (static_cast<double>((*x)[i]) - r->total_uspmv_result[i]) /static_cast<double>((*x)[i]));
         absolute_diff = std::abs( static_cast<double>((*x)[i]) - r->total_uspmv_result[i]);
@@ -312,7 +317,8 @@ void write_result_to_file(
         if(config->verbose_validation == 1)
         {
             // Setting the width of the index column to be the number of digits of the result vector size
-            working_file << std::left << std::setw(n_result_digits + 6) << i
+            working_file<< std::left << std::setw(n_result_digits + 8) << vec_count
+                        << std::left << std::setw(n_result_digits + 8) << (i - (r->total_rows * vec_count))
                         << std::left << std::setprecision(16) << std::scientific << std::setw(width) << (double)((*x)[i])
                         << std::left << std::setw(width) << static_cast<double>(r->total_uspmv_result[i])
                         << std::left << std::setw(width) << 100 * relative_diff
@@ -345,6 +351,10 @@ void write_result_to_file(
             std::cout << "Validation verbose level not recognized" << std::endl;
             exit(1);
         }
+
+        // increments RHS vector counting for block x_vector
+        if((i + 1) % (r->total_rows) == 0 && i > 0)
+            ++vec_count;
     }
     if(config->verbose_validation == 0)
     {
@@ -399,8 +409,8 @@ void validate_result(
     int chunk_size = 1;
 #endif
 
-    mkl_result->resize(num_rows, 0);
-    std::vector<double> y(num_rows, 0);
+    mkl_result->resize(num_rows * config->x_block_width, 0.0);
+    std::vector<double> y(num_rows * config->x_block_width, 0.0);
 
     ScsData<double, int> *scs = new ScsData<double, int>;
 
@@ -411,25 +421,25 @@ void validate_result(
     convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
         
     if(config->value_type == "dp" || config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
-        for (int i = 0; i < num_rows; i++) {
+        for (int i = 0; i < num_rows * config->x_block_width; i++) {
             (*mkl_result)[i] = r_dp->total_x[i];
         }
     }
     else if(config->value_type == "sp" || config->value_type == "ap[sp_hp]"){
-        for (int i = 0; i < num_rows; i++) {
+        for (int i = 0; i < num_rows * config->x_block_width; i++) {
             (*mkl_result)[i] = r_sp->total_x[i];
         }
     }
     else if(config->value_type == "hp"){
 #ifdef HAVE_HALF_MATH
-        for (int i = 0; i < num_rows; i++) {
+        for (int i = 0; i < num_rows * config->x_block_width; i++) {
             (*mkl_result)[i] = r_hp->total_x[i];
         }
 #endif
     }
 
 
-    for (int i = 0; i < num_cols; i++) {
+    for (int i = 0; i < num_cols * config->x_block_width; i++) {
         y[i] = 0.0;
     }
 
@@ -442,15 +452,19 @@ void validate_result(
         ' ', // ignored
         'C'}; // zero-based indexing (C-style)
 
-    // Computes y := alpha*A*x + beta*y, for A -> m * k, 
-    // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
     for(int i = 0; i < config->n_repetitions; ++i){
+        for(int j = 0; j < config->x_block_width; ++j){
+        // Computes y := alpha*A*x + beta*y, for A -> m * k, 
+        // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
+        
 #ifdef __CUDACC__
-        // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
-        spmv_omp_csr<double, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_result)[0], &y[0]);
+            // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
+            spmv_omp_csr<double, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_result)[0], &y[0]);
 #else
-        mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_result)[0], &beta, &y[0]);
+            mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &((*mkl_result)[num_rows * j]), &beta, &(y[num_rows * j]));
 #endif
+        }
+
         std::swap(*mkl_result, y);
     }
 

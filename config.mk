@@ -1,7 +1,7 @@
 # [gcc, icc, icx, llvm, nvcc]
 COMPILER = gcc
 # [int]
-VECTOR_LENGTH = 32 # CPU only
+SIMD_LENGTH = 4 # CPU only
 # [1/0]
 DEBUG_MODE = 0
 # [1/0]
@@ -10,14 +10,12 @@ DEBUG_MODE_FINE = 0
 OUTPUT_SPARSITY = 0
 # [c++14]
 CPP_VERSION = c++14
-
 # [none, a40, a100]
 GPGPU_ARCH = a100
 # [int]
 THREADS_PER_BLOCK=128 # GPU only
 
 ### External Libraries ###
-
 # [1/0]
 USE_MKL = 0
 # MKL_INC = 
