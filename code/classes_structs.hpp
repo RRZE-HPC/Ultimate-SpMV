@@ -3,6 +3,7 @@
 
 #include "mmio.h"
 #include "kernels.hpp"
+#include "ap_kernels.hpp"
 
 #include <complex>
 #include <fstream>
@@ -246,6 +247,7 @@ template <typename VT, typename IT>
 class SpmvKernel {
     private:
         typedef std::function<void(
+            bool, // warmup_flag
             const ST *, // C
             const ST *, // n_chunks
             const IT *, // chunk_ptrs
@@ -262,31 +264,32 @@ class SpmvKernel {
         )> OnePrecFuncPtr;
 
         typedef std::function<void(
-            const ST *, // up_C
-            const ST *, // up_n_chunks // TODO same, for now.
-            const IT * RESTRICT, // up_chunk_ptrs
-            const IT * RESTRICT, // up_chunk_lengths
-            const IT * RESTRICT, // up_col_idxs
-            const double * RESTRICT, // up_values
-            double * RESTRICT, // up_x
-            double * RESTRICT, // up_y
-            const ST *, // lp_C
-            const ST *, // lp_n_chunks // TODO same, for now.
-            const IT * RESTRICT, // lp_chunk_ptrs
-            const IT * RESTRICT, // lp_chunk_lengths
-            const IT * RESTRICT, // lp_col_idxs
-            const float * RESTRICT, // lp_values
-            float * RESTRICT, // lp_x
-            float * RESTRICT, // lp_y
+            bool, // warmup_flag
+            const ST *, // dp_C
+            const ST *, // dp_n_chunks // TODO same, for now.
+            const IT * RESTRICT, // dp_chunk_ptrs
+            const IT * RESTRICT, // dp_chunk_lengths
+            const IT * RESTRICT, // dp_col_idxs
+            const double * RESTRICT, // dp_values
+            double * RESTRICT, // dp_x
+            double * RESTRICT, // dp_y
+            const ST *, // sp_C
+            const ST *, // sp_n_chunks // TODO same, for now.
+            const IT * RESTRICT, // sp_chunk_ptrs
+            const IT * RESTRICT, // sp_chunk_lengths
+            const IT * RESTRICT, // sp_col_idxs
+            const float * RESTRICT, // sp_values
+            float * RESTRICT, // sp_x
+            float * RESTRICT, // sp_y
 #ifdef HAVE_HALF_MATH
-            const ST *, // lp_C
-            const ST *, // lp_n_chunks // TODO same, for now.
-            const IT * RESTRICT, // lp_chunk_ptrs
-            const IT * RESTRICT, // lp_chunk_lengths
-            const IT * RESTRICT, // lp_col_idxs
-            const _Float16 * RESTRICT, // lp_values
-            _Float16 * RESTRICT, // lp_x
-            _Float16 * RESTRICT, // lp_y
+            const ST *, // hp_C
+            const ST *, // hp_n_chunks // TODO same, for now.
+            const IT * RESTRICT, // hp_chunk_ptrs
+            const IT * RESTRICT, // hp_chunk_lengths
+            const IT * RESTRICT, // hp_col_idxs
+            const _Float16 * RESTRICT, // hp_values
+            _Float16 * RESTRICT, // hp_x
+            _Float16 * RESTRICT, // hp_y
 #endif
 #ifdef __CUDACC__
             const ST *, // n_thread_blocks
@@ -295,9 +298,7 @@ class SpmvKernel {
         )> MultiPrecFuncPtr;
 
         OnePrecFuncPtr one_prec_kernel_func_ptr;
-        OnePrecFuncPtr one_prec_warmup_kernel_func_ptr;
         MultiPrecFuncPtr multi_prec_kernel_func_ptr;
-        MultiPrecFuncPtr multi_prec_warmup_kernel_func_ptr;
 
         void *kernel_args_encoded;
         void *comm_args_encoded;
@@ -407,7 +408,6 @@ class SpmvKernel {
                     if(config->x_block_width > 1){
                         if(my_rank == 0){printf("Block CRS kernel selected\n");}
                         one_prec_kernel_func_ptr = block_colwise_spmv_omp_csr<VT, IT>;
-                        one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
                     }
                     else{
 #ifdef USE_CUSPARSE
@@ -417,17 +417,9 @@ class SpmvKernel {
 #endif
 #ifdef __CUDACC__
                         one_prec_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
-                        one_prec_warmup_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
 #else
                         if(my_rank == 0){printf("CRS kernel selected\n");}
                         one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
-                        one_prec_warmup_kernel_func_ptr = spmv_warmup_omp_csr<VT, IT>;
-
-                        // Experiments with half precision AVX
-                        // one_prec_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
-                        // one_prec_warmup_kernel_func_ptr = spmv_avx512_float16<VT, IT>;
-                        // one_prec_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
-                        // one_prec_warmup_kernel_func_ptr = spmv_avx256_float16<VT, IT>;
 #endif
                     }
                 }
@@ -435,18 +427,15 @@ class SpmvKernel {
 #ifdef __CUDACC__
                     // TODO: Finish AP support for GPUs
                     multi_prec_kernel_func_ptr = spmv_gpu_ap_csr_launcher<IT>;
-                    multi_prec_warmup_kernel_func_ptr = spmv_gpu_ap_csr_launcher<IT>;
 #else
                     if(config->value_type == "ap[dp_sp]"){
                         if(my_rank == 0){printf("ap[dp_sp] CRS kernel selected\n");}
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsp<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdpsp<IT>;
                     }
                     else if (config->value_type == "ap[dp_hp]"){
                         if(my_rank == 0){printf("ap[dp_hp] CRS kernel selected\n");}
 #ifdef HAVE_HALF_MATH
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
 #else
                         if(my_rank == 0){printf("HAVE_HALF_MATH undefined\n"); exit(1);}
 #endif
@@ -455,7 +444,6 @@ class SpmvKernel {
                         if(my_rank == 0){printf("ap[sp_hp] CRS kernel selected\n");}
 #ifdef HAVE_HALF_MATH
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
 #else
                         if(my_rank == 0){printf("HAVE_HALF_MATH undefined\n"); exit(1);}
 #endif
@@ -464,7 +452,6 @@ class SpmvKernel {
                         if(my_rank == 0){printf("ap[dp_sp_hp] CRS kernel selected\n");}
 #ifdef HAVE_HALF_MATH
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
 #else
                         if(my_rank == 0){printf("HAVE_HALF_MATH undefined\n"); exit(1);}
 #endif
@@ -495,34 +482,28 @@ class SpmvKernel {
 
 #ifdef __CUDACC__
                         one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
-                        one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
 #else
                         one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
-                        one_prec_warmup_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
 #endif
                     }
                     else if(config->value_type == "ap[dp_sp]"){
                         if(my_rank == 0){printf("Advanced ap[dp_sp] SCS kernel selected\n");}
 #ifdef __CUDACC__
                         multi_prec_kernel_func_ptr = spmv_gpu_ap_scs_adv_launcher<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_gpu_ap_scs_adv_launcher<IT>;
 #else
                         multi_prec_kernel_func_ptr = spmv_omp_scs_ap_adv<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs_ap<IT>;
 #endif
                     }
                     else if (config->value_type == "ap[dp_hp]"){
                         if(my_rank == 0){printf("Advanced ap[dp_hp] SCS kernel selected\n");}
 #ifdef __CUDACC__
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Advanced ap[dp_hp] SCS kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Advanced ap[dp_hp] SCS kernel not yet implemented on CPU.\n");
                             exit(1);
@@ -532,15 +513,13 @@ class SpmvKernel {
                     else if (config->value_type == "ap[sp_hp]"){
 #ifdef __CUDACC__
                         if(my_rank == 0){printf("Advanced ap[sp_hp] SCS kernel selected\n");}
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Advanced ap[sp_hp] SCS kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Advanced ap[sp_hp] SCS kernel not yet implemented on CPU.\n");
                             exit(1);
@@ -550,15 +529,13 @@ class SpmvKernel {
                     else if (config->value_type == "ap[dp_sp_hp]"){
                         if(my_rank == 0){printf("Advanced ap[dp_sp_hp] SCS kernel selected\n");}
 #ifdef __CUDACC__
-                        // three_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
-                        // three_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Advanced ap[dp_sp_hp] SCS kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
-                        // three_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
-                        // three_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Advanced ap[dp_sp_hp] SCS kernel not yet implemented on CPU.\n");
                             exit(1);
@@ -577,34 +554,28 @@ class SpmvKernel {
 
 #ifdef __CUDACC__
                         one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
-                        one_prec_warmup_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
 #else
                         one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
-                        one_prec_warmup_kernel_func_ptr = spmv_omp_scs<VT, IT>;
 #endif
                     }
                     else if(config->value_type == "ap[dp_sp]"){
                         if(my_rank == 0){printf("Basic ap[dp_sp] SCS kernel selected\n");}
 #ifdef __CUDACC__
                         multi_prec_kernel_func_ptr = spmv_gpu_ap_scs_launcher<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_gpu_ap_scs_launcher<IT>;
 #else
                         multi_prec_kernel_func_ptr = spmv_omp_scs_ap<IT>;
-                        multi_prec_warmup_kernel_func_ptr = spmv_warmup_omp_scs_ap<IT>;
 #endif
                     }
                     else if (config->value_type == "ap[dp_hp]"){
                         if(my_rank == 0){printf("Basic ap[dp_hp] SCS kernel selected\n");}
 #ifdef __CUDACC__
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Basic ap[dp_hp] SCS kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Basic ap[dp_hp] SCS kernel not yet implemented on CPU.\n");
                             exit(1);
@@ -614,15 +585,13 @@ class SpmvKernel {
                     else if (config->value_type == "ap[sp_hp]"){
 #ifdef __CUDACC__
                         if(my_rank == 0){printf("Basic ap[sp_hp] SCS kernel selected\n");}
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Basic ap[sp_hp] SCS kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
-                        // two_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
-                        // two_prec_warmup_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Basic ap[sp_hp] SCS kernel not yet implemented on CPU.\n");
                             exit(1);
@@ -632,15 +601,13 @@ class SpmvKernel {
                     else if (config->value_type == "ap[dp_sp_hp]"){
                         if(my_rank == 0){printf("Basic ap[dp_sp_hp] SCS kernel selected\n");}
 #ifdef __CUDACC__
-                        // three_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
-                        // three_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Basic ap[dp_sp_hp] SCS kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
-                        // three_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
-                        // three_prec_warmup_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
+                        // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
                             fprintf(stderr, "ERROR: Basic ap[dp_sp_hp] SCS kernel not yet implemented on CPU.\n");
                             exit(1);
@@ -750,138 +717,9 @@ class SpmvKernel {
 #endif
         }
 
-        // Warmup kernel picker //
-        // TODO: You really should think of a way around these warmup kernels...
-        inline void execute_warmup_one_prec(void){
+        inline void execute_one_prec(bool warmup_flag){
 #ifdef USE_CUSPARSE
-            cusparseSpMV(
-                handle,
-                opA,
-                alpha,
-                matA,
-                vecX,
-                beta,
-                vecY,
-                computeType,
-                alg,
-                externalBuffer
-            );
-#else
-            one_prec_warmup_kernel_func_ptr(
-                C,
-                n_chunks,
-                chunk_ptrs,
-                chunk_lengths,
-                col_idxs,
-                values,
-                local_x,
-                local_y,
-                &(config->x_block_width),
-#ifdef __CUDACC__
-                n_thread_blocks_1,
-#endif
-                &my_rank
-            );
-#endif
-
-#ifdef __CUDACC__
-            cudaDeviceSynchronize();
-#endif
-        }
-
-        inline void execute_warmup_two_prec(void){
-            multi_prec_warmup_kernel_func_ptr(
-                dp_C,
-                dp_n_chunks,
-                dp_chunk_ptrs,
-                dp_chunk_lengths,
-                dp_col_idxs,
-                dp_values,
-                dp_local_x,
-                dp_local_y, 
-                sp_C,
-                sp_n_chunks,
-                sp_chunk_ptrs,
-                sp_chunk_lengths,
-                sp_col_idxs,
-                sp_values,
-                sp_local_x,
-                sp_local_y,
-#ifdef HAVE_HALF_MATH
-                hp_C,
-                hp_n_chunks,
-                hp_chunk_ptrs,
-                hp_chunk_lengths,
-                hp_col_idxs,
-                hp_values,
-                hp_local_x,
-                hp_local_y,
-#endif
-#ifdef __CUDACC__
-                n_thread_blocks_2,
-#endif
-                &my_rank
-            );
-
-#ifdef __CUDACC__
-            cudaDeviceSynchronize();
-#endif
-        }
-
-        inline void execute_warmup_three_prec(void){
-            multi_prec_warmup_kernel_func_ptr(
-                dp_C,
-                dp_n_chunks,
-                dp_chunk_ptrs,
-                dp_chunk_lengths,
-                dp_col_idxs,
-                dp_values,
-                dp_local_x,
-                dp_local_y, 
-                sp_C,
-                sp_n_chunks,
-                sp_chunk_ptrs,
-                sp_chunk_lengths,
-                sp_col_idxs,
-                sp_values,
-                sp_local_x,
-                sp_local_y,
-#ifdef HAVE_HALF_MATH
-                hp_C,
-                hp_n_chunks,
-                hp_chunk_ptrs,
-                hp_chunk_lengths,
-                hp_col_idxs,
-                hp_values,
-                hp_local_x,
-                hp_local_y,
-#endif
-#ifdef __CUDACC__
-                n_thread_blocks_2,
-#endif
-                &my_rank
-            );
-
-#ifdef __CUDACC__
-            cudaDeviceSynchronize();
-#endif
-        }
-
-        void execute_warmup(void){
-            if(config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
-                execute_warmup_one_prec();
-            }
-            else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_hp]"){
-                execute_warmup_two_prec();
-            }
-            else if(config->value_type == "ap[dp_sp_hp]"){
-                execute_warmup_three_prec();
-            }
-        }
-
-
-        inline void execute_one_prec(void){
-#ifdef USE_CUSPARSE
+            // NOTE: No likwid markers used for cuSPARSE
             cusparseSpMV(
                 handle,
                 opA,
@@ -896,6 +734,7 @@ class SpmvKernel {
             );
 #else
             one_prec_kernel_func_ptr(
+                warmup_flag,
                 C,
                 n_chunks,
                 chunk_ptrs,
@@ -917,8 +756,9 @@ class SpmvKernel {
 #endif
         }
 
-        inline void execute_two_prec(void){
+        inline void execute_two_prec(bool warmup_flag){
             multi_prec_kernel_func_ptr(
+                warmup_flag,
                 dp_C,
                 dp_n_chunks,
                 dp_chunk_ptrs,
@@ -956,8 +796,9 @@ class SpmvKernel {
 #endif
         }
 
-        inline void execute_three_prec(void){
+        inline void execute_three_prec(bool warmup_flag){
             multi_prec_kernel_func_ptr(
+                warmup_flag,
                 dp_C,
                 dp_n_chunks,
                 dp_chunk_ptrs,
@@ -995,15 +836,15 @@ class SpmvKernel {
 #endif
         }
 
-        void execute(void){
+        void execute(bool warmup_flag){
             if(config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
-                execute_one_prec();
+                execute_one_prec(warmup_flag);
             }
             else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_hp]"){
-                execute_two_prec();
+                execute_two_prec(warmup_flag);
             }
             else if(config->value_type == "ap[dp_sp_hp]"){
-                execute_three_prec();
+                execute_three_prec(warmup_flag);
             }
         }
 

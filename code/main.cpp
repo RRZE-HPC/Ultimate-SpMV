@@ -1,6 +1,7 @@
 #include "mmio.h"
 #include "utilities.hpp"
 #include "kernels.hpp"
+#include "ap_kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "write_results.hpp"
 #include "timing.h"
@@ -300,6 +301,7 @@ assign_spmv_kernel_gpu_data<VT>(
     );
 
     // Enter main COMM-spmv-SWAP loop, bench mode
+    bool warmup_flag = false;
     if(config->mode == 'b'){
 #ifdef __CUDACC__
     cudaEvent_t start, stop, warmup_start, warmup_stop;
@@ -312,6 +314,8 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
 
         // Warm-up
+        bool warmup_flag = true;
+
 #ifdef __CUDACC__
     cudaEventRecord(warmup_start, 0);
     cudaDeviceSynchronize();
@@ -329,7 +333,7 @@ assign_spmv_kernel_gpu_data<VT>(
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
 #endif
-            spmv_kernel.execute_warmup();
+            spmv_kernel.execute(warmup_flag);
 
 #ifdef USE_MPI
             if(config->ba_synch)
@@ -364,6 +368,7 @@ assign_spmv_kernel_gpu_data<VT>(
 
         // Initialize number of repetitions for actual benchmark
         int n_iter = 2;
+        warmup_flag = false;
 
 #ifndef __CUDACC__
 #ifdef USE_LIKWID
@@ -379,7 +384,7 @@ assign_spmv_kernel_gpu_data<VT>(
                 for(int k=0; k<n_iter; ++k) {
                     spmv_kernel.init_halo_exchange();
                     spmv_kernel.finalize_halo_exchange();
-                    spmv_kernel.execute();
+                    spmv_kernel.execute(warmup_flag);
                     spmv_kernel.swap_local_vectors();
                     if(config->ba_synch)
                         MPI_Barrier(MPI_COMM_WORLD);
@@ -410,7 +415,7 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
                 
                 for(int k=0; k<n_iter; ++k) {
-                    spmv_kernel.execute();
+                    spmv_kernel.execute(warmup_flag);
 #ifdef USE_MPI
                     if(config->ba_synch)
                         MPI_Barrier(MPI_COMM_WORLD);
@@ -483,7 +488,7 @@ assign_spmv_kernel_gpu_data<VT>(
             }
 #endif
 #endif
-            spmv_kernel.execute();
+            spmv_kernel.execute(warmup_flag);
 
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
@@ -609,6 +614,7 @@ assign_spmv_kernel_gpu_data<VT>(
         r->hp_beta = 0;
 #endif
 
+// TODO
 // #ifdef USE_CUSPARSE
 //     // destroy matrix/vector descriptors
 //     cusparseDestroySpMat(matA);

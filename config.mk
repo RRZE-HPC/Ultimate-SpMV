@@ -1,7 +1,9 @@
 # [gcc, icc, icx, llvm, nvcc]
 COMPILER = gcc
-# [int]
-SIMD_LENGTH = 4 # CPU only
+# [int] (CPU only)
+SIMD_LENGTH = 4
+# [colwise, rowwise] (for multiple RHS vectors)
+BLOCK_VECTOR_LAYOUT = colwise
 # [1/0]
 DEBUG_MODE = 0
 # [1/0]
@@ -10,10 +12,10 @@ DEBUG_MODE_FINE = 0
 OUTPUT_SPARSITY = 0
 # [c++14]
 CPP_VERSION = c++14
-# [none, a40, a100]
+# [none, a40, a100] (GPU only)
 GPGPU_ARCH = a100
-# [int]
-THREADS_PER_BLOCK=128 # GPU only
+# [int] (GPU only)
+THREADS_PER_BLOCK=128
 
 ### External Libraries ###
 # [1/0]

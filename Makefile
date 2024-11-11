@@ -18,6 +18,20 @@ endif
 endif
 endif
 
+ifneq ($(BLOCK_VECTOR_LAYOUT),colwise)
+ifneq ($(BLOCK_VECTOR_LAYOUT),rowwise)
+$(info BLOCK_VECTOR_LAYOUT=$(BLOCK_VECTOR_LAYOUT))
+$(error Please select a layout in: [colwise, rowwise])
+endif
+endif
+
+ifeq ($(BLOCK_VECTOR_LAYOUT),colwise)
+CXXFLAGS += -DCOLWISE_BLOCK_VECTOR_LAYOUT
+endif
+ifeq ($(BLOCK_VECTOR_LAYOUT),rowwise)
+CXXFLAGS += -DROWWISE_BLOCK_VECTOR_LAYOUT
+endif
+
 ifneq ($(COMPILER),gcc)
 ifneq ($(COMPILER),nvcc)
 ifneq ($(COMPILER),icx)
