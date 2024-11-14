@@ -70,8 +70,8 @@ struct Config
     // activate profile logs, only root process
     int log_prof = 0;
 
-    // width of X vector for SpMM
-    int x_block_width = 1;
+    // width of X and Y vectors for SpMM
+    int block_vec_size = 1;
 
     // communicate the halo elements in benchmark loop
     int comm_halos = 1;
@@ -256,7 +256,7 @@ class SpmvKernel {
             const VT *, // values
             VT *, // x
             VT *, //y
-            int *, // x_block_width
+            int *, // block_vec_size
 #ifdef __CUDACC__
             const ST *, // n_thread_blocks
 #endif
@@ -405,9 +405,9 @@ class SpmvKernel {
             // CRS kernel selection //
             if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                 if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
-                    if(config->x_block_width > 1){
+                    if(config->block_vec_size > 1){
                         if(my_rank == 0){printf("Block CRS kernel selected\n");}
-                        one_prec_kernel_func_ptr = block_colwise_spmv_omp_csr<VT, IT>;
+                        one_prec_kernel_func_ptr = block_spmv_omp_csr<VT, IT>;
                     }
                     else{
 #ifdef USE_CUSPARSE
@@ -459,32 +459,45 @@ class SpmvKernel {
 #endif
                 }
             }
-                                // SCS kernel selection //
+            // SCS kernel selection //
             else if (config->kernel_format == "scs"){
                 // If C is a typical choice, use ADV kernels
                 if(
-                    config->chunk_size == 1
-                    && config->chunk_size == 2 
-                    && config->chunk_size == 4
-                    && config->chunk_size == 8
-                    && config->chunk_size == 16
-                    && config->chunk_size == 32
-                    && config->chunk_size == 64
-                    && config->chunk_size == 128
-                    && config->chunk_size == 256)
+                    config->chunk_size == 2 
+                    || config->chunk_size == 4
+                    || config->chunk_size == 8
+                    || config->chunk_size == 16
+                    || config->chunk_size == 32
+                    || config->chunk_size == 64
+                    || config->chunk_size == 128)
                 {
 #ifdef USE_CUSPARSE
                     if(my_rank == 0){printf("CUSPARSE SCS kernel selected\n");}
 #else
-                    if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
+                    if(config->block_vec_size > 1){
+                        if(my_rank == 0){printf("C = %i => Advanced Block SCS kernel selected\n", config->chunk_size);}
+                    }
+                    else{
+                        if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
+                    }
 #endif
                     if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
-
+                        if(config->block_vec_size > 1){
+#ifdef __CUDACC__
+                        if(my_rank == 0){fprintf(stderr, "ERROR: Advanced Block SCS kernel not yet implemented on GPU.\n");}
+                        exit(1);
+#else
+                        // one_prec_kernel_func_ptr = block_spmv_omp_scs_adv<VT, IT>;
+                        one_prec_kernel_func_ptr = block_spmv_omp_scs_general<VT, IT>;
+#endif
+                        }
+                        else{
 #ifdef __CUDACC__
                         one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
 #else
                         one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
 #endif
+                        }
                     }
                     else if(config->value_type == "ap[dp_sp]"){
                         if(my_rank == 0){printf("Advanced ap[dp_sp] SCS kernel selected\n");}
@@ -548,15 +561,29 @@ class SpmvKernel {
 #ifdef USE_CUSPARSE
                     if(my_rank == 0){printf("CUSPARSE SCS kernel selected\n");}
 #else
-                    if(my_rank == 0){printf("C = %i => Basic SCS kernel selected\n", config->chunk_size);}
+                    if(config->block_vec_size > 1){
+                        if(my_rank == 0){printf("C = %i => Basic Block SCS kernel selected\n", config->chunk_size);}
+                    }
+                    else{
+                        if(my_rank == 0){printf("C = %i => Basic SCS kernel selected\n", config->chunk_size);}
+                    }
 #endif
                     if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
-
+                        if(config->block_vec_size > 1){
 #ifdef __CUDACC__
-                        one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
+                        if(my_rank == 0){fprintf(stderr, "ERROR: Basic Block SCS kernel not yet implemented on GPU.\n");}
+                        exit(1);
 #else
-                        one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+                        one_prec_kernel_func_ptr = block_spmv_omp_scs_general<VT, IT>;
 #endif
+                        }
+                        else{
+#ifdef __CUDACC__
+                            one_prec_kernel_func_ptr = spmv_gpu_scs_launcher<VT, IT>;
+#else
+                            one_prec_kernel_func_ptr = spmv_omp_scs<VT, IT>;
+#endif
+                        }
                     }
                     else if(config->value_type == "ap[dp_sp]"){
                         if(my_rank == 0){printf("Basic ap[dp_sp] SCS kernel selected\n");}
@@ -743,7 +770,7 @@ class SpmvKernel {
                 values,
                 local_x,
                 local_y,
-                &(config->x_block_width),
+                &(config->block_vec_size),
 #ifdef __CUDACC__
                 n_thread_blocks_1,
 #endif
@@ -1514,7 +1541,7 @@ struct DefaultValues
     VT x{1.00f16};
 #else 
     VT A{2.0};
-    VT x{1.00};
+    VT x{5.00};
 #endif
 
     VT y{};

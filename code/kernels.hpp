@@ -59,11 +59,11 @@ spmv_omp_csr(
 }
 
 /**
- * SpMM Kernel for CSR format, where X and Y are held columnwise.
+ * SpMM Kernel for CSR format, where X and Y are block vectors.
  */
 template <typename VT, typename IT>
 static void
-block_colwise_spmv_omp_csr(
+block_spmv_omp_csr(
     bool warmup_flag,
     const ST * C, // 1
     const ST * num_rows, // n_chunks
@@ -80,59 +80,85 @@ block_colwise_spmv_omp_csr(
     #pragma omp parallel 
     {   
 #ifdef USE_LIKWID
-        if(!warmup_flag)
+        if(!warmup_flag){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
             LIKWID_MARKER_START("block_colwise_spmv_crs_benchmark");
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+            LIKWID_MARKER_START("block_rowwise_spmv_crs_benchmark");
+#endif
+        }
 #endif
         #pragma omp for schedule(static)
         for (ST row = 0; row < *num_rows; ++row) {
-            for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
-                VT sum{};
+            VT tmp[*block_size];
 
-                #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sum)
-                for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
-                    sum += values[j] * X[col_idxs[j] + vec_idx*(*num_rows)];
+            for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
+                tmp[vec_idx] = VT{};
+            }
+
+            for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
+                #pragma omp simd
+                for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+
+
+
+                    tmp[vec_idx] += values[j] * X[(vec_idx * *num_rows) + col_idxs[j]];
+
+
+
+#ifdef DEBUG_MODE
+                    printf("Accessing tmp[%i] += X[%i]\n", vec_idx, (vec_idx * *num_rows) + col_idxs[j]);
+#endif
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+
+
+
+                    tmp[vec_idx] += values[j] * X[col_idxs[j] * (*block_size) + vec_idx];
+
+
+
+#ifdef DEBUG_MODE
+                    printf("Accessing tmp[%i] += X[%i]\n", vec_idx, col_idxs[j] * (*block_size) + vec_idx);
+#endif
+#endif
                 }
-                Y[row + vec_idx*(*num_rows)] = sum;
+
+            }
+
+            for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                Y[(vec_idx * *num_rows) + row] = tmp[vec_idx];
+#ifdef DEBUG_MODE
+                printf("Assigning %f to Y[%i]\n", tmp[vec_idx], (vec_idx * *num_rows) + row);
+#endif
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+
+
+
+                Y[row * (*block_size) + vec_idx] = tmp[vec_idx];
+
+
+
+#ifdef DEBUG_MODE
+                printf("Assigning %f to Y[%i]\n", tmp[vec_idx], row * (*block_size) + vec_idx);
+#endif
+#endif
             }
         }
+
 #ifdef USE_LIKWID
-        if(!warmup_flag)
+        if(!warmup_flag){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
             LIKWID_MARKER_STOP("block_colwise_spmv_crs_benchmark");
 #endif
-    }
-}
-
-/**
- * SpMM Kernel for CSR format, where X and Y are held rowwise.
- */
-template <typename VT, typename IT>
-static void
-block_rowwise_spmv_omp_csr(
-    bool warmup_flag,
-    const ST * C, // 1
-    const ST * num_rows, // n_chunks
-    const IT * RESTRICT row_ptrs, // chunk_ptrs
-    const IT * RESTRICT row_lengths, // unused
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT X,
-    VT * RESTRICT Y,
-    int * block_size,
-    const int * my_rank = NULL
-)
-{
-    #pragma omp parallel 
-    {   
-#ifdef USE_LIKWID
-        if(!warmup_flag)
-            LIKWID_MARKER_START("block_rowwise_spmv_crs_benchmark");
-#endif
-
-        // TODO
-
-#ifdef USE_LIKWID
-        if(!warmup_flag)
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
             LIKWID_MARKER_STOP("block_rowwise_spmv_crs_benchmark");
+#endif
+        }
 #endif
     }
 }
@@ -159,8 +185,9 @@ spmv_omp_scs(
     #pragma omp parallel 
     {
 #ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_START("spmv_scs_benchmark");
+        if(!warmup_flag){
+            LIKWID_MARKER_START("spmv_scs_benchmark");
+        }
 #endif
         #pragma omp for schedule(static)
         for (ST c = 0; c < *n_chunks; ++c) {
@@ -185,76 +212,6 @@ spmv_omp_scs(
 #ifdef USE_LIKWID
     if(!warmup_flag)
         LIKWID_MARKER_STOP("spmv_scs_benchmark");
-#endif
-    }
-}
-
-/**
- * SpMM Kernel for Sell-C-Sigma, where X and Y are held columnwise. Supports all Cs > 0.
- */
-template <typename VT, typename IT>
-static void
-block_colwise_spmv_omp_scs(
-    bool warmup_flag,
-    const ST * C,
-    const ST * n_chunks,
-    const IT * RESTRICT chunk_ptrs,
-    const IT * RESTRICT chunk_lengths,
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT x,
-    VT * RESTRICT y,
-    int *block_size,
-    const int * my_rank = NULL
-)
-{
-    #pragma omp parallel 
-    {
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_START("block_colwise_spmv_scs_benchmark");
-#endif
-
-        // TODO
-
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_STOP("block_colwise_spmv_scs_benchmark");
-#endif
-    }
-}
-
-/**
- * SpMM Kernel for Sell-C-Sigma, where X and Y are held rowwise. Supports all Cs > 0.
- */
-template <typename VT, typename IT>
-static void
-block_rowwise_spmv_omp_scs(
-    bool warmup_flag,
-    const ST * C,
-    const ST * n_chunks,
-    const IT * RESTRICT chunk_ptrs,
-    const IT * RESTRICT chunk_lengths,
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT x,
-    VT * RESTRICT y,
-    int *block_size,
-    const int * my_rank = NULL
-)
-{
-    #pragma omp parallel 
-    {
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_START("block_colwise_spmv_scs_benchmark");
-#endif
-
-        // TODO
-
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_STOP("block_colwise_spmv_scs_benchmark");
 #endif
     }
 }
@@ -307,73 +264,6 @@ scs_impl_cpu(
 }
 
 /**
- * Sell-C-sigma implementation templated by C, where X and Y are held columnwise. Supports specific Cs > 0.
- */
-template <ST C, typename VT, typename IT>
-static void
-block_colwise_scs_impl_cpu(
-    bool warmup_flag,
-    const ST * n_chunks,
-    const IT * RESTRICT chunk_ptrs,
-    const IT * RESTRICT chunk_lengths,
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT x,
-    VT * RESTRICT y
-)
-{
-
-    #pragma omp parallel
-    {
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_START("block_colwise_spmv_scs_adv_benchmark");
-#endif
-
-        // TODO
-
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_STOP("block_colwise_spmv_scs_adv_benchmark");
-#endif
-    }
-}
-
-/**
- * Sell-C-sigma implementation templated by C, where X and Y are held rowwise. Supports specific Cs > 0.
- */
-template <ST C, typename VT, typename IT>
-static void
-block_rowwise_scs_impl_cpu(
-    bool warmup_flag,
-    const ST * n_chunks,
-    const IT * RESTRICT chunk_ptrs,
-    const IT * RESTRICT chunk_lengths,
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT x,
-    VT * RESTRICT y
-)
-{
-
-    #pragma omp parallel
-    {
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_START("block_rowwise_spmv_scs_adv_benchmark");
-#endif
-
-        // TODO
-
-#ifdef USE_LIKWID
-    if(!warmup_flag)
-        LIKWID_MARKER_STOP("block_rowwise_spmv_scs_adv_benchmark");
-#endif
-    }
-}
-
-
-/**
  * Dispatch to Sell-C-sigma kernels templated by C.
  *
  * Note: only works for selected Cs, see INSTANTIATE_CS.
@@ -396,7 +286,7 @@ spmv_omp_scs_adv(
 {
     switch (*C)
     {
-        #define INSTANTIATE_CS X(1) X(2) X(4) X(8) X(16) X(32) X(64) X(128) X(256)
+        #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128)
 
         #define X(CC) case CC: scs_impl_cpu<CC>(warmup_flag, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); break;
         INSTANTIATE_CS
@@ -416,7 +306,213 @@ spmv_omp_scs_adv(
 }
 
 /**
+ * SpMM Kernel for Sell-C-Sigma, where X and Y are block vectors. Supports all Cs > 0.
+ */
+template <typename VT, typename IT>
+static void
+block_spmv_omp_scs_general(
+    bool warmup_flag,
+    const ST * C,
+    const ST * n_chunks,
+    const IT * RESTRICT chunk_ptrs,
+    const IT * RESTRICT chunk_lengths,
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT X,
+    VT * RESTRICT Y,
+    int *block_size,
+    const int * my_rank = NULL
+)
+{
+    #pragma omp parallel 
+    {
+#ifdef USE_LIKWID
+        if(!warmup_flag){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+            LIKWID_MARKER_START("block_colwise_spmv_scs_benchmark");
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+            LIKWID_MARKER_START("block_rowwise_spmv_scs_benchmark");
+#endif
+        }
+#endif
+        #pragma omp for schedule(static)
+        for (ST c = 0; c < *n_chunks; ++c) {
+            VT tmp[*C * *block_size];
+            for (ST i = 0; i < *C * *block_size; ++i) {
+                tmp[i] = VT{};
+            }
+
+            IT cs = chunk_ptrs[c];
+
+            for (IT j = 0; j < chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < *C; ++i) {
+                    #pragma omp simd
+                    for (IT vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] + vec_idx * (*n_chunks * *C)];
+#ifdef DEBUG_MODE
+                        printf("Accessing tmp[%i] += X[%i]\n", i * (*block_size) + vec_idx, col_idxs[cs + j * *C + i] + vec_idx * (*n_chunks * *C));
+#endif
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+	                    // tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] * (*block_size) + vec_idx];
+	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] + vec_idx * (*n_chunks * *C)];
+
+#ifdef DEBUG_MODE
+                        printf("Accessing tmp[%i] += X[%i]\n", i * (*block_size) + vec_idx, col_idxs[cs + j * *C + i] * (*block_size) + vec_idx);
+#endif
+#endif
+                    }
+                }
+            }
+
+            for (IT i = 0; i < *C; ++i) {
+                #pragma omp simd
+                for (IT vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+	                    Y[(c * *C + i) + vec_idx * (*n_chunks * *C)] = tmp[i * (*block_size) + vec_idx];
+#ifdef DEBUG_MODE
+                        printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) + vec_idx * (*n_chunks * *C));
+#endif
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+	                    // Y[(c * *C + i) * (*block_size) + vec_idx] = tmp[i * (*block_size) + vec_idx];
+// #ifdef DEBUG_MODE
+//                         printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) * (*block_size) + vec_idx);
+// #endif
+	                    Y[(c * *C + i) + vec_idx * (*n_chunks * *C)] = tmp[i * (*block_size) + vec_idx];
+
+#endif
+                }
+            }
+
+#ifdef USE_LIKWID
+            if(!warmup_flag){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                LIKWID_MARKER_STOP("block_colwise_spmv_scs_benchmark");
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                LIKWID_MARKER_STOP("block_rowwise_spmv_scs_benchmark");
+#endif
+            }
+#endif
+        }
+    }
+}
+
+
+/**
+ * Sell-C-sigma implementation templated by C, where X and Y are block vectors. Supports specific Cs > 0.
+ */
+template <ST C, ST block_size, typename VT, typename IT>
+static void
+block_scs_impl_cpu(
+    bool warmup_flag,
+    const ST * n_chunks,
+    const IT * RESTRICT chunk_ptrs,
+    const IT * RESTRICT chunk_lengths,
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT X,
+    VT * RESTRICT Y
+)
+{
+    #pragma omp parallel
+    {
+#ifdef USE_LIKWID
+        if(!warmup_flag){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+            LIKWID_MARKER_START("block_colwise_spmv_scs_adv_benchmark");
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+            LIKWID_MARKER_START("block_rowwise_spmv_scs_adv_benchmark");
+#endif
+        }
+#endif
+        #pragma omp for schedule(static)
+        for (ST c = 0; c < *n_chunks; ++c) {
+            VT tmp[C * block_size]{};
+
+                IT cs = chunk_ptrs[c];
+
+                for (IT j = 0; j < chunk_lengths[c]; ++j) {
+                    for (IT i = 0; i < C; ++i) {
+                        #pragma omp simd
+                        for (IT n = 0; n < block_size; ++n) {
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                            tmp[i * block_size + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] + n * (*n_chunks * C)];
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                            tmp[i * block_size + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] * block_size + n];
+#endif
+                        }
+                    } 
+                }
+            
+            for (IT i = 0; i < C; ++i) {
+                #pragma omp simd
+                for (IT n = 0; n < block_size; ++n) {
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                    Y[(c * C + i) + n * (*n_chunks * C)] = tmp[i * block_size + n];
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                    Y[(c * C + i) * block_size + n] = tmp[i * block_size + n];
+#endif
+                }
+            }
+        }
+
+
+#ifdef USE_LIKWID
+        if(!warmup_flag){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+            LIKWID_MARKER_STOP("block_colwise_spmv_scs_adv_benchmark");
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+            LIKWID_MARKER_STOP("block_rowwise_spmv_scs_adv_benchmark");
+#endif
+        }
+#endif
+    }
+}
+
+/**
  * Dispatch to Sell-C-sigma kernels templated by C, where X and Y are blcok vectors.
+ *
+ * Note: only works for selected Cs, see INSTANTIATE_CS.
+ */
+template <ST C, typename VT, typename IT>
+static void
+call_scs_block(
+    bool warmup_flag,
+    const ST * CC,
+    const ST * n_chunks,
+    const IT * RESTRICT chunk_ptrs,
+    const IT * RESTRICT chunk_lengths,
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT x,
+    VT * RESTRICT y,
+    int *block_size
+)
+{
+    switch (*block_size)
+    {
+        #define INSTANTIATE_CS_B X(2) X(4) X(8) X(16) X(32) X(64) X(128)
+
+        #define X(BS) case BS: block_scs_impl_cpu<C,BS>(warmup_flag, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); return;
+        INSTANTIATE_CS_B
+        #undef X
+
+	default:
+            // Call this kernel, in the case where chunk size C is dispatched, but block_vec_size is not
+            block_spmv_omp_scs_general<VT, IT>(warmup_flag, CC, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size); return;
+    }
+}
+
+/**
+ * Dispatch to Sell-C-sigma kernels templated by C.
  *
  * Note: only works for selected Cs, see INSTANTIATE_CS.
  */
@@ -436,15 +532,21 @@ block_spmv_omp_scs_adv(
     const int * my_rank = NULL
 )
 {
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-    // TODO
-#endif
+    switch (*C)
+    {
+        #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128)
 
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-    // TODO
-#endif
+        #define X(CC) case CC: call_scs_block<CC>(warmup_flag, C, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size); break;
+        INSTANTIATE_CS
+        #undef X
+
+    default:
+        fprintf(stderr,
+                "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
+                long(C));
+        exit(1);
+    }
 }
-
 
 #ifdef __CUDACC__
 template <typename VT, typename IT>

@@ -934,7 +934,7 @@ void cli_options_messge(
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n " 
         "options [defaults] (description): \n \\
-        -x_size [%i] (int: width of X vector for SpMM) \n \\
+        -block_vec_size [%i] (int: width of X vector for SpMM) \n \\
         -c [%li] (int: chunk size (required for scs)) \n \\
         -s [%li] (int: sigma (required for scs)) \n \\
         -rev [%li] (int: number of back-to-back revisions to perform) \n \\
@@ -955,7 +955,7 @@ void cli_options_messge(
         -dropout[%f] (0/1: enable dropout of elements below theh designated threshold) \n \\
         -dropout_threshold [%f] (float: remove matrix elements below this range) \n\n",
         argv[0], \
-        config->x_block_width, \
+        config->block_vec_size, \
         config->chunk_size, \
         config->sigma, \
         config->n_repetitions, \
@@ -1036,12 +1036,12 @@ void parse_cli_inputs(
                 }
             }
         }
-        else if (arg == "-x_size")
+        else if (arg == "-block_vec_size")
         {
 
-            config->x_block_width = atoi(argv[++i]); // i.e. grab the NEXT
+            config->block_vec_size = atoi(argv[++i]); // i.e. grab the NEXT
 
-            if (config->x_block_width < 1)
+            if (config->block_vec_size < 1)
             {
                 if(my_rank == 0){
                     fprintf(stderr, "ERROR: number of x vectors must be > 1.\n");
@@ -1287,8 +1287,36 @@ void parse_cli_inputs(
     }
 
     // Sanity checks //
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+    if (config->block_vec_size == 1){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Column-wise block vector layout selected, but block vector width is 1.\n");
+            exit(1);
+        }
+    }
+#endif
 
-    if (config->x_block_width > 1){
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    if (config->block_vec_size == 1){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Row-wise block vector layout selected, but block vector width is 1.\n");
+            exit(1);
+        }
+    }
+#endif
+
+#ifndef COLWISE_BLOCK_VECTOR_LAYOUT
+#ifndef ROWWISE_BLOCK_VECTOR_LAYOUT
+    if (config->block_vec_size > 1){
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Block vector layout not selected, but block vector width is greater than 1.\n");
+            exit(1);
+        }
+    }
+#endif
+#endif
+
+    if (config->block_vec_size > 1){
         if(
             *value_type == "ap[dp_sp]" || 
             *value_type == "ap[dp_hp]" || 
@@ -1302,7 +1330,7 @@ void parse_cli_inputs(
     }
 
 #ifdef __CUDACC__
-    if (config->x_block_width > 1){
+    if (config->block_vec_size > 1){
         if(my_rank == 0){
             fprintf(stderr, "ERROR: SpMM is not yet implemented on GPUs.\n");
             exit(1);
@@ -1311,7 +1339,7 @@ void parse_cli_inputs(
 #endif
 
 #ifdef USE_MPI
-    if (config->x_block_width > 1){
+    if (config->block_vec_size > 1){
         if(my_rank == 0){
             fprintf(stderr, "ERROR: MPI parallel SpMM is not yet implemented.\n");
             exit(1);
@@ -1976,7 +2004,6 @@ void read_mtx(
     delete[] col;
 }
 
-// A basic class, to make a vector from the mtx context
 template <typename VT, typename IT>
 class SimpleDenseMatrix {
     public:
@@ -1995,7 +2022,7 @@ class SimpleDenseMatrix {
             IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
 
             // For SCS, Each x column needs to be padded
-            vec.resize(config->x_block_width * (needed_padding + local_context->num_local_rows), VT{});
+            vec.resize(config->block_vec_size * (needed_padding + local_context->num_local_rows), VT{});
         }
 
         // SimpleDenseMatrix(std::vector<VT> vec_to_copy, const ContextData<VT, IT> *local_context){
@@ -2012,15 +2039,6 @@ class SimpleDenseMatrix {
 
             if (config->random_init_x == 'm'){
                 default_values.x = config->matrix_mean;
-            }
-            else if (config->random_init_x == '0'){
-                default_values.x = 1.0;
-            }
-            else if (config->random_init_x == '1'){
-                // Should already be handled
-            }
-            else{
-                printf("ERROR: config->random_init_x not recognized");
             }
 
             if (vec_type == 'x'){
@@ -2050,6 +2068,103 @@ class SimpleDenseMatrix {
         //     vec.resize(needed_padding + local_context->num_local_rows, 0);
         //     vec(vec_to_copy.begin(), vec_to_copy.end());
         // }
+};
+
+template<typename VT>
+class DenseMatrix {
+public:
+  DenseMatrix() {}
+
+  DenseMatrix(int nr_, int nc_, int pad_) {
+    resize(nr_, nc_, pad_);
+  }
+
+  void resize(int nr_, int nc_, int pad_) {
+    nr = nr_;
+    nc = nc_;
+    pad = pad_;
+    nr_padded = nr_ + pad_;
+    vec.resize(nr_padded * nc);
+  }
+
+  VT* data() {
+    return vec.data();
+  }
+
+  virtual void swap(DenseMatrix &other) {
+    std::swap(nr, other.nr);
+    std::swap(nc, other.nc);
+    std::swap(nr_padded, other.nr_padded);
+    std::swap(pad, other.pad);    
+    
+    vec.swap(other.vec);
+  }
+
+  void init(Config *config, char vec_type){
+            DefaultValues<VT, int> default_values;
+
+            if (config->random_init_x == 'm'){
+                default_values.x = config->matrix_mean;
+            }
+
+            if (vec_type == 'x'){
+            init_std_vec_with_ptr_or_value(
+                config,
+                vec, 
+                vec.size(),
+                default_values.x,
+                config->random_init_x);
+            }
+            else if (vec_type == 'y'){
+            init_std_vec_with_ptr_or_value(
+                config,
+                vec, 
+                vec.size(),
+                default_values.y,
+                config->random_init_x);   
+            }
+        }
+  
+  virtual VT& operator()(int i, int j) = 0;
+
+  int nr, nc;
+  int pad;
+  int nr_padded;
+  std::vector<VT> vec;
+};
+
+template<typename VT>
+class DenseMatrixRowMaj : public DenseMatrix<VT> {
+public:
+  DenseMatrixRowMaj(int nr_, int nc_, int pad_) : DenseMatrix<VT>(nr_, nc_, pad_) {}
+
+  virtual VT& operator()(int i, int j) {
+    return this->vec[j + this->nc * i];
+  }
+
+  int leading_dim() {
+    return this->nc;
+  }
+  int row_stride() {
+    return this->nc;
+  }
+};
+
+template<typename VT>
+class DenseMatrixColMaj : public DenseMatrix<VT> {
+public:
+  DenseMatrixColMaj(int nr_, int nc_, int pad_) : DenseMatrix<VT>(nr_, nc_, pad_) {}
+ 
+  virtual VT& operator()(int i, int j) {
+    return this->vec[i + this->nr_padded * j];
+  }
+
+  int leading_dim() {
+    return this->nr_padded;
+  }
+  int row_stride() {
+    return 1;
+  }
 };
 
 template <typename VT, typename IT>
@@ -2250,11 +2365,21 @@ void register_likwid_markers(
                 LIKWID_MARKER_REGISTER("spmv_apdpsphp_crs_benchmark");
             }
             else{
-                if(config->x_block_width > 1){
-                    LIKWID_MARKER_REGISTER("block_colwise_spmv_crs_benchmark");    
+                if(config->block_vec_size > 1){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                    LIKWID_MARKER_REGISTER("block_colwise_spmv_crs_benchmark");  
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                    LIKWID_MARKER_REGISTER("block_rowwise_spmv_crs_benchmark");  
+#endif   
                 }
                 else{
-                    LIKWID_MARKER_REGISTER("spmv_crs_benchmark");
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                    LIKWID_MARKER_REGISTER("block_colwise_spmv_scs_benchmark");  
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                    LIKWID_MARKER_REGISTER("block_rowwise_spmv_scs_benchmark");  
+#endif   
                 }
             }
         }
@@ -3273,7 +3398,7 @@ void copy_back_result(
             }
 #endif
             // TODO: Bandaid
-            for(int i = 0; i < config->x_block_width; ++i){
+            for(int i = 0; i < config->block_vec_size; ++i){
                 apply_permutation<double, IT>(&((sorted_dp_local_y.data())[i * local_scs->n_rows]), &(dp_local_x_permuted[i * local_scs->n_rows]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
             }
 
@@ -3355,24 +3480,26 @@ void copy_data_to_ap_vectors(
 #ifdef HAVE_HALF_MATH
     SimpleDenseMatrix<_Float16, IT> *hp_local_x,
 #endif
-    SimpleDenseMatrix<VT, IT> *local_x,
+    VT *local_x_vec,
+    long x_vec_size,
     SimpleDenseMatrix<double, IT> *dp_local_y,
     SimpleDenseMatrix<float, IT> *sp_local_y,
 #ifdef HAVE_HALF_MATH
     SimpleDenseMatrix<_Float16, IT> *hp_local_y,
 #endif
-    SimpleDenseMatrix<VT, IT> *local_y
+    VT *local_y_vec,
+    long y_vec_size
 ){
     // Copy initialized RHS and LHS into other precisions
-    for(int i = 0; i < (local_x->vec).size(); ++i){
-        dp_local_x->vec[i] = static_cast<double>(local_x->vec[i]);
-        sp_local_x->vec[i] = static_cast<float>(local_x->vec[i]);
+    for(int i = 0; i < x_vec_size; ++i){
+        dp_local_x->vec[i] = static_cast<double>(local_x_vec[i]);
+        sp_local_x->vec[i] = static_cast<float>(local_x_vec[i]);
 #ifdef HAVE_HALF_MATH
-        hp_local_x->vec[i] = static_cast<_Float16>(local_x->vec[i]);
+        hp_local_x->vec[i] = static_cast<_Float16>(local_x_vec[i]);
 #endif
     }
 
-    for(int i = 0; i < (local_y->vec).size(); ++i){
+    for(int i = 0; i < y_vec_size; ++i){
         dp_local_y->vec[i] = 0.0;
         sp_local_y->vec[i] = 0.0f;
 #ifdef HAVE_HALF_MATH

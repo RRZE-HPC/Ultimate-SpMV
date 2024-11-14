@@ -18,10 +18,12 @@ endif
 endif
 endif
 
+ifneq ($(BLOCK_VECTOR_LAYOUT),none)
 ifneq ($(BLOCK_VECTOR_LAYOUT),colwise)
 ifneq ($(BLOCK_VECTOR_LAYOUT),rowwise)
 $(info BLOCK_VECTOR_LAYOUT=$(BLOCK_VECTOR_LAYOUT))
-$(error Please select a layout in: [colwise, rowwise])
+$(error Please select a layout in: [none, colwise, rowwise])
+endif
 endif
 endif
 
@@ -87,12 +89,12 @@ ifeq ($(COMPILER),icx)
   OPT_LEVEL = -O3
   OPT_ARCH  = -xhost
   
-  AVX512_fix= -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
+  GATHER_FIX = -Xclang -target-feature -Xclang +prefer-no-gather -xCORE-AVX512 -qopt-zmm-usage=high
 ifeq ($(USE_MKL),1)
   MKL = -qmkl
   CXXFLAGS += $(MKL)
 endif
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(AVX512_fix) $(OPT_ARCH)
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(GATHER_FIX) $(OPT_ARCH)
   ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH 
   endif

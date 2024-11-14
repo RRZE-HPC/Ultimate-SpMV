@@ -70,7 +70,7 @@ void write_bench_to_file(
     working_file << num_omp_threads << " thread(s) per proc" << std::endl;
 #endif 
     working_file << "kernel: " << config->kernel_format; 
-    working_file << ", x_width: " << config->x_block_width; 
+    working_file << ", block_vec_size: " << config->block_vec_size; 
     if(config->kernel_format == "scs"){
         working_file << ", C: " << config->chunk_size << " sigma: " << config->sigma;
         if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]"){
@@ -309,7 +309,7 @@ void write_result_to_file(
         // Protect against printing 'inf's
 #ifdef DEBUG_MODE
         if (std::abs((*x)[i]) < 1e-25){
-            printf("WARNING: At index %i, mkl_result = %f\n", i, (*x)[i]);
+            // printf("WARNING: At index %i, mkl_result = %f\n", i, (*x)[i]);
             relative_diff = r->total_uspmv_result[i];
         }
 #endif
@@ -409,8 +409,8 @@ void validate_result(
     int chunk_size = 1;
 #endif
 
-    mkl_result->resize(num_rows * config->x_block_width, 0.0);
-    std::vector<double> y(num_rows * config->x_block_width, 0.0);
+    mkl_result->resize(num_rows * config->block_vec_size, 0.0);
+    std::vector<double> y(num_rows * config->block_vec_size, 0.0);
 
     ScsData<double, int> *scs = new ScsData<double, int>;
 
@@ -421,25 +421,25 @@ void validate_result(
     convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
         
     if(config->value_type == "dp" || config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
-        for (int i = 0; i < num_rows * config->x_block_width; i++) {
+        for (int i = 0; i < num_rows * config->block_vec_size; i++) {
             (*mkl_result)[i] = r_dp->total_x[i];
         }
     }
     else if(config->value_type == "sp" || config->value_type == "ap[sp_hp]"){
-        for (int i = 0; i < num_rows * config->x_block_width; i++) {
+        for (int i = 0; i < num_rows * config->block_vec_size; i++) {
             (*mkl_result)[i] = r_sp->total_x[i];
         }
     }
     else if(config->value_type == "hp"){
 #ifdef HAVE_HALF_MATH
-        for (int i = 0; i < num_rows * config->x_block_width; i++) {
+        for (int i = 0; i < num_rows * config->block_vec_size; i++) {
             (*mkl_result)[i] = r_hp->total_x[i];
         }
 #endif
     }
 
 
-    for (int i = 0; i < num_cols * config->x_block_width; i++) {
+    for (int i = 0; i < num_cols * config->block_vec_size; i++) {
         y[i] = 0.0;
     }
 
@@ -453,7 +453,7 @@ void validate_result(
         'C'}; // zero-based indexing (C-style)
 
     for(int i = 0; i < config->n_repetitions; ++i){
-        for(int j = 0; j < config->x_block_width; ++j){
+        for(int j = 0; j < config->block_vec_size; ++j){
         // Computes y := alpha*A*x + beta*y, for A -> m * k, 
         // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
         

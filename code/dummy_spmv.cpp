@@ -32,18 +32,16 @@ spmv_omp_csr(const ST C, // 1
 
 // Use safelen to tell comiler there are safely this many elems/row
 
-    #pragma omp parallel 
-    {   
-        #pragma omp for schedule(static)
-        for (ST row = 0; row < num_rows; ++row) {
-            double sum{};
+    #pragma omp for schedule(static)
+    for (ST row = 0; row < num_rows; ++row) {
+        double sum{};
 
-            // #pragma omp simd safelen(8) reduction(+:sum)
-            for (int j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
-                sum += values[j] * x[col_idxs[j]];
-            }
-            y[row] = sum;
+        // #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sum)
+        #pragma omp simd
+        for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
+            sum += values[j] * x[col_idxs[j]];
         }
+        y[row] = sum;
     }
 }
 

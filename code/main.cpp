@@ -77,7 +77,7 @@ void bench_spmv(
     // TODO: Something here seems iffy. I think something is going wrong with the inverse perm vec
     // TODO: Skipping these permutation concerns now for SpMM
     // TODO: Bandaid
-    for(int i = 0; i < config->x_block_width; ++i){
+    for(int i = 0; i < config->block_vec_size; ++i){
         apply_permutation<VT, IT>(&(local_x_permuted)[i * local_scs->n_rows], &(*local_x)[i * local_scs->n_rows], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
     }
 
@@ -452,7 +452,7 @@ assign_spmv_kernel_gpu_data<VT>(
         r->duration_total_s = runtime;
 #endif
         r->duration_kernel_s = r->duration_total_s/ r->n_calls;
-        r->perf_gflops = (double)local_context->total_nnz * 2.0 * config->x_block_width
+        r->perf_gflops = (double)local_context->total_nnz * 2.0 * config->block_vec_size
                             / r->duration_kernel_s
                             / 1e9;                   // Only count usefull flops
     }
@@ -1210,8 +1210,25 @@ void compute_result(
         metis_inv_perm
     );
 
+// TODO: Make more uniform!
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+    DenseMatrixColMaj<VT> local_x(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
+    DenseMatrixColMaj<VT> local_y(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
+#else
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    DenseMatrixRowMaj<VT> local_x(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
+    DenseMatrixRowMaj<VT> local_y(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
+#else
     // Declare local vectors to be used
     SimpleDenseMatrix<VT, IT> local_x(&local_context, config);
+    SimpleDenseMatrix<VT, IT> local_y(&local_context, config);
+#endif
+#endif
+
+    // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp,
+    // or with 1s (by default)
+    local_x.init(config, 'x');
+    local_y.init(config, 'y');
 
     // Must be declared, but only used for mixed precision case
     // TODO: not efficient for storage, but used later for mp interop
@@ -1221,8 +1238,6 @@ void compute_result(
     SimpleDenseMatrix<_Float16, IT> hp_local_x(&local_context, config);
 #endif
 
-    SimpleDenseMatrix<VT, IT> local_y(&local_context, config);
-
     // NOTE: a low precision y vector is needed for swapping with low precision x
     SimpleDenseMatrix<double, IT> dp_local_y(&local_context, config);
     SimpleDenseMatrix<float, IT> sp_local_y(&local_context, config);
@@ -1230,28 +1245,46 @@ void compute_result(
     SimpleDenseMatrix<_Float16, IT> hp_local_y(&local_context, config);
 #endif
 
-    // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp,
-    // or with 1s (by default)
-    local_x.init(config, 'x');
-    local_y.init(config, 'y');
-
     copy_data_to_ap_vectors(
         &dp_local_x,
         &sp_local_x,
 #ifdef HAVE_HALF_MATH
         &hp_local_x,
 #endif
-        &local_x,
+        local_x.vec.data(),
+        local_x.vec.size(),
         &dp_local_y,
         &sp_local_y,
 #ifdef HAVE_HALF_MATH
         &hp_local_y,
 #endif
-        &local_y
+        local_y.vec.data(),
+        local_y.vec.size()
     );
 
     // Copy contents of local_x for output, and validation against mkl
-    std::vector<VT> local_x_copy = local_x.vec;
+    // std::vector<VT> local_x_copy = local_x.vec;
+    // We want this to be held column-wise always, at least for accuracy validation
+    // TODO: Allow to be row-wise for performance comparison against MKL
+    // TODO: Ugly. No raw loops!
+    std::vector<VT> local_x_copy(local_x.vec.size());
+
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    for(int i = 0; i < local_scs.n_rows; ++i){
+        for(int j = 0; j < config->block_vec_size; ++j){
+            local_x_copy[i+j] = local_x.vec[i + local_scs.n_rows * j];
+        }
+    } 
+#else
+    for(int i = 0; i < local_x.vec.size(); ++i){
+        local_x_copy[i] = local_x.vec[i];
+    } 
+#endif
+
+
+
+
+
 
 
 #ifdef DEBUG_MODE
