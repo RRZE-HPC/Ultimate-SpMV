@@ -377,11 +377,11 @@ block_spmv_omp_scs_general(
 #endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-	                    // Y[(c * *C + i) * (*block_size) + vec_idx] = tmp[i * (*block_size) + vec_idx];
-// #ifdef DEBUG_MODE
-//                         printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) * (*block_size) + vec_idx);
-// #endif
-	                    Y[(c * *C + i) + vec_idx * (*n_chunks * *C)] = tmp[i * (*block_size) + vec_idx];
+	                    Y[(c * *C + i) * (*block_size) + vec_idx] = tmp[i * (*block_size) + vec_idx];
+#ifdef DEBUG_MODE
+                        printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) * (*block_size) + vec_idx);
+#endif
+	                    // Y[(c * *C + i) + vec_idx * (*n_chunks * *C)] = tmp[i * (*block_size) + vec_idx];
 
 #endif
                 }

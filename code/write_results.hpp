@@ -411,6 +411,7 @@ void validate_result(
 
     mkl_result->resize(num_rows * config->block_vec_size, 0.0);
     std::vector<double> y(num_rows * config->block_vec_size, 0.0);
+    std::vector<double> mkl_result_permuted(num_rows * config->block_vec_size, 0.0);
 
     ScsData<double, int> *scs = new ScsData<double, int>;
 
@@ -468,138 +469,19 @@ void validate_result(
         std::swap(*mkl_result, y);
     }
 
-    delete scs;
-}
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    // Need to permute to compare with USpMV result
+    for(int i = 0; i < num_rows; ++i){
+        for(int j = 0; j < config->block_vec_size; ++j){
+            mkl_result_permuted[i * config->block_vec_size + j] = (*mkl_result)[i + num_rows * j];
 
-/**
-    @brief Read in the mtx struct to csr format, and use the mkl_scsrmv to validate our single precision result against mkl
-    @param *matrix_file_name : name of the matrix-matket format data, taken from the cli
-    @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
-    @param *config : struct to initialze default values and user input
-    @param *r : a Result struct, in which results of the computations are stored
-*/
-void validate_sp_result(
-    MtxData<float, int> *total_mtx,
-    Config *config,
-    Result<float, int> *r,
-    std::vector<float> *mkl_sp_result
-){
-#ifdef __CUDACC__
-    long num_rows = total_mtx->n_rows;
-    long num_cols = total_mtx->n_cols;
-    long chunk_size = 1;
-#else
-    int num_rows = total_mtx->n_rows;
-    int num_cols = total_mtx->n_cols;
-    int chunk_size = 1;
+        }
+    }
+    std::swap(*mkl_result, mkl_result_permuted);
 #endif
-
-    mkl_sp_result->resize(num_rows, 0);
-    std::vector<float> y(num_rows, 0);
-
-    ScsData<float, int> *scs = new ScsData<float, int>;
-
-    convert_to_scs<float, float, int>(total_mtx, 1, 1, scs);
-
-    std::vector<int> row_ptrs(total_mtx->n_rows + 1);
-
-    convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
-        
-    for (int i = 0; i < num_rows; i++) {
-        (*mkl_sp_result)[i] = r->total_x[i];
-    }
-
-    for (int i = 0; i < num_cols; i++) {
-        y[i] = 0.0;
-    }
-
-    char transa = 'n';
-    float alpha = 1.0;
-    float beta = 0.0; 
-    char matdescra [4] = {
-        'G', // general matrix
-        ' ', // ignored
-        ' ', // ignored
-        'C'}; // zero-based indexing (C-style)
-
-    // Computes y := alpha*A*x + beta*y, for A -> m * k, 
-    // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
-    for(int i = 0; i < config->n_repetitions; ++i){
-#ifdef __CUDACC__
-        // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
-        spmv_omp_csr<float, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_sp_result)[0], &y[0]);
-#else
-        mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
-#endif
-        std::swap(*mkl_sp_result, y);
-    }
 
     delete scs;
 }
 
-// TODO
-#ifdef HAVE_HALF_MATH
-void validate_hp_result(
-    MtxData<_Float16, int> *total_mtx,
-    Config *config,
-    Result<_Float16, int> *r,
-    std::vector<_Float16> *mkl_hp_result
-){
-    mkl_hp_result = nullptr;
-    // std::cout << "Validation of half precision results not yet implemented." << std::endl;
-// #ifdef __CUDACC__
-//     long num_rows = total_mtx->n_rows;
-//     long num_cols = total_mtx->n_cols;
-//     long chunk_size = 1;
-// #else
-//     int num_rows = total_mtx->n_rows;
-//     int num_cols = total_mtx->n_cols;
-//     int chunk_size = 1;
-// #endif
-
-//     mkl_sp_result->resize(num_rows, 0);
-//     std::vector<float> y(num_rows, 0);
-
-//     ScsData<float, int> *scs = new ScsData<float, int>;
-
-//     convert_to_scs<float, float, int>(total_mtx, 1, 1, scs);
-
-//     V<int, int>row_ptrs(total_mtx->n_rows + 1);
-
-//     convert_idxs_to_ptrs(total_mtx->I, row_ptrs);
-        
-//     for (int i = 0; i < num_rows; i++) {
-//         (*mkl_sp_result)[i] = r->total_x[i];
-//     }
-
-//     for (int i = 0; i < num_cols; i++) {
-//         y[i] = 0.0;
-//     }
-
-//     char transa = 'n';
-//     float alpha = 1.0;
-//     float beta = 0.0; 
-//     char matdescra [4] = {
-//         'G', // general matrix
-//         ' ', // ignored
-//         ' ', // ignored
-//         'C'}; // zero-based indexing (C-style)
-
-//     // Computes y := alpha*A*x + beta*y, for A -> m * k, 
-//     // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
-//     for(int i = 0; i < config->n_repetitions; ++i){
-// #ifdef __CUDACC__
-//         // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
-//         spmv_omp_csr<float, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_sp_result)[0], &y[0]);
-// #else
-//         mkl_scsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(*mkl_sp_result)[0], &beta, &y[0]);
-// #endif
-//         std::swap(*mkl_sp_result, y);
-//     }
-
-//     delete scs;
-}
-
-#endif
 #endif
 #endif

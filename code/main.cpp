@@ -1272,19 +1272,15 @@ void compute_result(
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
     for(int i = 0; i < local_scs.n_rows; ++i){
         for(int j = 0; j < config->block_vec_size; ++j){
-            local_x_copy[i+j] = local_x.vec[i + local_scs.n_rows * j];
+            local_x_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
         }
-    } 
+    }
+    std::swap(local_x_copy, local_x.vec);
 #else
     for(int i = 0; i < local_x.vec.size(); ++i){
         local_x_copy[i] = local_x.vec[i];
     } 
 #endif
-
-
-
-
-
 
 
 #ifdef DEBUG_MODE
@@ -1512,9 +1508,6 @@ int main(int argc, char *argv[]){
     std::cout << "Using c++ version: " << __cplusplus << std::endl;
 #endif
 
-    // Bogus parallel region pin threads to cores
-    dummy_pin();
-
     // Initialize just out of convenience
     int my_rank = 0, comm_size = 1;
 
@@ -1532,6 +1525,7 @@ int main(int argc, char *argv[]){
     LIKWID_MARKER_INIT;
 #endif
 
+    // Bogus parallel region pin threads to cores
     bogus_init_pin();
 
     double begin_main_time;
