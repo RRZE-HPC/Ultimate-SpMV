@@ -55,14 +55,28 @@ struct max_rel_error<std::complex<double>>
     constexpr static double value = 1e-13;
 };
 
-void dummy_pin(void){
-    volatile int dummy = 0;
-    #pragma omp parallel
-    {
-        int thread_id = omp_get_thread_num();
-        dummy += thread_id;
-    }
+#ifdef USE_MPI
+// TODO: Need to define your own MPI datatype for HALF
+template<typename T>
+MPI_Datatype get_mpi_type() = delete;
+
+template<>
+MPI_Datatype get_mpi_type<float>() {
+  return MPI_FLOAT;
 }
+template<>
+MPI_Datatype get_mpi_type<double>() {
+  return MPI_DOUBLE;
+}
+template<>
+MPI_Datatype get_mpi_type<std::complex<float> >() {
+  return MPI_C_FLOAT_COMPLEX;
+}
+template<>
+MPI_Datatype get_mpi_type<std::complex<double> >() {
+  return MPI_C_DOUBLE_COMPLEX;
+}
+#endif
 
 template <typename VT>
 void print_vector(const std::string &name,
@@ -2803,7 +2817,6 @@ void assign_spmv_kernel_cpu_data(
 
 }
 
-
 template <typename VT, typename IT>
 void assign_mpi_args(
     CommArgs<VT, IT> *comm_args_encoded,
@@ -2822,6 +2835,7 @@ void assign_mpi_args(
     int *comm_size
 ){
 #ifdef USE_MPI
+    MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
     // Encode comm args into struct
     comm_args_encoded->local_context = local_context;
     comm_args_encoded->work_sharing_arr = work_sharing_arr;
@@ -2832,6 +2846,7 @@ void assign_mpi_args(
     comm_args_encoded->send_requests = send_requests;
     comm_args_encoded->nzr_size = nzr_size;
     comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
+    comm_args_encoded->MPI_ELEM_TYPE = MPI_ELEM_TYPE;
 #endif
 
     comm_args_encoded->my_rank = my_rank;

@@ -160,33 +160,34 @@ template <typename VT, typename IT>
 struct CommArgs
 {
 #ifdef USE_MPI
-    Config *config;
-    ContextData<IT> *local_context;
-    const IT *perm;
-    VT **to_send_elems;
-    const IT *work_sharing_arr;
-    MPI_Request *recv_requests;
-    const IT *nzs_size;
-    MPI_Request *send_requests;
-    const IT *nzr_size;
-    const IT *num_local_elems;
+    Config *config                  = nullptr;
+    ContextData<IT> *local_context  = nullptr;
+    const IT *perm                  = nullptr;
+    VT **to_send_elems              = nullptr;
+    const IT *work_sharing_arr      = nullptr;
+    MPI_Request *recv_requests      = nullptr;
+    const IT *nzs_size              = nullptr;
+    MPI_Request *send_requests      = nullptr;
+    const IT *nzr_size              = nullptr;
+    const IT *num_local_elems       = nullptr;
+    MPI_Datatype MPI_ELEM_TYPE;
 #endif
-    int *my_rank = nullptr;
-    int *comm_size = nullptr;
+    int *my_rank                    = nullptr;
+    int *comm_size                  = nullptr;
 
 };
 
 template <typename VT, typename IT>
 struct OnePrecKernelArgs
 {
-    ST * C;
-    ST * n_chunks;
-    IT * RESTRICT chunk_ptrs;
-    IT * RESTRICT chunk_lengths;
-    IT * RESTRICT col_idxs;
-    VT * RESTRICT values;
-    VT * RESTRICT local_x;
-    VT * RESTRICT local_y;
+    ST * C                          = nullptr;
+    ST * n_chunks                   = nullptr;
+    IT * RESTRICT chunk_ptrs        = nullptr;
+    IT * RESTRICT chunk_lengths     = nullptr;
+    IT * RESTRICT col_idxs          = nullptr;
+    VT * RESTRICT values            = nullptr;
+    VT * RESTRICT local_x           = nullptr;
+    VT * RESTRICT local_y           = nullptr;
 #ifdef __CUDACC__
     ST * n_thread_blocks;
 #endif
@@ -195,34 +196,34 @@ struct OnePrecKernelArgs
 template <typename IT>
 struct MultiPrecKernelArgs
 {
-    ST * dp_C;
-    ST * dp_n_chunks; // (same for both)
-    IT * RESTRICT dp_chunk_ptrs;
-    IT * RESTRICT dp_chunk_lengths;
-    IT * RESTRICT dp_col_idxs;
-    double * RESTRICT dp_values;
-    double * RESTRICT dp_local_x;
-    double * RESTRICT dp_local_y;
-    ST * sp_C;
-    ST * sp_n_chunks; // (same for both)
-    IT * RESTRICT sp_chunk_ptrs;
-    IT * RESTRICT sp_chunk_lengths;
-    IT * RESTRICT sp_col_idxs;
-    float * RESTRICT sp_values;
-    float * RESTRICT sp_local_x;
-    float * RESTRICT sp_local_y;
+    ST * dp_C                       = nullptr;
+    ST * dp_n_chunks                = nullptr; // (same for all)
+    IT * RESTRICT dp_chunk_ptrs     = nullptr;
+    IT * RESTRICT dp_chunk_lengths  = nullptr;
+    IT * RESTRICT dp_col_idxs       = nullptr;
+    double * RESTRICT dp_values     = nullptr;
+    double * RESTRICT dp_local_x    = nullptr;
+    double * RESTRICT dp_local_y    = nullptr;
+    ST * sp_C                       = nullptr;
+    ST * sp_n_chunks                = nullptr; // (same for all)
+    IT * RESTRICT sp_chunk_ptrs     = nullptr;
+    IT * RESTRICT sp_chunk_lengths  = nullptr;
+    IT * RESTRICT sp_col_idxs       = nullptr;
+    float * RESTRICT sp_values      = nullptr;
+    float * RESTRICT sp_local_x     = nullptr;
+    float * RESTRICT sp_local_y     = nullptr;
 #ifdef HAVE_HALF_MATH
-    ST * hp_C;
-    ST * hp_n_chunks; // (same for both)
-    IT * RESTRICT hp_chunk_ptrs;
-    IT * RESTRICT hp_chunk_lengths;
-    IT * RESTRICT hp_col_idxs;
-    _Float16 * RESTRICT hp_values;
-    _Float16 * RESTRICT hp_local_x;
-    _Float16 * RESTRICT hp_local_y;
+    ST * hp_C                       = nullptr;
+    ST * hp_n_chunks                = nullptr; // (same for all)
+    IT * RESTRICT hp_chunk_ptrs     = nullptr;
+    IT * RESTRICT hp_chunk_lengths  = nullptr;
+    IT * RESTRICT hp_col_idxs       = nullptr;
+    _Float16 * RESTRICT hp_values   = nullptr;
+    _Float16 * RESTRICT hp_local_x  = nullptr;
+    _Float16 * RESTRICT hp_local_y  = nullptr;
 #endif
 #ifdef __CUDACC__
-    ST * n_thread_blocks;
+    ST * n_thread_blocks= nullptr;
 #endif
 };
 
@@ -230,16 +231,16 @@ struct MultiPrecKernelArgs
 // template <typename VT, typename IT> Dont need templating?
 struct CuSparseArgs
 {
-    cusparseHandle_t          handle;
-    cusparseOperation_t       opA;
-    const void*               alpha;
-    cusparseConstSpMatDescr_t matA;  // non-const descriptor supported
-    cusparseConstDnVecDescr_t vecX;  // non-const descriptor supported
-    const void*               beta;
-    cusparseDnVecDescr_t      vecY;
-    cudaDataType              computeType;
-    cusparseSpMVAlg_t         alg;
-    void*                     externalBuffer;
+    cusparseHandle_t          handle        = nullptr;
+    cusparseOperation_t       opA           = nullptr;
+    const void*               alpha         = nullptr;
+    cusparseConstSpMatDescr_t matA          = nullptr;  // non-const descriptor supported
+    cusparseConstDnVecDescr_t vecX          = nullptr;  // non-const descriptor supported
+    const void*               beta          = nullptr;
+    cusparseDnVecDescr_t      vecY          = nullptr;
+    cudaDataType              computeType   = nullptr;
+    cusparseSpMVAlg_t         alg           = nullptr;
+    void*                     externalBuffer= nullptr;
 };
 #endif
 
@@ -323,25 +324,25 @@ class SpmvKernel {
 #endif
 
         // Need different names on all of unpacked args
-        const ST * dp_C                         = multi_prec_kernel_args_decoded->dp_C;
-        const ST * dp_n_chunks                  = multi_prec_kernel_args_decoded->dp_n_chunks; // TODO same, for now.
-        const IT * RESTRICT dp_chunk_ptrs       = multi_prec_kernel_args_decoded->dp_chunk_ptrs;
-        const IT * RESTRICT dp_chunk_lengths    = multi_prec_kernel_args_decoded->dp_chunk_lengths;
-        const IT * RESTRICT dp_col_idxs         = multi_prec_kernel_args_decoded->dp_col_idxs;
-        const double * RESTRICT dp_values       = multi_prec_kernel_args_decoded->dp_values;
-        const ST * sp_C                         = multi_prec_kernel_args_decoded->sp_C;
-        const ST * sp_n_chunks                  = multi_prec_kernel_args_decoded->sp_n_chunks; // TODO same, for now.
-        const IT * RESTRICT sp_chunk_ptrs       = multi_prec_kernel_args_decoded->sp_chunk_ptrs;
-        const IT * RESTRICT sp_chunk_lengths    = multi_prec_kernel_args_decoded->sp_chunk_lengths;
-        const IT * RESTRICT sp_col_idxs         = multi_prec_kernel_args_decoded->sp_col_idxs;
-        const float * RESTRICT sp_values        = multi_prec_kernel_args_decoded->sp_values;
+        const ST * dp_C                      = multi_prec_kernel_args_decoded->dp_C;
+        const ST * dp_n_chunks               = multi_prec_kernel_args_decoded->dp_n_chunks; // TODO same, for now.
+        const IT * RESTRICT dp_chunk_ptrs    = multi_prec_kernel_args_decoded->dp_chunk_ptrs;
+        const IT * RESTRICT dp_chunk_lengths = multi_prec_kernel_args_decoded->dp_chunk_lengths;
+        const IT * RESTRICT dp_col_idxs      = multi_prec_kernel_args_decoded->dp_col_idxs;
+        const double * RESTRICT dp_values    = multi_prec_kernel_args_decoded->dp_values;
+        const ST * sp_C                      = multi_prec_kernel_args_decoded->sp_C;
+        const ST * sp_n_chunks               = multi_prec_kernel_args_decoded->sp_n_chunks; // TODO same, for now.
+        const IT * RESTRICT sp_chunk_ptrs    = multi_prec_kernel_args_decoded->sp_chunk_ptrs;
+        const IT * RESTRICT sp_chunk_lengths = multi_prec_kernel_args_decoded->sp_chunk_lengths;
+        const IT * RESTRICT sp_col_idxs      = multi_prec_kernel_args_decoded->sp_col_idxs;
+        const float * RESTRICT sp_values     = multi_prec_kernel_args_decoded->sp_values;
 #ifdef HAVE_HALF_MATH
-        const ST * hp_C                         = multi_prec_kernel_args_decoded->hp_C;
-        const ST * hp_n_chunks                  = multi_prec_kernel_args_decoded->hp_n_chunks; // TODO same, for now.
-        const IT * RESTRICT hp_chunk_ptrs       = multi_prec_kernel_args_decoded->hp_chunk_ptrs;
-        const IT * RESTRICT hp_chunk_lengths    = multi_prec_kernel_args_decoded->hp_chunk_lengths;
-        const IT * RESTRICT hp_col_idxs         = multi_prec_kernel_args_decoded->hp_col_idxs;
-        const _Float16 * RESTRICT hp_values     = multi_prec_kernel_args_decoded->hp_values;
+        const ST * hp_C                      = multi_prec_kernel_args_decoded->hp_C;
+        const ST * hp_n_chunks               = multi_prec_kernel_args_decoded->hp_n_chunks; // TODO same, for now.
+        const IT * RESTRICT hp_chunk_ptrs    = multi_prec_kernel_args_decoded->hp_chunk_ptrs;
+        const IT * RESTRICT hp_chunk_lengths = multi_prec_kernel_args_decoded->hp_chunk_lengths;
+        const IT * RESTRICT hp_col_idxs      = multi_prec_kernel_args_decoded->hp_col_idxs;
+        const _Float16 * RESTRICT hp_values  = multi_prec_kernel_args_decoded->hp_values;
 #endif
 
 #ifdef __CUDACC__
@@ -349,15 +350,15 @@ class SpmvKernel {
 #endif
 
 #ifdef USE_CUSPARSE
-        cusparseHandle_t          handle = cusparse_args_decoded->handle;
-        cusparseOperation_t       opA = cusparse_args_decoded->opA;
-        const void*               alpha = cusparse_args_decoded->alpha;
-        cusparseConstSpMatDescr_t matA = cusparse_args_decoded->matA;
-        cusparseConstDnVecDescr_t vecX = cusparse_args_decoded->vecX;
-        const void*               beta = cusparse_args_decoded->beta;
-        cusparseDnVecDescr_t      vecY = cusparse_args_decoded->vecY;
-        cudaDataType              computeType = cusparse_args_decoded->computeType;
-        cusparseSpMVAlg_t         alg = cusparse_args_decoded->alg;
+        cusparseHandle_t          handle         = cusparse_args_decoded->handle;
+        cusparseOperation_t       opA            = cusparse_args_decoded->opA;
+        const void*               alpha          = cusparse_args_decoded->alpha;
+        cusparseConstSpMatDescr_t matA           = cusparse_args_decoded->matA;
+        cusparseConstDnVecDescr_t vecX           = cusparse_args_decoded->vecX;
+        const void*               beta           = cusparse_args_decoded->beta;
+        cusparseDnVecDescr_t      vecY           = cusparse_args_decoded->vecY;
+        cudaDataType              computeType    = cusparse_args_decoded->computeType;
+        cusparseSpMVAlg_t         alg            = cusparse_args_decoded->alg;
         void*                     externalBuffer = cusparse_args_decoded->externalBuffer;
 #endif
 
@@ -365,26 +366,27 @@ class SpmvKernel {
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
 #ifdef USE_MPI
         ContextData<IT> *local_context = comm_args_decoded->local_context;
-        const IT *perm = comm_args_decoded->perm;
-        VT **to_send_elems = comm_args_decoded->to_send_elems;
-        const IT *work_sharing_arr = comm_args_decoded->work_sharing_arr;
-        MPI_Request *recv_requests = comm_args_decoded->recv_requests;
-        const IT nzs_size = *(comm_args_decoded->nzs_size);
-        MPI_Request *send_requests = comm_args_decoded->send_requests;
-        const IT nzr_size = *(comm_args_decoded->nzr_size);
-        const IT num_local_elems = *(comm_args_decoded->num_local_elems);
+        const IT *perm                 = comm_args_decoded->perm;
+        VT **to_send_elems             = comm_args_decoded->to_send_elems;
+        const IT *work_sharing_arr     = comm_args_decoded->work_sharing_arr;
+        MPI_Request *recv_requests     = comm_args_decoded->recv_requests;
+        const IT nzs_size              = *(comm_args_decoded->nzs_size);
+        MPI_Request *send_requests     = comm_args_decoded->send_requests;
+        const IT nzr_size              = *(comm_args_decoded->nzr_size);
+        const IT num_local_elems       = *(comm_args_decoded->num_local_elems);
+        MPI_Datatype MPI_ELEM_TYPE     = comm_args_decoded->MPI_ELEM_TYPE;
 #endif
-        int my_rank = *(comm_args_decoded->my_rank);
+        int my_rank   = *(comm_args_decoded->my_rank);
         int comm_size = *(comm_args_decoded->comm_size);
 
 
     public:
-        VT * RESTRICT local_x = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
-        VT * RESTRICT local_y = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
+        VT * RESTRICT local_x        = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
+        VT * RESTRICT local_y        = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
         double * RESTRICT dp_local_x = multi_prec_kernel_args_decoded->dp_local_x;
         double * RESTRICT dp_local_y = multi_prec_kernel_args_decoded->dp_local_y;
-        float * RESTRICT sp_local_x = multi_prec_kernel_args_decoded->sp_local_x;
-        float * RESTRICT sp_local_y = multi_prec_kernel_args_decoded->sp_local_y;
+        float * RESTRICT sp_local_x  = multi_prec_kernel_args_decoded->sp_local_x;
+        float * RESTRICT sp_local_y  = multi_prec_kernel_args_decoded->sp_local_y;
 #ifdef HAVE_HALF_MATH
         _Float16 * RESTRICT hp_local_x = multi_prec_kernel_args_decoded->hp_local_x;
         _Float16 * RESTRICT hp_local_y = multi_prec_kernel_args_decoded->hp_local_y;
@@ -401,7 +403,7 @@ class SpmvKernel {
         kernel_args_encoded(kernel_args_encoded_), 
         cusparse_args_encoded(cusparse_args_encoded_),
         comm_args_encoded(comm_args_encoded_){
-
+            // TODO: could wrap all this up in a "kernel picker" subroutine
             // CRS kernel selection //
             if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                 if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
@@ -658,32 +660,15 @@ class SpmvKernel {
 #ifdef DEBUG_MODE
                 std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 #endif
-                if(config->value_type == "dp"){
-                    MPI_Irecv(
-                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
-                        incoming_buf_size,
-                        MPI_DOUBLE,
-                        sending_proc,
-                        (local_context->recv_tags[sending_proc])[my_rank],
-                        MPI_COMM_WORLD,
-                        &recv_requests[from_proc_idx]
-                    );
-                }
-                else if (config->value_type == "sp")
-                {
-                    MPI_Irecv(
-                        &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
-                        incoming_buf_size,
-                        MPI_FLOAT,
-                        sending_proc,
-                        (local_context->recv_tags[sending_proc])[my_rank],
-                        MPI_COMM_WORLD,
-                        &recv_requests[from_proc_idx]
-                    );
-                }
-                else if(config->value_type == "hp"){
-                    // TODO: Need to define your own MPI datatype for HALF
-                }
+                MPI_Irecv(
+                    &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                    incoming_buf_size,
+                    this->MPI_ELEM_TYPE,
+                    sending_proc,
+                    (local_context->recv_tags[sending_proc])[my_rank],
+                    MPI_COMM_WORLD,
+                    &recv_requests[from_proc_idx]
+                );
             }
 
             // Second, fulfill those with sends
@@ -707,32 +692,15 @@ class SpmvKernel {
 #ifdef DEBUG_MODE
                 std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
 #endif
-                if(config->value_type == "dp"){
-                    MPI_Isend(
-                        &(to_send_elems[to_proc_idx])[0],
-                        outgoing_buf_size,
-                        MPI_DOUBLE,
-                        receiving_proc,
-                        (local_context->send_tags[my_rank])[receiving_proc],
-                        MPI_COMM_WORLD,
-                        &send_requests[to_proc_idx]
-                    );
-                }
-                else if (config->value_type == "sp")
-                {
-                    MPI_Isend(
-                        &(to_send_elems[to_proc_idx])[0],
-                        outgoing_buf_size,
-                        MPI_FLOAT,
-                        receiving_proc,
-                        (local_context->send_tags[my_rank])[receiving_proc],
-                        MPI_COMM_WORLD,
-                        &send_requests[to_proc_idx]
-                    );
-                }
-                else if(config->value_type == "hp"){
-                    // TODO: Need to define your own MPI datatype for HALF
-                }
+                MPI_Isend(
+                    &(to_send_elems[to_proc_idx])[0],
+                    outgoing_buf_size,
+                    this->MPI_ELEM_TYPE,
+                    receiving_proc,
+                    (local_context->send_tags[my_rank])[receiving_proc],
+                    MPI_COMM_WORLD,
+                    &send_requests[to_proc_idx]
+                );
             }
 #endif
         }
