@@ -77,9 +77,10 @@ void bench_spmv(
     // TODO: Something here seems iffy. I think something is going wrong with the inverse perm vec
     // TODO: Skipping these permutation concerns now for SpMM
     // TODO: Bandaid
-    for(int i = 0; i < config->block_vec_size; ++i){
-        apply_permutation<VT, IT>(&(local_x_permuted)[i * local_scs->n_rows], &(*local_x)[i * local_scs->n_rows], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
-    }
+    // for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+    //     apply_permutation<VT, IT>(&(local_x_permuted)[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)], &(*local_x)[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)], &(local_scs->new_to_old_idx)[0], local_scs->n_rows + local_context->per_vector_padding);
+    // }
+    local_x_permuted = *local_x;
 
     if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
         // Currently, we fix one sigma. That is, we permute dp and sp exactly the same
@@ -473,8 +474,38 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
 
 #ifdef USE_MPI
+            // TODO: Integrate into single function call
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+#ifdef DEBUG_MODE_FINE
+            int test_rank = 0;
+            int all_idxs = config->block_vec_size * (local_scs->n_rows + local_context->per_vector_padding);
+            if(my_rank == test_rank){
+                printf("Before comm local_x on rank %i = [\n", my_rank);
+                for(int i = 0; i < all_idxs; ++i){
+                    printf("%f,\n", spmv_kernel.local_x[i]);
+                }
+                printf("]\n");
+            }
+#endif
+            // NOTE: Reuse tags, send buffers, and MPI requests each loop iteration. This may be risky
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                spmv_kernel.init_offset_halo_exchange(vec_idx);
+                spmv_kernel.finalize_offset_halo_exchange();
+            }
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == test_rank){
+                printf("After comm local_x on rank %i = [\n", my_rank);
+                for(int i = 0; i < all_idxs; ++i){
+                    printf("%f,\n", spmv_kernel.local_x[i]);
+                }
+                printf("]\n");
+            }
+#endif
+#else
             spmv_kernel.init_halo_exchange();
             spmv_kernel.finalize_halo_exchange();
+#endif
+            
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
                 std::cout << "after comm spmv_kernel->local_x" << std::endl;
@@ -663,26 +694,22 @@ assign_spmv_kernel_gpu_data<VT>(
     @param *config : struct to initialze default values and user input
     @param *r : a Result struct, in which results of the benchmark are stored
     @param *work_sharing_arr : the array describing the partitioning of the rows
-    @param *local_x_copy : copy of local RHS vector used for validation against MKL
+    @param *local_x_mkl_copy : copy of local RHS vector used for validation against MKL
     @param *local_y : Process-local results vector, instance of SimpleDenseMatrix class
 */
 template <typename VT, typename IT>
 void gather_results(
     Config *config,
+    ContextData<IT> *local_context,
     Result<VT, IT> *r,
     IT *work_sharing_arr,
-    std::vector<VT> *local_x_copy,
+    std::vector<VT> *local_x_mkl_copy,
     std::vector<VT> *local_y,
     int my_rank,
     int comm_size
 ){
-    IT num_local_rows = 0;
 
-#ifdef USE_MPI
-    num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
-#else
-    num_local_rows = local_y->size();
-#endif
+    IT num_local_rows = local_context->num_local_rows;
 
     if(config->mode == 'b'){
 
@@ -759,16 +786,16 @@ void gather_results(
 
     }
     else if(config->mode == 's'){
-        std::vector<VT> sorted_local_y(num_local_rows);
-        r->x_out = (*local_x_copy);
-        r->y_out = (*local_y);
+        r->x_out = (*local_x_mkl_copy);
+        r->y_out = (*local_y); // NOTE: Is this true even with SCS?
 
-        if (config->validate_result)
-        {
+        if (config->validate_result){
 #ifdef USE_MPI
-            // TODO: is the size correct here?
-            std::vector<VT> total_uspmv_result(work_sharing_arr[comm_size], 0);
-            std::vector<VT> total_x(work_sharing_arr[comm_size], 0);
+            MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
+
+            // TODO: You really need this size on EVERY process?
+            std::vector<VT> total_uspmv_result(work_sharing_arr[comm_size] * config->block_vec_size, VT{});
+            std::vector<VT> total_x(work_sharing_arr[comm_size] * config->block_vec_size, VT{});
 
             IT counts_arr[comm_size];
             IT displ_arr_bk[comm_size];
@@ -783,77 +810,39 @@ void gather_results(
                 displ_arr_bk[i] = work_sharing_arr[i];
             }
 
-            if (config->value_type == "dp"){
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                 // Gather all y_vector results to root
-                MPI_Gatherv(&(r->y_out)[0],
+                MPI_Gatherv(&(r->y_out)[vec_idx * num_local_rows],
                             num_local_rows,
-                            MPI_DOUBLE,
-                            &total_uspmv_result[0],
+                            MPI_ELEM_TYPE,
+                            &total_uspmv_result[vec_idx * num_local_rows],
                             counts_arr,
                             displ_arr_bk,
-                            MPI_DOUBLE,
-                            0,
-                            MPI_COMM_WORLD);
-                // Gather all x_vector copies to root for mkl validation
-                MPI_Gatherv(&(r->x_out)[0],
-                            num_local_rows,
-                            MPI_DOUBLE,
-                            &total_x[0],
-                            counts_arr,
-                            displ_arr_bk,
-                            MPI_DOUBLE,
-                            0,
-                            MPI_COMM_WORLD);
-            }
-            else if (config->value_type == "sp"){
-                MPI_Gatherv(&(r->y_out)[0],
-                            num_local_rows,
-                            MPI_FLOAT,
-                            &total_uspmv_result[0],
-                            counts_arr,
-                            displ_arr_bk,
-                            MPI_FLOAT,
+                            MPI_ELEM_TYPE,
                             0,
                             MPI_COMM_WORLD);
 
-                MPI_Gatherv(&(r->x_out)[0],
+                // Gather all x_vector copies to root for mkl validation
+                MPI_Gatherv(&(r->x_out)[vec_idx * num_local_rows],
                             num_local_rows,
-                            MPI_FLOAT,
-                            &total_x[0],
+                            MPI_ELEM_TYPE,
+                            &total_x[vec_idx * num_local_rows],
                             counts_arr,
                             displ_arr_bk,
-                            MPI_FLOAT,
+                            MPI_ELEM_TYPE,
                             0,
                             MPI_COMM_WORLD);
-            }
-            else if (config->value_type == "hp"){
-                // TODO: Need to define your own MPI datatype for HALF
             }
 
             // If we're verifying results, assign total vectors to Result object
             // NOTE: Garbage values for all but root process
             r->total_x = total_x;
             r->total_uspmv_result = total_uspmv_result;
-
-#ifdef DEBUG_MODE_FINE
-            std::cout << "r->total_x = [" << std::endl;
-            for(int i = 0; i < 256; ++i){
-                std::cout << r->total_x[i] << ", ";
-            }
-            std::cout << "]" << std::endl;
-
-            std::cout << "r->total_uspmv_result = [" << std::endl;
-            for(int i = 0; i < 256; ++i){
-                std::cout << r->total_uspmv_result[i] << ", ";
-            }
-            std::cout << "]" << std::endl;
-#endif
-
 #else
-            r->total_x = (*local_x_copy);
+            r->total_x = (*local_x_mkl_copy);
             r->total_uspmv_result = r->y_out;
 #endif
-        }
+            }
     }
 }
 
@@ -1151,6 +1140,11 @@ void compute_result(
     int my_rank,
     int comm_size)
 {
+#ifdef USE_MPI
+#ifdef DEBUG_MODE
+    printf("Rank %i entering compute_result\n", my_rank);
+#endif
+#endif
     // TODO: bring back matrix stats!
     // MatrixStats<double> matrix_stats;
     // bool matrix_stats_computed = false;
@@ -1191,7 +1185,9 @@ void compute_result(
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Init local structures.\n");}
 #endif
-
+#ifdef USE_MPI
+    printf("Rank %i entering init_local_structs\n", my_rank);
+#endif
     init_local_structs<VT, IT>(
         &local_scs,
         &dp_local_scs,
@@ -1210,14 +1206,18 @@ void compute_result(
         metis_inv_perm
     );
 
-// TODO: Make more uniform!
+
+
+// TODO: Make more uniform! Can do away with SimpleDenseMatrix class...
+    int per_vector_padding = std::max(local_context.scs_padding, (local_context.recv_counts_cumsum).back());
+    local_context.per_vector_padding = per_vector_padding;
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-    DenseMatrixColMaj<VT> local_x(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
-    DenseMatrixColMaj<VT> local_y(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
+    DenseMatrixColMaj<VT> local_x(local_scs.n_rows, config->block_vec_size, per_vector_padding);
+    DenseMatrixColMaj<VT> local_y(local_scs.n_rows, config->block_vec_size, per_vector_padding);
 #else
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-    DenseMatrixRowMaj<VT> local_x(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
-    DenseMatrixRowMaj<VT> local_y(local_scs.n_rows, config->block_vec_size, local_scs.n_rows_padded - local_scs.n_rows);
+    DenseMatrixRowMaj<VT> local_x(local_scs.n_rows, config->block_vec_size, per_vector_padding);
+    DenseMatrixRowMaj<VT> local_y(local_scs.n_rows, config->block_vec_size, per_vector_padding);
 #else
     // Declare local vectors to be used
     SimpleDenseMatrix<VT, IT> local_x(&local_context, config);
@@ -1225,10 +1225,34 @@ void compute_result(
 #endif
 #endif
 
-    // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp,
-    // or with 1s (by default)
-    local_x.init(config, 'x');
-    local_y.init(config, 'y');
+#ifdef USE_MPI
+#ifdef DEBUG_MODE
+    printf("Rank %i initializing local vector\n", my_rank);
+#endif
+#endif
+
+
+    // TODO: clean this up too
+    // Initialize local_x and y, either randomly, with default values defined in classes_structs.hpp
+    local_x.init('x', config, local_scs.n_rows, per_vector_padding);
+    local_y.init('y', config, local_scs.n_rows, per_vector_padding);
+
+
+
+    //check vectors are "padded" correctly
+// #ifdef USE_MPI
+//     if(my_rank == 0){
+//         printf("local_x (size %i)= [\n", local_x.vec.size());
+//         for(int i = 0; i < local_x.vec.size(); ++i){
+//             printf("%f, \n", local_x.vec[i]);
+//         }
+//         printf("]\n");
+//     }
+
+//     MPI_Barrier(MPI_COMM_WORLD);
+//     exit(0);
+// #endif
+
 
     // Must be declared, but only used for mixed precision case
     // TODO: not efficient for storage, but used later for mp interop
@@ -1267,21 +1291,58 @@ void compute_result(
     // We want this to be held column-wise always, at least for accuracy validation
     // TODO: Allow to be row-wise for performance comparison against MKL
     // TODO: Ugly. No raw loops!
-    std::vector<VT> local_x_copy(local_x.vec.size());
+    // std::vector<VT> local_x_copy(local_x.vec.size());
+    std::vector<VT> local_x_mkl_copy(local_scs.n_rows * config->block_vec_size);
 
+
+// Need to take care to skip padding elements, since this is what is padded to MKL
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    // TODO: skip padding elements here!
     for(int i = 0; i < local_scs.n_rows; ++i){
         for(int j = 0; j < config->block_vec_size; ++j){
-            local_x_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
+            local_x_mkl_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
         }
     }
-    std::swap(local_x_copy, local_x.vec);
+    std::swap(local_x_mkl_copy, local_x.vec);
 #else
-    for(int i = 0; i < local_x.vec.size(); ++i){
-        local_x_copy[i] = local_x.vec[i];
+    int vec_idx = 0;
+    int shift = 0;
+    for(int i = 0; i < local_scs.n_rows * config->block_vec_size; ++i){
+        if(vec_idx < local_scs.n_rows){
+            local_x_mkl_copy[i] = local_x.vec[i + shift];
+        }
+
+        if(vec_idx == local_scs.n_rows - 1){
+            vec_idx = 0;
+            shift += per_vector_padding;
+            continue;
+        }
+
+        ++vec_idx;
     } 
 #endif
 
+// #ifdef DEBUG_MODE
+// #ifdef USE_MPI
+//     if(my_rank == 0){
+//         printf("local_x = [\n");
+//         for(int i = 0; i < local_x.vec.size(); ++i){
+//             printf("%f, \n", local_x.vec[i]);
+//         }
+//         printf("]\n");
+
+//         printf("local_x_mkl_copy = [\n");
+//         for(int i = 0; i < local_scs.n_rows * config->block_vec_size; ++i){
+//             printf("%f, \n", local_x_mkl_copy[i]);
+//         }
+//         printf("]\n");
+//     }
+
+
+//     MPI_Barrier(MPI_COMM_WORLD);
+//     exit(0);
+// #endif
+// #endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter bench_spmv.\n");}
@@ -1326,7 +1387,7 @@ void compute_result(
     if(my_rank == 0){printf("Gather results to root process.\n");}
 #endif
 
-    gather_results(config, r, work_sharing_arr, &local_x_copy, &(local_y.vec), my_rank, comm_size);
+    gather_results(config, &local_context, r, work_sharing_arr, &local_x_mkl_copy, &(local_y.vec), my_rank, comm_size);
 
 #ifdef USE_MPI
     // Delete allocated permutation vectors, if metis used
@@ -1402,6 +1463,9 @@ void standalone_bench(
             }
         }
     }
+#ifdef USE_MPI
+    MPI_Barrier(MPI_COMM_WORLD);
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Enter compute_result.\n");}

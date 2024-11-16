@@ -905,6 +905,8 @@ void init_std_vec_with_ptr_or_value(
     Config *config,
     std::vector<VT> &x,
     ST n_x,
+    int n_rows,
+    int n_rows_padded,
     VT default_value,
     char init_with_random_numbers,
     const std::vector<VT> *x_in = nullptr
@@ -937,6 +939,27 @@ void init_std_vec_with_ptr_or_value(
     {
         // Randomly initialize between max and min value of matrix
         random_init(config, &(*x.begin()), &(*x.end()));
+    }
+
+    // Insert zeros into halo element row index padding. 
+    // Nice for debugging block vector stuff later
+    int vec_idx = 0;
+    for (ST i = 0; i < n_x; ++i)
+    {
+// #ifdef USE_MPI
+// #ifdef DEBUG_MODE
+//         printf("%i >=? %i\n", vec_idx, n_rows);
+// #endif
+// #endif
+        if(vec_idx >= n_rows){
+            x[i] = VT{};
+        }
+
+        ++vec_idx;
+        // NOTE: Hmmm. Not quite sure about this...
+        if(vec_idx == n_rows_padded){
+            vec_idx = 0;
+        }
     }
 }
 
@@ -1319,6 +1342,15 @@ void parse_cli_inputs(
     }
 #endif
 
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+#ifdef USE_MPI
+    if(my_rank == 0){
+        fprintf(stderr, "ERROR: MPI with Row-wise block vector layout selected not yet supported.\n");
+        exit(1);
+    }
+#endif
+#endif
+
 #ifndef COLWISE_BLOCK_VECTOR_LAYOUT
 #ifndef ROWWISE_BLOCK_VECTOR_LAYOUT
     if (config->block_vec_size > 1){
@@ -1353,9 +1385,9 @@ void parse_cli_inputs(
 #endif
 
 #ifdef USE_MPI
-    if (config->block_vec_size > 1){
+    if (config->block_vec_size > 1 && *kernel_format == "scs"){
         if(my_rank == 0){
-            fprintf(stderr, "ERROR: MPI parallel SpMM is not yet implemented.\n");
+            fprintf(stderr, "ERROR: MPI parallel block SCS is not yet implemented.\n");
             exit(1);
         }
     }
@@ -2022,6 +2054,8 @@ template <typename VT, typename IT>
 class SimpleDenseMatrix {
     public:
         std::vector<VT> vec;
+        const ContextData<int> *local_context;
+        int padding;
 
         SimpleDenseMatrix(void){
         }
@@ -2033,10 +2067,10 @@ class SimpleDenseMatrix {
 #ifdef USE_MPI
             padding_from_heri = (local_context->recv_counts_cumsum).back();   
 #endif
-            IT needed_padding = std::max(local_context->scs_padding, padding_from_heri);
+            int padding = std::max(local_context->scs_padding, padding_from_heri);
 
             // For SCS, Each x column needs to be padded
-            vec.resize(config->block_vec_size * (needed_padding + local_context->num_local_rows), VT{});
+            vec.resize(config->block_vec_size * (padding + local_context->num_local_rows), VT{});
         }
 
         // SimpleDenseMatrix(std::vector<VT> vec_to_copy, const ContextData<VT, IT> *local_context){
@@ -2048,7 +2082,12 @@ class SimpleDenseMatrix {
         //     vec(vec_to_copy.begin(), vec_to_copy.end());
         // }
 
-        void init(Config *config, char vec_type){
+        void init(
+            char vec_type,
+            Config *config,
+            int n_rows,
+            int padding
+            ){
             DefaultValues<VT, IT> default_values;
 
             if (config->random_init_x == 'm'){
@@ -2060,6 +2099,8 @@ class SimpleDenseMatrix {
                 config,
                 vec, 
                 vec.size(),
+                n_rows,
+                n_rows + padding,
                 default_values.x,
                 config->random_init_x);
             }
@@ -2068,6 +2109,8 @@ class SimpleDenseMatrix {
                 config,
                 vec, 
                 vec.size(),
+                n_rows,
+                n_rows + padding,
                 default_values.y,
                 config->random_init_x);   
             }
@@ -2087,6 +2130,7 @@ class SimpleDenseMatrix {
 template<typename VT>
 class DenseMatrix {
 public:
+
   DenseMatrix() {}
 
   DenseMatrix(int nr_, int nc_, int pad_) {
@@ -2114,7 +2158,13 @@ public:
     vec.swap(other.vec);
   }
 
-  void init(Config *config, char vec_type){
+  void init(
+    char vec_type,
+    Config *config,
+    int n_rows,
+    int padding
+    ){
+
             DefaultValues<VT, int> default_values;
 
             if (config->random_init_x == 'm'){
@@ -2126,6 +2176,8 @@ public:
                 config,
                 vec, 
                 vec.size(),
+                n_rows,
+                n_rows + padding,
                 default_values.x,
                 config->random_init_x);
             }
@@ -2134,6 +2186,8 @@ public:
                 config,
                 vec, 
                 vec.size(),
+                n_rows,
+                n_rows + padding,
                 default_values.y,
                 config->random_init_x);   
             }
@@ -2837,20 +2891,20 @@ void assign_mpi_args(
 #ifdef USE_MPI
     MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
     // Encode comm args into struct
-    comm_args_encoded->local_context = local_context;
-    comm_args_encoded->work_sharing_arr = work_sharing_arr;
-    comm_args_encoded->to_send_elems = to_send_elems;
-    comm_args_encoded->perm = local_scs->old_to_new_idx.data();
-    comm_args_encoded->recv_requests = recv_requests; // pointer to first element of array
-    comm_args_encoded->nzs_size = nzs_size;
-    comm_args_encoded->send_requests = send_requests;
-    comm_args_encoded->nzr_size = nzr_size;
-    comm_args_encoded->num_local_elems = &(local_context->num_local_rows);
-    comm_args_encoded->MPI_ELEM_TYPE = MPI_ELEM_TYPE;
+    comm_args_encoded->local_context        = local_context;
+    comm_args_encoded->work_sharing_arr     = work_sharing_arr;
+    comm_args_encoded->to_send_elems        = to_send_elems;
+    comm_args_encoded->perm                 = local_scs->old_to_new_idx.data();
+    comm_args_encoded->recv_requests        = recv_requests; // pointer to first element of array
+    comm_args_encoded->nzs_size             = nzs_size;
+    comm_args_encoded->send_requests        = send_requests;
+    comm_args_encoded->nzr_size             = nzr_size;
+    comm_args_encoded->num_local_rows       = &(local_context->num_local_rows);
+    comm_args_encoded->per_vector_padding   = &(local_context->per_vector_padding);
+    comm_args_encoded->MPI_ELEM_TYPE        = MPI_ELEM_TYPE;
 #endif
-
-    comm_args_encoded->my_rank = my_rank;
-    comm_args_encoded->comm_size = comm_size;
+    comm_args_encoded->my_rank              = my_rank;
+    comm_args_encoded->comm_size            = comm_size;
 }
 
 #ifdef __CUDACC__
@@ -3412,14 +3466,43 @@ void copy_back_result(
                 dp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            // TODO: Bandaid
-            for(int i = 0; i < config->block_vec_size; ++i){
-                apply_permutation<double, IT>(&((sorted_dp_local_y.data())[i * local_scs->n_rows]), &(dp_local_x_permuted[i * local_scs->n_rows]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+
+    // TODO: Bandaid
+    // TODO: Allow to be row-wise for performance comparison against MKL
+    // TODO: Ugly. No raw loops!
+// Need to take care to skip padding elements, since this is what is padded to MKL
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+        // // TODO: skip padding elements here!
+        // for(int i = 0; i < local_scs.n_rows; ++i){
+        //     for(int j = 0; j < config->block_vec_size; ++j){
+        //         local_x_mkl_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
+        //     }
+        // }
+        // std::swap(local_x_mkl_copy, local_x.vec);
+#else
+        int vec_idx = 0;
+        int shift = 0;
+        for(int i = 0; i < local_scs->n_rows * config->block_vec_size; ++i){
+            if(vec_idx < local_scs->n_rows){
+                (*local_y)[i] = spmv_kernel_result[i + shift];
             }
 
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
+            if(vec_idx == local_scs->n_rows - 1){
+                vec_idx = 0;
+                shift += local_context->per_vector_padding;
+                continue;
             }
+
+            ++vec_idx;
+        } 
+#endif
+            // for(int i = 0; i < config->block_vec_size; ++i){
+                // apply_permutation<double, IT>(&((sorted_dp_local_y.data())[i * local_scs->n_rows]), &(dp_local_x_permuted[i * local_scs->n_rows]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+            // }
+
+            // for(int i = 0; i < local_y->size(); ++i){
+                // (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
+            // }
         }
         else if(config->value_type == "sp"){
 #ifdef __CUDACC__

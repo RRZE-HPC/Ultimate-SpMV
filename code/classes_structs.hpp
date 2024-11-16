@@ -153,6 +153,7 @@ struct ContextData
 
     IT num_local_rows;
     IT scs_padding;
+    IT per_vector_padding;
     IT total_nnz;
 };
 
@@ -160,20 +161,21 @@ template <typename VT, typename IT>
 struct CommArgs
 {
 #ifdef USE_MPI
-    Config *config                  = nullptr;
-    ContextData<IT> *local_context  = nullptr;
-    const IT *perm                  = nullptr;
-    VT **to_send_elems              = nullptr;
-    const IT *work_sharing_arr      = nullptr;
-    MPI_Request *recv_requests      = nullptr;
-    const IT *nzs_size              = nullptr;
-    MPI_Request *send_requests      = nullptr;
-    const IT *nzr_size              = nullptr;
-    const IT *num_local_elems       = nullptr;
+    Config *config                 = nullptr;
+    ContextData<IT> *local_context = nullptr;
+    const IT *perm                 = nullptr;
+    VT **to_send_elems             = nullptr;
+    const IT *work_sharing_arr     = nullptr;
+    MPI_Request *recv_requests     = nullptr;
+    const IT *nzs_size             = nullptr;
+    MPI_Request *send_requests     = nullptr;
+    const IT *nzr_size             = nullptr;
+    const IT *num_local_rows       = nullptr;
+    const IT *per_vector_padding   = nullptr;
     MPI_Datatype MPI_ELEM_TYPE;
 #endif
-    int *my_rank                    = nullptr;
-    int *comm_size                  = nullptr;
+    int *my_rank                   = nullptr;
+    int *comm_size                 = nullptr;
 
 };
 
@@ -189,7 +191,7 @@ struct OnePrecKernelArgs
     VT * RESTRICT local_x           = nullptr;
     VT * RESTRICT local_y           = nullptr;
 #ifdef __CUDACC__
-    ST * n_thread_blocks;
+    ST * n_thread_blocks            = nullptr;
 #endif
 };
 
@@ -223,7 +225,7 @@ struct MultiPrecKernelArgs
     _Float16 * RESTRICT hp_local_y  = nullptr;
 #endif
 #ifdef __CUDACC__
-    ST * n_thread_blocks= nullptr;
+    ST * n_thread_blocks            = nullptr;
 #endif
 };
 
@@ -231,16 +233,16 @@ struct MultiPrecKernelArgs
 // template <typename VT, typename IT> Dont need templating?
 struct CuSparseArgs
 {
-    cusparseHandle_t          handle        = nullptr;
-    cusparseOperation_t       opA           = nullptr;
-    const void*               alpha         = nullptr;
-    cusparseConstSpMatDescr_t matA          = nullptr;  // non-const descriptor supported
-    cusparseConstDnVecDescr_t vecX          = nullptr;  // non-const descriptor supported
-    const void*               beta          = nullptr;
-    cusparseDnVecDescr_t      vecY          = nullptr;
-    cudaDataType              computeType   = nullptr;
-    cusparseSpMVAlg_t         alg           = nullptr;
-    void*                     externalBuffer= nullptr;
+    cusparseHandle_t          handle         = nullptr;
+    cusparseOperation_t       opA            = nullptr;
+    const void*               alpha          = nullptr;
+    cusparseConstSpMatDescr_t matA           = nullptr;  // non-const descriptor supported
+    cusparseConstDnVecDescr_t vecX           = nullptr;  // non-const descriptor supported
+    const void*               beta           = nullptr;
+    cusparseDnVecDescr_t      vecY           = nullptr;
+    cudaDataType              computeType    = nullptr;
+    cusparseSpMVAlg_t         alg            = nullptr;
+    void*                     externalBuffer = nullptr;
 };
 #endif
 
@@ -373,7 +375,8 @@ class SpmvKernel {
         const IT nzs_size              = *(comm_args_decoded->nzs_size);
         MPI_Request *send_requests     = comm_args_decoded->send_requests;
         const IT nzr_size              = *(comm_args_decoded->nzr_size);
-        const IT num_local_elems       = *(comm_args_decoded->num_local_elems);
+        const IT num_local_rows        = *(comm_args_decoded->num_local_rows);
+        const IT per_vector_padding    = *(comm_args_decoded->per_vector_padding);
         MPI_Datatype MPI_ELEM_TYPE     = comm_args_decoded->MPI_ELEM_TYPE;
 #endif
         int my_rank   = *(comm_args_decoded->my_rank);
@@ -661,7 +664,7 @@ class SpmvKernel {
                 std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 #endif
                 MPI_Irecv(
-                    &(local_x)[num_local_elems + local_context->recv_counts_cumsum[sending_proc]],
+                    &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc]],
                     incoming_buf_size,
                     this->MPI_ELEM_TYPE,
                     sending_proc,
@@ -705,7 +708,77 @@ class SpmvKernel {
 #endif
         }
 
+        // TODO: integrate with above function
+        inline void init_offset_halo_exchange(int vec_idx){
+#ifdef USE_MPI
+            int outgoing_buf_size, incoming_buf_size;
+            int receiving_proc, sending_proc;
+            int block_offset = vec_idx * (num_local_rows + per_vector_padding);
+
+            // First, post receives
+            for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
+            {
+                sending_proc = local_context->non_zero_senders[from_proc_idx];
+                incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
+#ifdef DEBUG_MODE
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+#endif
+                MPI_Irecv(
+                    &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset],
+                    incoming_buf_size,
+                    this->MPI_ELEM_TYPE,
+                    sending_proc,
+                    (local_context->recv_tags[sending_proc])[my_rank],
+                    MPI_COMM_WORLD,
+                    &recv_requests[from_proc_idx]
+                );
+            }
+
+            // Second, fulfill those with sends
+            for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
+            {
+                receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+                outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
+
+#ifdef DEBUG_MODE
+                if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
+                    std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
+                    exit(1);
+                }
+#endif
+
+                // Move non-contiguous data to a contiguous buffer for communication
+                #pragma omp parallel for if(config->par_pack)   
+                for(int i = 0; i < outgoing_buf_size; ++i){
+                    (to_send_elems[to_proc_idx])[i] = local_x[local_context->comm_send_idxs[receiving_proc][i] + block_offset];
+                    // NOTE: Ignoring perm for now, since only focusing on CSR format
+                    // (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
+                }
+                
+#ifdef DEBUG_MODE
+                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
+#endif
+                MPI_Isend(
+                    &(to_send_elems[to_proc_idx])[0],
+                    outgoing_buf_size,
+                    this->MPI_ELEM_TYPE,
+                    receiving_proc,
+                    (local_context->send_tags[my_rank])[receiving_proc],
+                    MPI_COMM_WORLD,
+                    &send_requests[to_proc_idx]
+                );
+            }
+#endif
+        }
+
         inline void finalize_halo_exchange(void){
+#ifdef USE_MPI
+            MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
+            MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
+#endif
+        }
+
+        inline void finalize_offset_halo_exchange(void){
 #ifdef USE_MPI
             MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
