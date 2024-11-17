@@ -3437,53 +3437,20 @@ void copy_back_result(
         std::vector<_Float16> sorted_hp_local_y(local_y->size(), 0.0f16);
 #endif
 
-
+        // First, we have to copy the SpMV results back and un-permute (if applicable)
         if(config->value_type == "dp"){
 #ifdef __CUDACC__
+            // TODO: Integrate SpMM on GPUs
             cudaMemcpy(dp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
 #else
             for(int i = 0; i < local_y->size(); ++i){
                 dp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-
-    // TODO: Bandaid
-    // TODO: Allow to be row-wise for performance comparison against MKL
-    // TODO: Ugly. No raw loops!
-// Need to take care to skip padding elements, since this is what is padded to MKL
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-        // // TODO: skip padding elements here!
-        // for(int i = 0; i < local_scs.n_rows; ++i){
-        //     for(int j = 0; j < config->block_vec_size; ++j){
-        //         local_x_mkl_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
-        //     }
-        // }
-        // std::swap(local_x_mkl_copy, local_x.vec);
-#else
-        // Chop off halo padding
-        int vec_idx = 0;
-        int shift = 0;
-        for(int i = 0; i < local_scs->n_rows * config->block_vec_size; ++i){
-            if(vec_idx < local_scs->n_rows){
-                (*local_y)[i] = spmv_kernel_result[i + shift];
+            // TODO: Need to check that this works for SCS SpMM
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                apply_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(dp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
             }
-
-            if(vec_idx == local_scs->n_rows - 1){
-                vec_idx = 0;
-                shift += local_context->per_vector_padding;
-                continue;
-            }
-
-            ++vec_idx;
-        } 
-#endif
-            // for(int i = 0; i < config->block_vec_size; ++i){
-                // apply_permutation<double, IT>(&((sorted_dp_local_y.data())[i * local_scs->n_rows]), &(dp_local_x_permuted[i * local_scs->n_rows]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
-            // }
-
-            // for(int i = 0; i < local_y->size(); ++i){
-                // (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
-            // }
         }
         else if(config->value_type == "sp"){
 #ifdef __CUDACC__
@@ -3493,11 +3460,13 @@ void copy_back_result(
                 sp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i]);
+            // TODO: Need to check that this works for SCS SpMM
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                apply_permutation<float, IT>(&((sorted_sp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(sp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
             }
+            // for(int i = 0; i < local_y->size(); ++i){
+            //     (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i]);
+            // }
         }
         else if(config->value_type == "hp"){
 #ifdef HAVE_HALF_MATH
@@ -3509,10 +3478,12 @@ void copy_back_result(
                 hp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            apply_permutation<_Float16, IT>(sorted_hp_local_y.data(), hp_local_x_permuted, &(local_scs->old_to_new_idx)[0], local_scs->n_rows);
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = static_cast<double>(sorted_hp_local_y[i]);
-            }
+            // TODO: Need to check that this works for SCS SpMM
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                apply_permutation<_Float16, IT>(&((sorted_hp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(hp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+            }            // for(int i = 0; i < local_y->size(); ++i){
+            //     (*local_y)[i] = static_cast<double>(sorted_hp_local_y[i]);
+            // }
 #endif
         }
         else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
@@ -3524,10 +3495,9 @@ void copy_back_result(
                 dp_local_x_permuted[i] = dp_spmv_kernel_result[i];
             }
 #endif
-            apply_permutation<double, IT>(sorted_dp_local_y.data(), dp_local_x_permuted, &(dp_local_scs->old_to_new_idx)[0], dp_local_scs->n_rows);
-
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = static_cast<double>(sorted_dp_local_y[i]);
+            // TODO: Need to check that this works for SCS SpMM
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                apply_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx * (dp_local_scs->n_rows + local_context->per_vector_padding)]), &(dp_local_x_permuted[vec_idx * (dp_local_scs->n_rows + local_context->per_vector_padding)]), dp_local_scs->old_to_new_idx.data(), dp_local_scs->n_rows);
             }
         }
         else if(config->value_type == "ap[sp_hp]"){
@@ -3539,17 +3509,57 @@ void copy_back_result(
                 sp_local_x_permuted[i] = sp_spmv_kernel_result[i];
             }
 #endif
-            apply_permutation<float, IT>(sorted_sp_local_y.data(), sp_local_x_permuted, &(sp_local_scs->old_to_new_idx)[0], sp_local_scs->n_rows);
-
-            for(int i = 0; i < local_y->size(); ++i){
-                (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i]);
+            // TODO: Need to check that this works for SCS SpMM
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                apply_permutation<float, IT>(&((sorted_sp_local_y.data())[vec_idx * (sp_local_scs->n_rows + local_context->per_vector_padding)]), &(sp_local_x_permuted[vec_idx * (sp_local_scs->n_rows + local_context->per_vector_padding)]), sp_local_scs->old_to_new_idx.data(), sp_local_scs->n_rows);
             }
         }
-        // With AP, we need to permute w.r.t. the local_scs of the highest precision
+        // NOTE: With AP, we need to permute w.r.t. the local_scs of the highest precision
 
-        // Manually resize for ease later on (and I don't see a better way)
-        // TODO: Think of a way around this
-        // local_y->resize(local_context->num_local_rows);
+    // Then, give USpMV output to local_y for validation. This part will take block vector padding off if applicable
+
+    // TODO: Bandaid
+    // TODO: Allow to be row-wise for performance comparison against MKL
+    // TODO: Ugly. No raw loops!
+// Need to take care to skip padding elements, since this is what is padded to MKL
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+        // TODO: integrate ROWWISE
+        // // TODO: skip padding elements here!
+        // for(int i = 0; i < local_scs.n_rows; ++i){
+        //     for(int j = 0; j < config->block_vec_size; ++j){
+        //         local_x_mkl_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
+        //     }
+        // }
+        // std::swap(local_x_mkl_copy, local_x.vec);
+#endif
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+        int vec_idx = 0;
+        int shift = 0;
+        for(int i = 0; i < local_scs->n_rows * config->block_vec_size; ++i){
+            if(vec_idx < local_scs->n_rows){
+                if(config->value_type == "dp" || config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
+                    (*local_y)[i] = sorted_dp_local_y[i + shift];
+                }
+                else if(config->value_type == "sp" || config->value_type == "ap[sp_hp]"){
+                    (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i + shift]);
+                }
+                else if(config->value_type == "hp"){
+#ifdef HAVE_HALF_MATH
+                    (*local_y)[i] = static_cast<double>(sorted_hp_local_y[i + shift]);
+#endif
+                }
+                
+            }
+
+            if(vec_idx == local_scs->n_rows - 1){
+                vec_idx = 0;
+                shift += local_context->per_vector_padding;
+                continue;
+            }
+
+            ++vec_idx;
+        } 
+#endif
 }
 
 template <typename VT, typename IT>

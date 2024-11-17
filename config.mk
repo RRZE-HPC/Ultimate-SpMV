@@ -2,8 +2,8 @@
 COMPILER = gcc
 # [int] (CPU only)
 SIMD_LENGTH = 4
-# [none, colwise, rowwise] (only for multiple RHS vectors)
-BLOCK_VECTOR_LAYOUT = none
+# [colwise, rowwise] (If using single vector SpMV, use "colwise")
+BLOCK_VECTOR_LAYOUT = colwise
 # [1/0]
 DEBUG_MODE = 0
 # [1/0]

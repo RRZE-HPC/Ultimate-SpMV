@@ -440,7 +440,7 @@ void validate_result(
     }
 
 
-    for (int i = 0; i < num_cols * config->block_vec_size; i++) {
+    for (int i = 0; i < num_rows * config->block_vec_size; i++) {
         y[i] = 0.0;
     }
 
