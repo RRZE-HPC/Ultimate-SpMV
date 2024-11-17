@@ -135,6 +135,7 @@ struct Config
 
 };
 
+// TODO: NONE of this struct needs to be templated
 template <typename IT>
 struct ContextData
 {
@@ -155,6 +156,8 @@ struct ContextData
     IT scs_padding;
     IT per_vector_padding;
     IT total_nnz;
+    IT total_n_rows;
+    IT padded_vec_size; // = num_local_rows + per_vector_padding
 };
 
 template <typename VT, typename IT>
@@ -162,7 +165,6 @@ struct CommArgs
 {
 #ifdef USE_MPI
     Config *config                 = nullptr;
-    ContextData<IT> *local_context = nullptr;
     const IT *perm                 = nullptr;
     VT **to_send_elems             = nullptr;
     const IT *work_sharing_arr     = nullptr;
@@ -174,6 +176,7 @@ struct CommArgs
     const IT *per_vector_padding   = nullptr;
     MPI_Datatype MPI_ELEM_TYPE;
 #endif
+    ContextData<IT> *local_context = nullptr;
     int *my_rank                   = nullptr;
     int *comm_size                 = nullptr;
 
@@ -260,6 +263,7 @@ class SpmvKernel {
             VT *, // x
             VT *, //y
             int *, // block_vec_size
+            int *, // vec length
 #ifdef __CUDACC__
             const ST *, // n_thread_blocks
 #endif
@@ -367,7 +371,6 @@ class SpmvKernel {
         // Decode comm args
         CommArgs<VT, IT> *comm_args_decoded = (CommArgs<VT, IT>*) comm_args_encoded;
 #ifdef USE_MPI
-        ContextData<IT> *local_context = comm_args_decoded->local_context;
         const IT *perm                 = comm_args_decoded->perm;
         VT **to_send_elems             = comm_args_decoded->to_send_elems;
         const IT *work_sharing_arr     = comm_args_decoded->work_sharing_arr;
@@ -379,6 +382,7 @@ class SpmvKernel {
         const IT per_vector_padding    = *(comm_args_decoded->per_vector_padding);
         MPI_Datatype MPI_ELEM_TYPE     = comm_args_decoded->MPI_ELEM_TYPE;
 #endif
+        ContextData<IT> *local_context = comm_args_decoded->local_context;
         int my_rank   = *(comm_args_decoded->my_rank);
         int comm_size = *(comm_args_decoded->comm_size);
 
@@ -406,6 +410,7 @@ class SpmvKernel {
         kernel_args_encoded(kernel_args_encoded_), 
         cusparse_args_encoded(cusparse_args_encoded_),
         comm_args_encoded(comm_args_encoded_){
+
             // TODO: could wrap all this up in a "kernel picker" subroutine
             // CRS kernel selection //
             if (config->kernel_format == "crs" || config->kernel_format == "csr"){
@@ -812,6 +817,7 @@ class SpmvKernel {
                 local_x,
                 local_y,
                 &(config->block_vec_size),
+                &(local_context->padded_vec_size),
 #ifdef __CUDACC__
                 n_thread_blocks_1,
 #endif
@@ -1607,9 +1613,9 @@ struct Result
     std::vector<unsigned long> dp_nnz_per_proc;
     std::vector<unsigned long> sp_nnz_per_proc;
     std::vector<unsigned long> hp_nnz_per_proc;
-    unsigned long sp_nnz;
-    unsigned long dp_nnz;
-    unsigned long hp_nnz;
+    unsigned long dp_nnz = 0;
+    unsigned long sp_nnz = 0;
+    unsigned long hp_nnz = 0;
     unsigned long cumulative_dp_nnz;
     unsigned long cumulative_sp_nnz;
     unsigned long cumulative_hp_nnz;

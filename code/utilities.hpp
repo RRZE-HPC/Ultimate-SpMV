@@ -1324,19 +1324,11 @@ void parse_cli_inputs(
     }
 
     // Sanity checks //
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-    if (config->block_vec_size == 1){
-        if(my_rank == 0){
-            fprintf(stderr, "ERROR: Column-wise block vector layout selected, but block vector width is 1.\n");
-            exit(1);
-        }
-    }
-#endif
-
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
     if (config->block_vec_size == 1){
         if(my_rank == 0){
-            fprintf(stderr, "ERROR: Row-wise block vector layout selected, but block vector width is 1.\n");
+            fprintf(stderr, "ERROR: Row-wise block vector layout selected, but block vector width is 1.\n "
+            "Please choose colwise block vector layout if using SpMV.\n");
             exit(1);
         }
     }
@@ -1347,17 +1339,6 @@ void parse_cli_inputs(
     if(my_rank == 0){
         fprintf(stderr, "ERROR: MPI with Row-wise block vector layout selected not yet supported.\n");
         exit(1);
-    }
-#endif
-#endif
-
-#ifndef COLWISE_BLOCK_VECTOR_LAYOUT
-#ifndef ROWWISE_BLOCK_VECTOR_LAYOUT
-    if (config->block_vec_size > 1){
-        if(my_rank == 0){
-            fprintf(stderr, "ERROR: Block vector layout not selected, but block vector width is greater than 1.\n");
-            exit(1);
-        }
     }
 #endif
 #endif
@@ -1721,17 +1702,16 @@ void convert_to_scs(
         }
     }
     
-
-    // scs->values   = V<VT, IT>(n_scs_elements + scs->sigma);
-    // scs->col_idxs = V<IT, IT>(n_scs_elements + scs->sigma);
     scs->values   = std::vector<VT>(n_scs_elements + scs->sigma);
     scs->col_idxs = std::vector<IT>(n_scs_elements + scs->sigma);
 
+#ifdef DEBUG_MODE
     printf("n_scs_elements = %i.\n\n", n_scs_elements);
-    // exit(1);
+#endif
 
     IT padded_col_idx = 0;
 
+    // NOTE: I don't remember why I commented this out...
     // if(work_sharing_arr != nullptr){
     //     padded_col_idx = work_sharing_arr[my_rank];
     // }
@@ -2804,6 +2784,7 @@ void partition_precisions(
 template <typename VT, typename IT>
 void assign_spmv_kernel_cpu_data(
     Config *config,
+    ContextData<IT> *local_context,
     ScsData<VT, IT> *local_scs,
     ScsData<double, IT> *dp_local_scs,
     ScsData<float, IT> *sp_local_scs,
@@ -2868,16 +2849,15 @@ void assign_spmv_kernel_cpu_data(
         one_prec_kernel_args_encoded->local_x = local_x_permuted;
         one_prec_kernel_args_encoded->local_y = local_y;
     }
-
 }
 
 template <typename VT, typename IT>
 void assign_mpi_args(
     CommArgs<VT, IT> *comm_args_encoded,
     void *comm_args_void_ptr,
+    ContextData<IT> *local_context,
 #ifdef USE_MPI
     ScsData<VT, IT> *local_scs,
-    ContextData<IT> *local_context,
     const IT *work_sharing_arr,
     VT **to_send_elems,
     MPI_Request *recv_requests,
@@ -2891,7 +2871,6 @@ void assign_mpi_args(
 #ifdef USE_MPI
     MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
     // Encode comm args into struct
-    comm_args_encoded->local_context        = local_context;
     comm_args_encoded->work_sharing_arr     = work_sharing_arr;
     comm_args_encoded->to_send_elems        = to_send_elems;
     comm_args_encoded->perm                 = local_scs->old_to_new_idx.data();
@@ -2903,6 +2882,7 @@ void assign_mpi_args(
     comm_args_encoded->per_vector_padding   = &(local_context->per_vector_padding);
     comm_args_encoded->MPI_ELEM_TYPE        = MPI_ELEM_TYPE;
 #endif
+    comm_args_encoded->local_context        = local_context;
     comm_args_encoded->my_rank              = my_rank;
     comm_args_encoded->comm_size            = comm_size;
 }
@@ -3480,6 +3460,7 @@ void copy_back_result(
         // }
         // std::swap(local_x_mkl_copy, local_x.vec);
 #else
+        // Chop off halo padding
         int vec_idx = 0;
         int shift = 0;
         for(int i = 0; i < local_scs->n_rows * config->block_vec_size; ++i){

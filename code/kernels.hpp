@@ -31,7 +31,8 @@ spmv_omp_csr(
     const VT * RESTRICT values,
     VT * RESTRICT x,
     VT * RESTRICT y,
-    int *block_size,
+    int * block_size,
+    int * vec_length,
     const int * my_rank = NULL
 )
 {
@@ -74,6 +75,7 @@ block_spmv_omp_csr(
     VT * RESTRICT X,
     VT * RESTRICT Y,
     int * block_size,
+    int * vec_length,
     const int * my_rank = NULL
 )
 {
@@ -102,48 +104,35 @@ block_spmv_omp_csr(
                 for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
 
-
-
-                    tmp[vec_idx] += values[j] * X[(vec_idx * *num_rows) + col_idxs[j]];
-
-
-
-#ifdef DEBUG_MODE
-                    printf("Accessing tmp[%i] += X[%i]\n", vec_idx, (vec_idx * *num_rows) + col_idxs[j]);
+#ifdef DEBUG_MODE_FINE
+                    printf("rank %i: Accessing tmp[%i] += X[%i]\n", *my_rank, vec_idx, (*block_size * *vec_length) + col_idxs[j]);
+                    printf("rank %i: vec_idx = %i\n", *my_rank, vec_idx);
+                    printf("rank %i: *num_rows = %i\n", *my_rank, *num_rows);
+                    printf("rank %i: row = %i\n", *my_rank, row);
+                    printf("rank %i: col_idxs[j] = %i\n", *my_rank, col_idxs[j]);
+                    printf("rank %i: j = %i\n", *my_rank, j);
 #endif
+                    tmp[vec_idx] += values[j] * X[(*vec_length * vec_idx) + col_idxs[j]];
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-
-
-
                     tmp[vec_idx] += values[j] * X[col_idxs[j] * (*block_size) + vec_idx];
-
-
-
-#ifdef DEBUG_MODE
+#ifdef DEBUG_MODE_FINE
                     printf("Accessing tmp[%i] += X[%i]\n", vec_idx, col_idxs[j] * (*block_size) + vec_idx);
 #endif
 #endif
                 }
-
             }
 
             for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                Y[(vec_idx * *num_rows) + row] = tmp[vec_idx];
-#ifdef DEBUG_MODE
-                printf("Assigning %f to Y[%i]\n", tmp[vec_idx], (vec_idx * *num_rows) + row);
+                Y[(vec_idx * *vec_length) + row] = tmp[vec_idx];
+#ifdef DEBUG_MODE_FINE
+                printf("Assigning %f to Y[%i]\n", tmp[vec_idx], *vec_length + row);
 #endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-
-
-
                 Y[row * (*block_size) + vec_idx] = tmp[vec_idx];
-
-
-
-#ifdef DEBUG_MODE
+#ifdef DEBUG_MODE_FINE
                 printf("Assigning %f to Y[%i]\n", tmp[vec_idx], row * (*block_size) + vec_idx);
 #endif
 #endif
@@ -179,6 +168,7 @@ spmv_omp_scs(
     VT * RESTRICT x,
     VT * RESTRICT y,
     int *block_size,
+    int * vec_length,
     const int * my_rank = NULL
 )
 {
@@ -281,6 +271,7 @@ spmv_omp_scs_adv(
     VT * RESTRICT x,
     VT * RESTRICT y,
     int *block_size,
+    int * vec_length,
     const int * my_rank = NULL
 )
 {
@@ -321,6 +312,7 @@ block_spmv_omp_scs_general(
     VT * RESTRICT X,
     VT * RESTRICT Y,
     int *block_size,
+    int * vec_length,
     const int * my_rank = NULL
 )
 {
@@ -494,7 +486,8 @@ call_scs_block(
     const VT * RESTRICT values,
     VT * RESTRICT x,
     VT * RESTRICT y,
-    int *block_size
+    int * block_size,
+    int * vec_length
 )
 {
     switch (*block_size)
@@ -529,23 +522,24 @@ block_spmv_omp_scs_adv(
     VT * RESTRICT x,
     VT * RESTRICT y,
     int *block_size,
+    int * vec_length,
     const int * my_rank = NULL
 )
 {
-    switch (*C)
-    {
-        #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128)
+    // switch (*C)
+    // {
+    //     #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128)
 
-        #define X(CC) case CC: call_scs_block<CC>(warmup_flag, C, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size); break;
-        INSTANTIATE_CS
-        #undef X
+    //     #define X(CC) case CC: call_scs_block<CC>(warmup_flag, C, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size); break;
+    //     INSTANTIATE_CS
+    //     #undef X
 
-    default:
-        fprintf(stderr,
-                "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
-                long(C));
-        exit(1);
-    }
+    // default:
+    //     fprintf(stderr,
+    //             "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
+    //             long(C));
+    //     exit(1);
+    // }
 }
 
 #ifdef __CUDACC__
@@ -561,6 +555,7 @@ spmv_gpu_scs(
     const VT * RESTRICT x,
     VT * RESTRICT y,
     int *block_size,
+    int * vec_length,
     const int * my_rank = NULL
 )
 {
