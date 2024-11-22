@@ -125,7 +125,7 @@ block_spmv_omp_csr(
 
             for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                Y[(vec_idx * *vec_length) + row] = tmp[vec_idx];
+                Y[row + (vec_idx * *vec_length)] = tmp[vec_idx];
 #ifdef DEBUG_MODE_FINE
                 printf("Assigning %f to Y[%i]\n", tmp[vec_idx], *vec_length + row);
 #endif

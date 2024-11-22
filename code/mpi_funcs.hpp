@@ -773,6 +773,78 @@ void localize_row_idx(
     local_mtx->I = local_row_coords;
 }
 
+void defineRecvType(
+    MPI_Datatype *strided_recv_type,
+    MPI_Datatype MPI_ELEM_TYPE, 
+    int count, 
+    int stride
+)
+    // int offset, 
+    // int vec_length, 
+    // int blocksize, 
+    // int num_blocks) 
+{    
+    // int arr_sizes[2] = { blocksize * vec_length, num_blocks };
+    // int arr_subsizes[2] = { blocksize * elems_per_vec, num_blocks };
+    // int arr_starts[2] = { blocksize * offset, 0 };
+    // MPI_Type_create_subarray(2, arr_sizes, arr_subsizes, arr_starts, MPI_ORDER_FORTRAN, eltype, pnewtype);
+    // MPI_Type_commit(pnewtype);
+#ifdef DEBUG_MODE_FINE
+    printf("Committing stride-%i MPI_DATATYPE for %i elements.\n", stride, count);
+#endif
+
+    MPI_Type_vector(count, 1, stride, MPI_ELEM_TYPE, strided_recv_type);
+    MPI_Type_commit(strided_recv_type);
+}
+
+template <typename VT, typename IT>
+void gen_strided_recv_types(
+    std::vector<MPI_Datatype> *strided_recv_types,
+    std::vector<IT> *non_zero_senders,
+    std::vector<IT> *recv_counts_cumsum,
+    // int vec_length, <- do I need this?
+    // int num_vecs,  <- do I need this?
+    int block_size
+    // ScsData<VT,IT> *local_scs, 
+    // ContextData<IT> *local_context
+){
+    // TODO: bring everything related to SCS back in
+    MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
+
+    // int nzr_size = local_context->non_zero_receivers.size();
+    int nzs_size = non_zero_senders->size();
+
+    //   std::vector<std::vector<int> > send_offsets(nzr_size);
+    //   for(int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx) {
+    //     int receiving_proc = local_context->non_zero_receivers[to_proc_idx];
+    //     int elems_per_vec = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
+
+    //     send_offsets[to_proc_idx].resize(elems_per_vec);
+    //     for(int i = 0; i < elems_per_vec; ++i) {
+    //       send_offsets[to_proc_idx][i] = blocksize * local_scs->old_to_new_idx[(local_context->comm_send_idxs[receiving_proc])[i]];
+    //     }
+    //   }
+
+    // int num_blocks = 1 + (num_vecs - 1) / blocksize;
+
+    //   send_types.resize(nzr_size);
+    //   for(int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx) {
+    //     MPI_Datatype blocktype;
+    //     defineBlockType(&blocktype, eltype, send_offsets[to_proc_idx], vec_length, blocksize);      
+    //     defineSendType(&send_types[to_proc_idx], eltype, blocktype, vec_length, blocksize, num_blocks);
+    //     MPI_Type_free(&blocktype);
+    //   }
+
+    strided_recv_types->resize(nzs_size); // <- needed
+    for(int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx) {
+        int sending_proc = (*non_zero_senders)[from_proc_idx];
+        // int offset = local_context->num_local_rows + local_context->recv_counts_cumsum[sending_proc];
+        int count = (*recv_counts_cumsum)[sending_proc + 1] - (*recv_counts_cumsum)[sending_proc];
+        // defineRecvType(&strided_recv_types[from_proc_idx], MPI_ELEM_TYPE, count, offset, vec_length, blocksize, num_blocks);
+        defineRecvType(&(*strided_recv_types)[from_proc_idx], MPI_ELEM_TYPE, count, block_size);
+    }
+}
+
 template <typename VT, typename IT>
 void collect_comm_info(
     Config *config,
@@ -786,6 +858,7 @@ void collect_comm_info(
     std::vector<std::vector<IT>> *recv_tags,
     std::vector<IT> *recv_counts_cumsum,
     std::vector<IT> *send_counts_cumsum,
+    std::vector<MPI_Datatype> *strided_recv_types,
     int my_rank,
     int comm_size
 ){
@@ -826,6 +899,8 @@ void collect_comm_info(
     }
 
     gen_unique_comm_tags<VT, IT>(send_tags, recv_tags, my_rank, comm_size);
+    
+    gen_strided_recv_types<VT, IT>(strided_recv_types, non_zero_senders, recv_counts_cumsum, config->block_vec_size);
 }
 #endif
 

@@ -946,20 +946,26 @@ void init_std_vec_with_ptr_or_value(
     int vec_idx = 0;
     for (ST i = 0; i < n_x; ++i)
     {
-// #ifdef USE_MPI
-// #ifdef DEBUG_MODE
-//         printf("%i >=? %i\n", vec_idx, n_rows);
-// #endif
-// #endif
+
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
         if(vec_idx >= n_rows){
             x[i] = VT{};
         }
 
         ++vec_idx;
         // NOTE: Hmmm. Not quite sure about this...
+
         if(vec_idx == n_rows_padded){
             vec_idx = 0;
         }
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+        if(vec_idx >= (n_rows * config->block_vec_size)){
+            x[i] = VT{};
+        }
+
+        ++vec_idx;
+#endif
     }
 }
 
@@ -1332,15 +1338,6 @@ void parse_cli_inputs(
             exit(1);
         }
     }
-#endif
-
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-#ifdef USE_MPI
-    if(my_rank == 0){
-        fprintf(stderr, "ERROR: MPI with Row-wise block vector layout selected not yet supported.\n");
-        exit(1);
-    }
-#endif
 #endif
 
     if (config->block_vec_size > 1){
@@ -2846,7 +2843,8 @@ void assign_spmv_kernel_cpu_data(
         one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
         one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
         one_prec_kernel_args_encoded->values = local_scs->values.data();
-        one_prec_kernel_args_encoded->local_x = local_x_permuted;
+        // one_prec_kernel_args_encoded->local_x = local_x_permuted;
+        one_prec_kernel_args_encoded->local_x = local_x;
         one_prec_kernel_args_encoded->local_y = local_y;
     }
 }
@@ -3448,9 +3446,13 @@ void copy_back_result(
             }
 #endif
             // TODO: Need to check that this works for SCS SpMM
-            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                apply_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(dp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+            // for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+            //     apply_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(dp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+            for(int i = 0; i < sorted_dp_local_y.size(); ++i){
+                sorted_dp_local_y[i] = dp_local_x_permuted[i];
             }
+            // ^ Just for testing
+            // }
         }
         else if(config->value_type == "sp"){
 #ifdef __CUDACC__
@@ -3523,15 +3525,14 @@ void copy_back_result(
     // TODO: Ugly. No raw loops!
 // Need to take care to skip padding elements, since this is what is padded to MKL
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-        // TODO: integrate ROWWISE
-        // // TODO: skip padding elements here!
-        // for(int i = 0; i < local_scs.n_rows; ++i){
-        //     for(int j = 0; j < config->block_vec_size; ++j){
-        //         local_x_mkl_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
-        //     }
-        // }
-        // std::swap(local_x_mkl_copy, local_x.vec);
+        for(int i = 0; i < local_scs->n_rows; ++i){
+            for(int j = 0; j < config->block_vec_size; ++j){
+                (*local_y)[i + local_scs->n_rows * j] = sorted_dp_local_y[i * config->block_vec_size + j];
+            }
+        }
 #endif
+
+
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
         int vec_idx = 0;
         int shift = 0;

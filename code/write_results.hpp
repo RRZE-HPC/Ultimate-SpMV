@@ -469,17 +469,6 @@ void validate_result(
         std::swap(*mkl_result, y);
     }
 
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-    // Need to permute to compare with USpMV result
-    for(int i = 0; i < num_rows; ++i){
-        for(int j = 0; j < config->block_vec_size; ++j){
-            mkl_result_permuted[i * config->block_vec_size + j] = (*mkl_result)[i + num_rows * j];
-
-        }
-    }
-    std::swap(*mkl_result, mkl_result_permuted);
-#endif
-
     delete scs;
 }
 

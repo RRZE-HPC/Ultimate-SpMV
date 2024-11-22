@@ -329,8 +329,10 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
         for(int k = 0; k < WARM_UP_REPS; ++k){
 #ifdef USE_MPI
-            spmv_kernel.init_halo_exchange();
-            spmv_kernel.finalize_halo_exchange();
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                spmv_kernel.init_offset_halo_exchange(vec_idx);
+                spmv_kernel.finalize_offset_halo_exchange();
+            }
 #endif
             spmv_kernel.execute(warmup_flag);
 
@@ -465,7 +467,7 @@ assign_spmv_kernel_gpu_data<VT>(
         for (int i = 0; i < config->n_repetitions; ++i)
         {
 #ifdef DEBUG_MODE_FINE
-            int test_rank = 0;
+            int test_rank = 2;
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -478,15 +480,21 @@ assign_spmv_kernel_gpu_data<VT>(
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
 #endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i){
+                    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx)
+                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i * config->block_vec_size + vec_idx]);
+                }
+#endif
                 printf("]\n");
 
                 printf("Before comm spmv_kernel.local_y on rank %i = [\n", my_rank);
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                     for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
-#endif
+// #endif
                 printf("]\n");
             }
 #ifdef USE_MPI
@@ -494,19 +502,12 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
 #endif
 
-// TODO: Integrate ROWWISE
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
             // NOTE: In the current implementation, we reuse tags, send buffers, and MPI requests each loop iteration. 
             // NOTE: This may be risky at high process counts?
             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                 spmv_kernel.init_offset_halo_exchange(vec_idx);
                 spmv_kernel.finalize_offset_halo_exchange();
             }
-
-#else
-            spmv_kernel.init_halo_exchange();
-            spmv_kernel.finalize_halo_exchange();
-#endif
             
 #ifdef DEBUG_MODE_FINE
 #ifdef USE_MPI
@@ -514,22 +515,27 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
             if(my_rank == test_rank){
                 printf("After comm spmv_kernel.local_x on rank %i = [\n", my_rank);
-                // TODO: Integrate ROWWISE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                     for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
 #endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i){
+                    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx)
+                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i * config->block_vec_size + vec_idx]);
+                }
+#endif
                 printf("]\n");
 
                 printf("After comm spmv_kernel.local_y on rank %i = [\n", my_rank);
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                     for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
-#endif
+// #endif
                 printf("]\n");
             }
 #ifdef USE_MPI
@@ -544,23 +550,23 @@ assign_spmv_kernel_gpu_data<VT>(
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
             if(my_rank == test_rank){
-                printf("After spmv_kernel.execute() on rank %i = [\n", my_rank);
+                printf("spmv_kernel->local_x after spmv_kernel.execute() on rank %i = [\n", my_rank);
                 // TODO: Integrate ROWWISE
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                     for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
-#endif
+// #endif
                 printf("]\n");
 
-                printf("After comm spmv_kernel->local_y on rank %i = [\n", my_rank);
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                printf("spmv_kernel->local_y after spmv_kernel.execute() on rank %i = [\n", my_rank);
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                     for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
-#endif
+// #endif
                 printf("]\n");
             }
 #ifdef USE_MPI
@@ -576,23 +582,23 @@ assign_spmv_kernel_gpu_data<VT>(
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
             if(my_rank == test_rank){
-                printf("After spmv_kernel.execute() on rank %i = [\n", my_rank);
+                printf("After spmv_kernel.swap_local_vectors() local_x on rank %i = [\n", my_rank);
                 // TODO: Integrate ROWWISE
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                     for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
-#endif
+// #endif
                 printf("]\n");
 
-                printf("After comm spmv_kernel->local_y on rank %i = [\n", my_rank);
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                printf("After spmv_kernel.swap_local_vectors() local_y on rank %i = [\n", my_rank);
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                     for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
                         printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
                 }
-#endif
+// #endif
                 printf("]\n");
             }
 #ifdef USE_MPI
@@ -634,6 +640,9 @@ assign_spmv_kernel_gpu_data<VT>(
 #ifdef USE_MPI
     for(int i = 0; i < nz_comms; ++i){
         delete[] to_send_elems[i];
+    }
+    for(int i = 0; i < local_context->non_zero_senders.size(); ++i){
+        MPI_Type_free(&local_context->strided_recv_types[i]);
     }
 #endif
 
@@ -1180,6 +1189,7 @@ void init_local_structs(
     std::vector<std::vector<IT>> recv_tags;
     std::vector<IT> recv_counts_cumsum(comm_size + 1, 0);
     std::vector<IT> send_counts_cumsum(comm_size + 1, 0);
+    std::vector<MPI_Datatype> strided_recv_types;
 
     // Main routine for collecting all sending and receiving information!
     collect_comm_info<VT, IT>(
@@ -1194,6 +1204,7 @@ void init_local_structs(
         &recv_tags,
         &recv_counts_cumsum,
         &send_counts_cumsum,
+        &strided_recv_types,
         my_rank,
         comm_size
     );
@@ -1209,6 +1220,7 @@ void init_local_structs(
     local_context->recv_counts_cumsum = recv_counts_cumsum;
     local_context->send_counts_cumsum = send_counts_cumsum;
     local_context->num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
+    local_context->strided_recv_types = strided_recv_types;
 #else
     local_context->num_local_rows = local_scs->n_rows;
 #endif
@@ -1359,9 +1371,22 @@ void compute_result(
     if(my_rank == test_rank){
         // check vectors are "padded" correctly
         printf("local_x (size %i)= [\n", local_x.vec.size());
+        if(local_x.vec.size() != (local_scs.n_rows + local_context.per_vector_padding) * config->block_vec_size){
+            printf("ERROR: local_x size not expected.\n");
+            exit(0);
+        }
+            
+// #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+//         for(int i = 0; i < local_scs.n_rows + local_context.per_vector_padding; ++i){
+//             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx)
+//                 printf("vec %i: %f,\n", vec_idx, local_x.vec[i * config->block_vec_size + vec_idx]);
+//         }
+// #endif
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
         for(int i = 0; i < local_x.vec.size(); ++i){
             printf("%f, \n", local_x.vec[i]);
         }
+// #endif
         printf("]\n");
     }
 
@@ -1410,15 +1435,19 @@ void compute_result(
     std::vector<VT> local_x_mkl_copy(local_scs.n_rows * config->block_vec_size);
 
 
-// Need to take care to skip padding elements, since this is what is padded to MKL
+// Need to take care to skip padding elements, since this is what is passed to MKL
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-    // TODO: skip padding elements here!
-    for(int i = 0; i < local_scs.n_rows; ++i){
-        for(int j = 0; j < config->block_vec_size; ++j){
-            local_x_mkl_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
+    int shift = 0;
+    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+        for(int i = 0; i < local_scs.n_rows; ++i){
+            // NOTE: Basically a permutation, so that local_x_mkl_copy is held columnwise
+            // TODO: Easier for validation, but should eventually when comparing performance
+            // local_x_mkl_copy[i * config->block_vec_size + j] = local_x.vec[i + local_scs.n_rows * j];
+            local_x_mkl_copy[(i + local_scs.n_rows * vec_idx) + shift] = local_x.vec[i * config->block_vec_size + vec_idx];
         }
     }
-    std::swap(local_x_mkl_copy, local_x.vec);
+    // std::swap(local_x_mkl_copy, local_x.vec);
+
 #endif
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
     int vec_idx = 0;
@@ -1450,9 +1479,8 @@ void compute_result(
         printf("]\n");
 
         printf("local_x_mkl_copy = [\n");
-        for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-            for(int i = 0; i < local_scs.n_rows; ++i)
-                printf("vec %i: %f,\n", vec_idx, local_x_mkl_copy[i + vec_idx * local_context.num_local_rows]);
+        for(int i = 0; i < local_x_mkl_copy.size(); ++i){
+            printf("%f, \n", local_x_mkl_copy[i]);
         }
         printf("]\n");
     }
@@ -1460,6 +1488,7 @@ void compute_result(
 
 #ifdef USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 #endif
 #endif
 
