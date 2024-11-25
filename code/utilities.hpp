@@ -1511,9 +1511,27 @@ void apply_permutation(
     #pragma omp parallel for
     for(int i = 0; i < num_elems_to_permute; ++i){
         permuted_vec[i] = vec_to_permute[perm[i]];
-        // std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
+#ifdef DEBUG_MODE_FINE
+        std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
+#endif
     }
-    // printf("\n");
+}
+
+template <typename VT, typename IT>
+void apply_strided_permutation(
+    VT *permuted_vec,
+    VT *vec_to_permute,
+    IT *perm,
+    int num_elems_to_permute,
+    int stride
+){
+    #pragma omp parallel for
+    for(int i = 0; i < num_elems_to_permute; ++i){
+        permuted_vec[i*stride] = vec_to_permute[perm[i]*stride];
+#ifdef DEBUG_MODE_FINE
+        std::cout << "Permuting:" << vec_to_permute[i*stride] <<  " to " << vec_to_permute[perm[i]*stride] << std::endl;
+#endif
+    }
 }
 
 // TODO: hmm. Don't know if this is right
@@ -2843,8 +2861,7 @@ void assign_spmv_kernel_cpu_data(
         one_prec_kernel_args_encoded->chunk_lengths = local_scs->chunk_lengths.data();
         one_prec_kernel_args_encoded->col_idxs = local_scs->col_idxs.data();
         one_prec_kernel_args_encoded->values = local_scs->values.data();
-        // one_prec_kernel_args_encoded->local_x = local_x_permuted;
-        one_prec_kernel_args_encoded->local_x = local_x;
+        one_prec_kernel_args_encoded->local_x = local_x_permuted;
         one_prec_kernel_args_encoded->local_y = local_y;
     }
 }
@@ -3445,14 +3462,14 @@ void copy_back_result(
                 dp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            // TODO: Need to check that this works for SCS SpMM
-            // for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-            //     apply_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(dp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
-            for(int i = 0; i < sorted_dp_local_y.size(); ++i){
-                sorted_dp_local_y[i] = dp_local_x_permuted[i];
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                apply_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(dp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                apply_strided_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx]), &(dp_local_x_permuted[vec_idx]), local_scs->old_to_new_idx.data(), local_scs->n_rows, config->block_vec_size);
+#endif
             }
-            // ^ Just for testing
-            // }
         }
         else if(config->value_type == "sp"){
 #ifdef __CUDACC__
@@ -3462,13 +3479,14 @@ void copy_back_result(
                 sp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            // TODO: Need to check that this works for SCS SpMM
             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 apply_permutation<float, IT>(&((sorted_sp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(sp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                apply_strided_permutation<float, IT>(&((sorted_sp_local_y.data())[vec_idx]), &(sp_local_x_permuted[vec_idx]), local_scs->old_to_new_idx.data(), local_scs->n_rows, config->block_vec_size);
+#endif
             }
-            // for(int i = 0; i < local_y->size(); ++i){
-            //     (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i]);
-            // }
         }
         else if(config->value_type == "hp"){
 #ifdef HAVE_HALF_MATH
@@ -3480,12 +3498,14 @@ void copy_back_result(
                 hp_local_x_permuted[i] = spmv_kernel_result[i];
             }
 #endif
-            // TODO: Need to check that this works for SCS SpMM
             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 apply_permutation<_Float16, IT>(&((sorted_hp_local_y.data())[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), &(hp_local_x_permuted[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]), local_scs->old_to_new_idx.data(), local_scs->n_rows);
-            }            // for(int i = 0; i < local_y->size(); ++i){
-            //     (*local_y)[i] = static_cast<double>(sorted_hp_local_y[i]);
-            // }
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                apply_strided_permutation<_Float16, IT>(&((sorted_hp_local_y.data())[vec_idx]), &(hp_local_x_permuted[vec_idx]), local_scs->old_to_new_idx.data(), local_scs->n_rows, config->block_vec_size);
+#endif
+            }
 #endif
         }
         else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
@@ -3497,13 +3517,17 @@ void copy_back_result(
                 dp_local_x_permuted[i] = dp_spmv_kernel_result[i];
             }
 #endif
-            // TODO: Need to check that this works for SCS SpMM
             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 apply_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx * (dp_local_scs->n_rows + local_context->per_vector_padding)]), &(dp_local_x_permuted[vec_idx * (dp_local_scs->n_rows + local_context->per_vector_padding)]), dp_local_scs->old_to_new_idx.data(), dp_local_scs->n_rows);
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                apply_strided_permutation<double, IT>(&((sorted_dp_local_y.data())[vec_idx]), &(dp_local_x_permuted[vec_idx]), dp_local_scs->old_to_new_idx.data(), dp_local_scs->n_rows, config->block_vec_size);
+#endif
             }
         }
         else if(config->value_type == "ap[sp_hp]"){
-            // TODO: Validate this!
+#ifdef HAVE_HALF_MATH
 #ifdef __CUDACC__
             cudaMemcpy(sp_local_x_permuted, sp_spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
 #else
@@ -3511,10 +3535,15 @@ void copy_back_result(
                 sp_local_x_permuted[i] = sp_spmv_kernel_result[i];
             }
 #endif
-            // TODO: Need to check that this works for SCS SpMM
             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 apply_permutation<float, IT>(&((sorted_sp_local_y.data())[vec_idx * (sp_local_scs->n_rows + local_context->per_vector_padding)]), &(sp_local_x_permuted[vec_idx * (sp_local_scs->n_rows + local_context->per_vector_padding)]), sp_local_scs->old_to_new_idx.data(), sp_local_scs->n_rows);
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                apply_strided_permutation<float, IT>(&((sorted_sp_local_y.data())[vec_idx]), &(sp_local_x_permuted[vec_idx]), sp_local_scs->old_to_new_idx.data(), sp_local_scs->n_rows, config->block_vec_size);
+#endif
             }
+#endif
         }
         // NOTE: With AP, we need to permute w.r.t. the local_scs of the highest precision
 
@@ -3540,6 +3569,9 @@ void copy_back_result(
             if(vec_idx < local_scs->n_rows){
                 if(config->value_type == "dp" || config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
                     (*local_y)[i] = sorted_dp_local_y[i + shift];
+#ifdef DEBUG_MODE_FINE
+                    printf("Assigning %f from idx %i of sorted_local_y to local_y[%i]\n", sorted_dp_local_y[i + shift], i + shift, i);
+#endif
                 }
                 else if(config->value_type == "sp" || config->value_type == "ap[sp_hp]"){
                     (*local_y)[i] = static_cast<double>(sorted_sp_local_y[i + shift]);
@@ -3561,6 +3593,9 @@ void copy_back_result(
             ++vec_idx;
         } 
 #endif
+
+        // Manually resize for ease later on (and I don't see a better way)
+        local_y->resize(local_context->num_local_rows * config->block_vec_size);
 }
 
 template <typename VT, typename IT>

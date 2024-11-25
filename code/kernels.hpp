@@ -192,6 +192,9 @@ spmv_omp_scs(
             for (IT j = 0; j < chunk_lengths[c]; ++j) {
                 for (IT i = 0; i < *C; ++i) {
                     tmp[i] += values[cs + j * *C + i] * x[col_idxs[cs + j * *C + i]];
+#ifdef DEBUG_MODE_FINE
+                    printf("Accessing tmp[%i] += X[%i]\n", i, col_idxs[cs + j * *C + i]);
+#endif
                 }
             }
 
@@ -348,8 +351,7 @@ block_spmv_omp_scs_general(
 #endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-	                    // tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] * (*block_size) + vec_idx];
-	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] + vec_idx * (*n_chunks * *C)];
+	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] * (*block_size) + vec_idx];
 
 #ifdef DEBUG_MODE
                         printf("Accessing tmp[%i] += X[%i]\n", i * (*block_size) + vec_idx, col_idxs[cs + j * *C + i] * (*block_size) + vec_idx);
@@ -373,8 +375,6 @@ block_spmv_omp_scs_general(
 #ifdef DEBUG_MODE
                         printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) * (*block_size) + vec_idx);
 #endif
-	                    // Y[(c * *C + i) + vec_idx * (*n_chunks * *C)] = tmp[i * (*block_size) + vec_idx];
-
 #endif
                 }
             }

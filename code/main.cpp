@@ -76,7 +76,12 @@ void bench_spmv(
 #endif
     // TODO: Something here seems iffy. I think something is going wrong with the inverse perm vec
     for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
         apply_permutation<VT, IT>(&(local_x_permuted)[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)], &(*local_x)[vec_idx * (local_scs->n_rows + local_context->per_vector_padding)], &(local_scs->new_to_old_idx)[0], local_scs->n_rows);
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+        apply_strided_permutation<VT, IT>(&(local_x_permuted)[vec_idx], &(*local_x)[vec_idx], &(local_scs->new_to_old_idx)[0], local_scs->n_rows, config->block_vec_size);
+#endif
     }
 
     if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
@@ -857,6 +862,14 @@ void gather_results(
     else if(config->mode == 's'){
         r->x_out = (*local_x_mkl_copy);
         r->y_out = (*local_y); // NOTE: Is this true even with SCS?
+
+#ifdef DEBUG_MODE_FINE
+        printf("local_y (size %i)= \n", local_y->size());
+        for(int i = 0; i < local_y->size(); ++i){
+            printf("%f, \n", (*local_y)[i]);
+        }
+        printf("]\n");
+#endif
 
         if (config->validate_result){
 #ifdef USE_MPI

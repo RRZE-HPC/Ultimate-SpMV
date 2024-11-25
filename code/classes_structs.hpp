@@ -421,19 +421,19 @@ class SpmvKernel {
             if (config->kernel_format == "crs" || config->kernel_format == "csr"){
                 if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                     if(config->block_vec_size > 1){
-                        if(my_rank == 0){printf("Block CRS kernel selected\n");}
+                        if(my_rank == 0){printf("CRS SpMMV kernel selected\n");}
                         one_prec_kernel_func_ptr = block_spmv_omp_csr<VT, IT>;
                     }
                     else{
 #ifdef USE_CUSPARSE
-                        if(my_rank == 0){printf("CUSPARSE CRS kernel selected\n");}
+                        if(my_rank == 0){printf("CUSPARSE CRS SpMV kernel selected\n");}
 #else
-                        if(my_rank == 0){printf("CRS kernel selected\n");}
+                        if(my_rank == 0){printf("CRS SpMV kernel selected\n");}
 #endif
 #ifdef __CUDACC__
                         one_prec_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
 #else
-                        if(my_rank == 0){printf("CRS kernel selected\n");}
+                        if(my_rank == 0){printf("CRS SpMV kernel selected\n");}
                         one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
 #endif
                     }
@@ -444,11 +444,11 @@ class SpmvKernel {
                     multi_prec_kernel_func_ptr = spmv_gpu_ap_csr_launcher<IT>;
 #else
                     if(config->value_type == "ap[dp_sp]"){
-                        if(my_rank == 0){printf("ap[dp_sp] CRS kernel selected\n");}
+                        if(my_rank == 0){printf("ap[dp_sp] CRS SpMV kernel selected\n");}
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsp<IT>;
                     }
                     else if (config->value_type == "ap[dp_hp]"){
-                        if(my_rank == 0){printf("ap[dp_hp] CRS kernel selected\n");}
+                        if(my_rank == 0){printf("ap[dp_hp] CRS SpMV kernel selected\n");}
 #ifdef HAVE_HALF_MATH
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
 #else
@@ -456,7 +456,7 @@ class SpmvKernel {
 #endif
                     }
                     else if (config->value_type == "ap[sp_hp]"){
-                        if(my_rank == 0){printf("ap[sp_hp] CRS kernel selected\n");}
+                        if(my_rank == 0){printf("ap[sp_hp] CRS SpMV kernel selected\n");}
 #ifdef HAVE_HALF_MATH
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
 #else
@@ -464,7 +464,7 @@ class SpmvKernel {
 #endif
                     }
                     else if (config->value_type == "ap[dp_sp_hp]"){
-                        if(my_rank == 0){printf("ap[dp_sp_hp] CRS kernel selected\n");}
+                        if(my_rank == 0){printf("ap[dp_sp_hp] CRS SpMV kernel selected\n");}
 #ifdef HAVE_HALF_MATH
                         multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
 #else
@@ -487,19 +487,19 @@ class SpmvKernel {
                     || config->chunk_size == 128)
                 {
 #ifdef USE_CUSPARSE
-                    if(my_rank == 0){printf("CUSPARSE SCS kernel selected\n");}
+                    if(my_rank == 0){printf("CUSPARSE SCS SpMV kernel selected\n");}
 #else
                     if(config->block_vec_size > 1){
-                        if(my_rank == 0){printf("C = %i => Advanced Block SCS kernel selected\n", config->chunk_size);}
+                        if(my_rank == 0){printf("C = %i => Advanced SCS SpMMV kernel selected\n", config->chunk_size);}
                     }
                     else{
-                        if(my_rank == 0){printf("C = %i => Advanced SCS kernel selected\n", config->chunk_size);}
+                        if(my_rank == 0){printf("C = %i => Advanced SCS SpMV kernel selected\n", config->chunk_size);}
                     }
 #endif
                     if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                         if(config->block_vec_size > 1){
 #ifdef __CUDACC__
-                        if(my_rank == 0){fprintf(stderr, "ERROR: Advanced Block SCS kernel not yet implemented on GPU.\n");}
+                        if(my_rank == 0){fprintf(stderr, "ERROR: Advanced SCS SpMMV kernel not yet implemented on GPU.\n");}
                         exit(1);
 #else
                         // one_prec_kernel_func_ptr = block_spmv_omp_scs_adv<VT, IT>;
@@ -515,7 +515,7 @@ class SpmvKernel {
                         }
                     }
                     else if(config->value_type == "ap[dp_sp]"){
-                        if(my_rank == 0){printf("Advanced ap[dp_sp] SCS kernel selected\n");}
+                        if(my_rank == 0){printf("Advanced ap[dp_sp] SCS SpMV kernel selected\n");}
 #ifdef __CUDACC__
                         multi_prec_kernel_func_ptr = spmv_gpu_ap_scs_adv_launcher<IT>;
 #else
@@ -523,49 +523,49 @@ class SpmvKernel {
 #endif
                     }
                     else if (config->value_type == "ap[dp_hp]"){
-                        if(my_rank == 0){printf("Advanced ap[dp_hp] SCS kernel selected\n");}
+                        if(my_rank == 0){printf("Advanced ap[dp_hp] SCS SpMV kernel selected\n");}
 #ifdef __CUDACC__
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Advanced ap[dp_hp] SCS kernel not yet implemented on GPU.\n");
+                            fprintf(stderr, "ERROR: Advanced ap[dp_hp] SCS SpMV kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Advanced ap[dp_hp] SCS kernel not yet implemented on CPU.\n");
+                            fprintf(stderr, "ERROR: Advanced ap[dp_hp] SCS SpMV kernel not yet implemented on CPU.\n");
                             exit(1);
                         }
 #endif
                     }
                     else if (config->value_type == "ap[sp_hp]"){
 #ifdef __CUDACC__
-                        if(my_rank == 0){printf("Advanced ap[sp_hp] SCS kernel selected\n");}
+                        if(my_rank == 0){printf("Advanced ap[sp_hp] SCS SpMV kernel selected\n");}
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Advanced ap[sp_hp] SCS kernel not yet implemented on GPU.\n");
+                            fprintf(stderr, "ERROR: Advanced ap[sp_hp] SCS SpMV kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Advanced ap[sp_hp] SCS kernel not yet implemented on CPU.\n");
+                            fprintf(stderr, "ERROR: Advanced ap[sp_hp] SCS SpMV kernel not yet implemented on CPU.\n");
                             exit(1);
                         }
 #endif
                     }
                     else if (config->value_type == "ap[dp_sp_hp]"){
-                        if(my_rank == 0){printf("Advanced ap[dp_sp_hp] SCS kernel selected\n");}
+                        if(my_rank == 0){printf("Advanced ap[dp_sp_hp] SCS SpMV kernel selected\n");}
 #ifdef __CUDACC__
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Advanced ap[dp_sp_hp] SCS kernel not yet implemented on GPU.\n");
+                            fprintf(stderr, "ERROR: Advanced ap[dp_sp_hp] SCS SpMV kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Advanced ap[dp_sp_hp] SCS kernel not yet implemented on CPU.\n");
+                            fprintf(stderr, "ERROR: Advanced ap[dp_sp_hp] SCS SpMV kernel not yet implemented on CPU.\n");
                             exit(1);
                         }
 #endif
@@ -577,16 +577,16 @@ class SpmvKernel {
                     if(my_rank == 0){printf("CUSPARSE SCS kernel selected\n");}
 #else
                     if(config->block_vec_size > 1){
-                        if(my_rank == 0){printf("C = %i => Basic Block SCS kernel selected\n", config->chunk_size);}
+                        if(my_rank == 0){printf("C = %i => Basic SCS SpMMV kernel selected\n", config->chunk_size);}
                     }
                     else{
-                        if(my_rank == 0){printf("C = %i => Basic SCS kernel selected\n", config->chunk_size);}
+                        if(my_rank == 0){printf("C = %i => Basic SCS SpMV kernel selected\n", config->chunk_size);}
                     }
 #endif
                     if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                         if(config->block_vec_size > 1){
 #ifdef __CUDACC__
-                        if(my_rank == 0){fprintf(stderr, "ERROR: Basic Block SCS kernel not yet implemented on GPU.\n");}
+                        if(my_rank == 0){fprintf(stderr, "ERROR: Basic SCS SpMMV kernel not yet implemented on GPU.\n");}
                         exit(1);
 #else
                         one_prec_kernel_func_ptr = block_spmv_omp_scs_general<VT, IT>;
@@ -601,7 +601,7 @@ class SpmvKernel {
                         }
                     }
                     else if(config->value_type == "ap[dp_sp]"){
-                        if(my_rank == 0){printf("Basic ap[dp_sp] SCS kernel selected\n");}
+                        if(my_rank == 0){printf("Basic ap[dp_sp] SCS SpMV kernel selected\n");}
 #ifdef __CUDACC__
                         multi_prec_kernel_func_ptr = spmv_gpu_ap_scs_launcher<IT>;
 #else
@@ -609,33 +609,33 @@ class SpmvKernel {
 #endif
                     }
                     else if (config->value_type == "ap[dp_hp]"){
-                        if(my_rank == 0){printf("Basic ap[dp_hp] SCS kernel selected\n");}
+                        if(my_rank == 0){printf("Basic ap[dp_hp] SCS SpMV kernel selected\n");}
 #ifdef __CUDACC__
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Basic ap[dp_hp] SCS kernel not yet implemented on GPU.\n");
+                            fprintf(stderr, "ERROR: Basic ap[dp_hp] SCS SpMV kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Basic ap[dp_hp] SCS kernel not yet implemented on CPU.\n");
+                            fprintf(stderr, "ERROR: Basic ap[dp_hp] SCS SpMV kernel not yet implemented on CPU.\n");
                             exit(1);
                         }
 #endif
                     }
                     else if (config->value_type == "ap[sp_hp]"){
 #ifdef __CUDACC__
-                        if(my_rank == 0){printf("Basic ap[sp_hp] SCS kernel selected\n");}
+                        if(my_rank == 0){printf("Basic ap[sp_hp] SCS SpMV kernel selected\n");}
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Basic ap[sp_hp] SCS kernel not yet implemented on GPU.\n");
+                            fprintf(stderr, "ERROR: Basic ap[sp_hp] SCS SpMV kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Basic ap[sp_hp] SCS kernel not yet implemented on CPU.\n");
+                            fprintf(stderr, "ERROR: Basic ap[sp_hp] SCS SpMV kernel not yet implemented on CPU.\n");
                             exit(1);
                         }
 #endif
@@ -645,13 +645,13 @@ class SpmvKernel {
 #ifdef __CUDACC__
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Basic ap[dp_sp_hp] SCS kernel not yet implemented on GPU.\n");
+                            fprintf(stderr, "ERROR: Basic ap[dp_sp_hp] SCS SpMV kernel not yet implemented on GPU.\n");
                             exit(1);
                         }
 #else
                         // multi_prec_kernel_func_ptr = spmv_omp_csr_apdpsphp<IT>;
                         if(my_rank == 0){
-                            fprintf(stderr, "ERROR: Basic ap[dp_sp_hp] SCS kernel not yet implemented on CPU.\n");
+                            fprintf(stderr, "ERROR: Basic ap[dp_sp_hp] SCS SpMV kernel not yet implemented on CPU.\n");
                             exit(1);
                         }
 #endif

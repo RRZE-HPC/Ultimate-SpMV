@@ -2,7 +2,7 @@
 COMPILER = gcc
 # [int] (CPU only)
 SIMD_LENGTH = 4
-# [colwise, rowwise] (If using single vector SpMV, use "colwise")
+# [colwise, rowwise] (If using single vector SpMV, select "colwise")
 BLOCK_VECTOR_LAYOUT = colwise
 # [1/0]
 DEBUG_MODE = 0
