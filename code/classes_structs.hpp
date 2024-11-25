@@ -70,7 +70,7 @@ struct Config
     // activate profile logs, only root process
     int log_prof = 0;
 
-    // width of X and Y vectors for SpMM
+    // width of X and Y vectors for SpMMV
     int block_vec_size = 1;
 
     // communicate the halo elements in benchmark loop

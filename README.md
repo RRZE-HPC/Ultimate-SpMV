@@ -1,16 +1,17 @@
 # Ultimate-SpMV
-## MPI+X SpMV with SELL-C-sigma format
+## MPI+X SpM(M)V with SELL-C-sigma format
 
 Can be run as a standalone benchmarking harness, or as a library. See API_doc.md for information about the interface.
 
 Examples:\
 	```mpirun -n 4 ./uspmv <matrix_name>.mtx <kernel_format> <options>```\
 	```./uspmv <matrix_name>.mtx scs -c 16 -s 512 -mode b```\
-	```./uspmv <matrix_name>.mtx crs -mode s -ap[dp_sp] -ap_threshold_1 1000.0 -verbose 1```
+	```./uspmv <matrix_name>.mtx crs -mode s -block_vec_size 2 -verbose 1```
 
 - kernel_format can be any one of: crs, scs (and by extention: ell and sell-p)
 
 Options:
+- -block_vec_size (int: width of block X vector for SpMMV)
 - -c (int: chunk size (required for scs))
 - -s (int: sigma (required for scs))
 - -rev (int: number of back-to-back revisions to perform)
@@ -35,9 +36,10 @@ Notes:
 - This is a work in progress. Please report all issues, seg faults, and bugs on Github issues. 
 - Please direct any suggestions/inquiries to my email `dane.c.lacey at fau.de`
 - The -c and -s options are only relevant when the scs kernel is selected
+- If interested in only single-vector SpMV, please select `columnwise` vector layout
 - Select compiler in Makefile (gcc, icc, icx, llvm, nvcc)
 	- icc is legacy, and not advised
 - VECTOR_LENGTH for SIMD instructions is also defined at the top of the Makefile, useful for non-SELL_C_SIGMA kernels
 - If using AVX512 on icelake, I currently get around downfall perf bug with the icx compiler from OneAPI 2023.2.0
-- The par_pack option yields better performance for MPI+Openmp runs with poorly load balanced matrices
+- The par_pack option typically yields better performance for MPI+Openmp with poorly load balanced matrices
 - Thresholds for adaptive precision are expected in the order `0---TH2---TH1---\infty`

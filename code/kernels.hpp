@@ -60,7 +60,7 @@ spmv_omp_csr(
 }
 
 /**
- * SpMM Kernel for CSR format, where X and Y are block vectors.
+ * SpMMV Kernel for CSR format, where X and Y are block vectors.
  */
 template <typename VT, typename IT>
 static void
@@ -303,7 +303,7 @@ spmv_omp_scs_adv(
 }
 
 /**
- * SpMM Kernel for Sell-C-Sigma, where X and Y are block vectors. Supports all Cs > 0.
+ * SpMMV Kernel for Sell-C-Sigma, where X and Y are block vectors. Supports all Cs > 0.
  */
 template <typename VT, typename IT>
 static void

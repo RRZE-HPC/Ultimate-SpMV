@@ -985,7 +985,7 @@ void cli_options_messge(
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename> <kernel-format> [options]\n " 
         "options [defaults] (description): \n \\
-        -block_vec_size [%i] (int: width of X vector for SpMM) \n \\
+        -block_vec_size [%i] (int: width of block vectors for SpMMV) \n \\
         -c [%li] (int: chunk size (required for scs)) \n \\
         -s [%li] (int: sigma (required for scs)) \n \\
         -rev [%li] (int: number of back-to-back revisions to perform) \n \\
@@ -1355,7 +1355,7 @@ void parse_cli_inputs(
             *value_type == "ap[sp_hp]" || 
             *value_type == "ap[dp_sp_hp]"){
             if(my_rank == 0){
-                fprintf(stderr, "ERROR: SpMM is not yet implemented for AP kernels.\n");
+                fprintf(stderr, "ERROR: SpMMV is not yet implemented for AP kernels.\n");
                 exit(1);
             }
         }
@@ -1364,7 +1364,7 @@ void parse_cli_inputs(
 #ifdef __CUDACC__
     if (config->block_vec_size > 1){
         if(my_rank == 0){
-            fprintf(stderr, "ERROR: SpMM is not yet implemented on GPUs.\n");
+            fprintf(stderr, "ERROR: SpMMV is not yet implemented on GPUs.\n");
             exit(1);
         }
     }
@@ -3494,7 +3494,7 @@ void copy_back_result(
         // First, we have to copy the SpMV results back and un-permute (if applicable)
         if(config->value_type == "dp"){
 #ifdef __CUDACC__
-            // TODO: Integrate SpMM on GPUs
+            // TODO: Integrate SpMMV on GPUs
             cudaMemcpy(dp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
 #else
             for(int i = 0; i < local_y->size(); ++i){
