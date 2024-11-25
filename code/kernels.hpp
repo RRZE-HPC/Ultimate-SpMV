@@ -79,6 +79,9 @@ block_spmv_omp_csr(
     const int * my_rank = NULL
 )
 {
+#ifdef DEBUG_MODE_FINE
+    int test_rank = 2;
+#endif
     #pragma omp parallel 
     {   
 #ifdef USE_LIKWID
@@ -104,14 +107,14 @@ block_spmv_omp_csr(
                 for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
 
-#ifdef DEBUG_MODE_FINE
-                    printf("rank %i: Accessing tmp[%i] += X[%i]\n", *my_rank, vec_idx, (*block_size * *vec_length) + col_idxs[j]);
-                    printf("rank %i: vec_idx = %i\n", *my_rank, vec_idx);
-                    printf("rank %i: *num_rows = %i\n", *my_rank, *num_rows);
-                    printf("rank %i: row = %i\n", *my_rank, row);
-                    printf("rank %i: col_idxs[j] = %i\n", *my_rank, col_idxs[j]);
-                    printf("rank %i: j = %i\n", *my_rank, j);
-#endif
+// #ifdef DEBUG_MODE_FINE
+//                     printf("rank %i: Accessing tmp[%i] += X[%i]\n", *my_rank, vec_idx, (*block_size * *vec_length) + col_idxs[j]);
+//                     printf("rank %i: vec_idx = %i\n", *my_rank, vec_idx);
+//                     printf("rank %i: *num_rows = %i\n", *my_rank, *num_rows);
+//                     printf("rank %i: row = %i\n", *my_rank, row);
+//                     printf("rank %i: col_idxs[j] = %i\n", *my_rank, col_idxs[j]);
+//                     printf("rank %i: j = %i\n", *my_rank, j);
+// #endif
                     tmp[vec_idx] += values[j] * X[(*vec_length * vec_idx) + col_idxs[j]];
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
@@ -127,13 +130,13 @@ block_spmv_omp_csr(
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 Y[row + (vec_idx * *vec_length)] = tmp[vec_idx];
 #ifdef DEBUG_MODE_FINE
-                printf("Assigning %f to Y[%i]\n", tmp[vec_idx], *vec_length + row);
+                if(*my_rank == test_rank){printf("Assigning %f to Y[%i]\n", tmp[vec_idx], row + (vec_idx * *vec_length));}
 #endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
                 Y[row * (*block_size) + vec_idx] = tmp[vec_idx];
 #ifdef DEBUG_MODE_FINE
-                printf("Assigning %f to Y[%i]\n", tmp[vec_idx], row * (*block_size) + vec_idx);
+                if(*my_rank == test_rank){printf("Assigning %f to Y[%i]\n", tmp[vec_idx], row * (*block_size) + vec_idx);}
 #endif
 #endif
             }
@@ -314,7 +317,7 @@ block_spmv_omp_scs_general(
     const VT * RESTRICT values,
     VT * RESTRICT X,
     VT * RESTRICT Y,
-    int *block_size,
+    int * block_size,
     int * vec_length,
     const int * my_rank = NULL
 )
@@ -331,6 +334,9 @@ block_spmv_omp_scs_general(
 #endif
         }
 #endif
+#ifdef DEBUG_MODE
+        int test_rank = 0;
+#endif
         #pragma omp for schedule(static)
         for (ST c = 0; c < *n_chunks; ++c) {
             VT tmp[*C * *block_size];
@@ -345,16 +351,16 @@ block_spmv_omp_scs_general(
                     #pragma omp simd
                     for (IT vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] + vec_idx * (*n_chunks * *C)];
+	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] + vec_idx * (*vec_length)];
 #ifdef DEBUG_MODE
-                        printf("Accessing tmp[%i] += X[%i]\n", i * (*block_size) + vec_idx, col_idxs[cs + j * *C + i] + vec_idx * (*n_chunks * *C));
+                        if(*my_rank == test_rank){printf("Accessing tmp[%i] += X[%i]\n", i * (*block_size) + vec_idx, col_idxs[cs + j * *C + i] + vec_idx * (*vec_length));}
 #endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
 	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] * (*block_size) + vec_idx];
 
 #ifdef DEBUG_MODE
-                        printf("Accessing tmp[%i] += X[%i]\n", i * (*block_size) + vec_idx, col_idxs[cs + j * *C + i] * (*block_size) + vec_idx);
+                        if(*my_rank == test_rank){printf("Accessing tmp[%i] += X[%i]\n", i * (*block_size) + vec_idx, col_idxs[cs + j * *C + i] * (*block_size) + vec_idx);}
 #endif
 #endif
                     }
@@ -365,15 +371,15 @@ block_spmv_omp_scs_general(
                 #pragma omp simd
                 for (IT vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-	                    Y[(c * *C + i) + vec_idx * (*n_chunks * *C)] = tmp[i * (*block_size) + vec_idx];
+	                    Y[(c * *C + i) + vec_idx * (*vec_length)] = tmp[i * (*block_size) + vec_idx];
 #ifdef DEBUG_MODE
-                        printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) + vec_idx * (*n_chunks * *C));
+                        if(*my_rank == test_rank){printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) + vec_idx * (*n_chunks * *C));}
 #endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
 	                    Y[(c * *C + i) * (*block_size) + vec_idx] = tmp[i * (*block_size) + vec_idx];
 #ifdef DEBUG_MODE
-                        printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) * (*block_size) + vec_idx);
+                        if(*my_rank == test_rank){printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) * (*block_size) + vec_idx);}
 #endif
 #endif
                 }
@@ -406,6 +412,7 @@ block_scs_impl_cpu(
     const IT * RESTRICT chunk_lengths,
     const IT * RESTRICT col_idxs,
     const VT * RESTRICT values,
+    const IT * vec_length,
     VT * RESTRICT X,
     VT * RESTRICT Y
 )
@@ -433,7 +440,7 @@ block_scs_impl_cpu(
                         #pragma omp simd
                         for (IT n = 0; n < block_size; ++n) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                            tmp[i * block_size + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] + n * (*n_chunks * C)];
+                            tmp[i * block_size + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] + n * (*vec_length)];
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
                             tmp[i * block_size + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] * block_size + n];
@@ -446,7 +453,7 @@ block_scs_impl_cpu(
                 #pragma omp simd
                 for (IT n = 0; n < block_size; ++n) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                    Y[(c * C + i) + n * (*n_chunks * C)] = tmp[i * block_size + n];
+                    Y[(c * C + i) + n * (*vec_length)] = tmp[i * block_size + n];
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
                     Y[(c * C + i) * block_size + n] = tmp[i * block_size + n];
@@ -494,13 +501,13 @@ call_scs_block(
     {
         #define INSTANTIATE_CS_B X(2) X(4) X(8) X(16) X(32) X(64) X(128)
 
-        #define X(BS) case BS: block_scs_impl_cpu<C,BS>(warmup_flag, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y); return;
+        #define X(BS) case BS: block_scs_impl_cpu<C,BS>(warmup_flag, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, vec_length, x, y); return;
         INSTANTIATE_CS_B
         #undef X
 
 	default:
             // Call this kernel, in the case where chunk size C is dispatched, but block_vec_size is not
-            block_spmv_omp_scs_general<VT, IT>(warmup_flag, CC, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size); return;
+            block_spmv_omp_scs_general<VT, IT>(warmup_flag, CC, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size, vec_length); return;
     }
 }
 

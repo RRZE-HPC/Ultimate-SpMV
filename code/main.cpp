@@ -896,7 +896,7 @@ void gather_results(
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
-            int test_rank = 0;
+            int test_rank = 2;
             if(my_rank == test_rank){
                 printf("Gathering results: rank %i local_x_mkl_copy = [\n", my_rank);
                 // TODO: Integrate ROWWISE
@@ -1380,7 +1380,7 @@ void compute_result(
 #ifdef USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
-    int test_rank = 0;
+    int test_rank = 2;
     if(my_rank == test_rank){
         // check vectors are "padded" correctly
         printf("local_x (size %i)= [\n", local_x.vec.size());
@@ -1389,17 +1389,9 @@ void compute_result(
             exit(0);
         }
             
-// #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-//         for(int i = 0; i < local_scs.n_rows + local_context.per_vector_padding; ++i){
-//             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx)
-//                 printf("vec %i: %f,\n", vec_idx, local_x.vec[i * config->block_vec_size + vec_idx]);
-//         }
-// #endif
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
         for(int i = 0; i < local_x.vec.size(); ++i){
             printf("%f, \n", local_x.vec[i]);
         }
-// #endif
         printf("]\n");
     }
 
@@ -1501,7 +1493,6 @@ void compute_result(
 
 #ifdef USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
-    // exit(0);
 #endif
 #endif
 

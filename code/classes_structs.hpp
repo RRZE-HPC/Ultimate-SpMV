@@ -726,19 +726,8 @@ class SpmvKernel {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
             int block_offset = vec_idx * (num_local_rows + per_vector_padding);
 #endif
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-            int block_offset = vec_idx;
-            // vec_idx * config->block_vec_size ??
-#endif
 
             // First, post receives
-                    // Create a strided MPI datatype
-            // MPI_Datatype strided_recv_type;
-            // int count = 16;
-            // int stride = 3;
-            // MPI_Type_vector(count, 1, stride, MPI_DOUBLE, &strided_recv_type);
-            // MPI_Type_commit(&strided_recv_type);
-
             for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
             {
                 sending_proc = local_context->non_zero_senders[from_proc_idx];
@@ -748,7 +737,7 @@ class SpmvKernel {
                 std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 
 #endif
 #endif
@@ -760,7 +749,7 @@ class SpmvKernel {
                     this->MPI_ELEM_TYPE,
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                    &(local_x)[(config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + block_offset],
+                    &(local_x)[(config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] * config->block_vec_size + vec_idx],
                     incoming_buf_size,
                     local_context->strided_recv_types[from_proc_idx],
 #endif
@@ -769,22 +758,6 @@ class SpmvKernel {
                     MPI_COMM_WORLD,
                     &recv_requests[from_proc_idx]
                 );
-
-//                 MPI_Irecv(
-//                     &(local_x)[(config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + block_offset],
-//                     incoming_buf_size,
-// #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-//                     local_context->strided_recv_types[from_proc_idx],
-// #endif
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-//                     this->MPI_ELEM_TYPE,
-// #endif
-//                     sending_proc,
-//                     (local_context->recv_tags[sending_proc])[my_rank],
-//                     MPI_COMM_WORLD,
-//                     &recv_requests[from_proc_idx]
-//                 );
-
             }
 
             // Second, fulfill those with sends
@@ -804,12 +777,12 @@ class SpmvKernel {
                 #pragma omp parallel for if(config->par_pack)   
                 for(int i = 0; i < outgoing_buf_size; ++i){
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                    (to_send_elems[to_proc_idx])[i] = local_x[local_context->comm_send_idxs[receiving_proc][i] + block_offset];
+                    (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
                     // NOTE: Ignoring perm for now, since only focusing on CSR format
                     // (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                    (to_send_elems[to_proc_idx])[i] = local_x[local_context->comm_send_idxs[receiving_proc][i] * config->block_vec_size + vec_idx];
+                    (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
 #endif
                 }
                 
@@ -1138,7 +1111,12 @@ void MtxData<VT, IT>::copy( const MtxData<double, int> & rhs){
     for(int i = 0; i < nnz; ++i){
         this->I[i] = rhs.I[i];
         this->J[i] = rhs.J[i];
+#ifdef HAVE_HALF_MATH
+        printf("Cannot cast into _Float16 at the moment.\n");
+        exit(1);
+#else
         this->values[i] = static_cast<VT>(rhs.values[i]);
+#endif
     }
 }
 

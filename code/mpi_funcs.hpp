@@ -699,6 +699,8 @@ void seg_and_send_matrix_data(
                 // Next, send three arrays
                 MPI_Send(&local_I[0], local_I.size(), MPI_INT, loop_rank, 42, MPI_COMM_WORLD);
                 MPI_Send(&local_J[0], local_J.size(), MPI_INT, loop_rank, 43, MPI_COMM_WORLD);
+                // TODO: Template!
+#ifndef HAVE_HALF_MATH
                 if (typeid(VT) == typeid(double))
                 {
                     MPI_Send(&local_vals[0], local_vals.size(), MPI_DOUBLE, loop_rank, 44, MPI_COMM_WORLD);
@@ -707,6 +709,7 @@ void seg_and_send_matrix_data(
                 {
                     MPI_Send(&local_vals[0], local_vals.size(), MPI_FLOAT, loop_rank, 44, MPI_COMM_WORLD);
                 }
+#endif
             }
         }
     }
@@ -726,6 +729,7 @@ void seg_and_send_matrix_data(
         // Next, recieve 3 arrays that we've allocated space for on local proc
         MPI_Recv(recv_buf_global_row_coords, msg_length, MPI_INT, 0, 42, MPI_COMM_WORLD, &status_rows);
         MPI_Recv(recv_buf_col_coords, msg_length, MPI_INT, 0, 43, MPI_COMM_WORLD, &status_cols);
+#ifndef HAVE_HALF_MATH
         if (typeid(VT) == typeid(double))
         {
             MPI_Recv(recv_buf_vals, msg_length, MPI_DOUBLE, 0, 44, MPI_COMM_WORLD, &status_vals);
@@ -734,6 +738,7 @@ void seg_and_send_matrix_data(
         {
             MPI_Recv(recv_buf_vals, msg_length, MPI_FLOAT, 0, 44, MPI_COMM_WORLD, &status_vals);
         }
+#endif
         // TODO: Just how bad is this?... Are we copying array -> vector?
         std::vector<IT> global_rows_vec(recv_buf_global_row_coords, recv_buf_global_row_coords + msg_length);
         std::vector<IT> cols_vec(recv_buf_col_coords, recv_buf_col_coords + msg_length);

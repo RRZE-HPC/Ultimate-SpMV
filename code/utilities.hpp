@@ -60,6 +60,14 @@ struct max_rel_error<std::complex<double>>
 template<typename T>
 MPI_Datatype get_mpi_type() = delete;
 
+#ifdef HAVE_HALF_MATH
+// TODO
+template<>
+MPI_Datatype get_mpi_type<_Float16>() {
+  return MPI_BYTE;
+}
+#endif
+
 template<>
 MPI_Datatype get_mpi_type<float>() {
   return MPI_FLOAT;
@@ -1362,16 +1370,6 @@ void parse_cli_inputs(
     }
 #endif
 
-#ifdef USE_MPI
-    if (config->block_vec_size > 1 && *kernel_format == "scs"){
-        if(my_rank == 0){
-            fprintf(stderr, "ERROR: MPI parallel block SCS is not yet implemented.\n");
-            exit(1);
-        }
-    }
-#endif
-
-
 #ifndef USE_MKL
     if (config->mode == 's'){
         if(my_rank == 0){
@@ -1420,6 +1418,18 @@ void parse_cli_inputs(
             exit(1);
         }
     }
+#ifdef HAVE_HALF_MATH
+        // TODO!
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Half precision is not supported at the moment.\n");
+            exit(1);
+        }
+
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Half precision is not supported when using MPI at the moment.\n");
+            exit(1);
+        }
+#endif
 #endif
 
 #ifndef HAVE_HALF_MATH
@@ -1512,7 +1522,7 @@ void apply_permutation(
     for(int i = 0; i < num_elems_to_permute; ++i){
         permuted_vec[i] = vec_to_permute[perm[i]];
 #ifdef DEBUG_MODE_FINE
-        std::cout << "Permuting:" << vec_to_permute[i] <<  " to " << vec_to_permute[perm[i]] << std::endl;
+        std::cout << "Permuting:" << static_cast<double>(vec_to_permute[i]) <<  " to " << static_cast<double>(vec_to_permute[perm[i]]) << std::endl;
 #endif
     }
 }
@@ -2159,41 +2169,46 @@ public:
     int n_rows,
     int padding
     ){
+#ifdef HAVE_HALF_MATH
+        printf("Cannot cast into _Float16 at the moment.\n");
+        exit(1);
+#else
+        DefaultValues<VT, int> default_values;
 
-            DefaultValues<VT, int> default_values;
 
-            if (config->random_init_x == 'm'){
-                default_values.x = config->matrix_mean;
-            }
-
-            if (vec_type == 'x'){
-            init_std_vec_with_ptr_or_value(
-                config,
-                vec, 
-                vec.size(),
-                n_rows,
-                n_rows + padding,
-                default_values.x,
-                config->random_init_x);
-            }
-            else if (vec_type == 'y'){
-            init_std_vec_with_ptr_or_value(
-                config,
-                vec, 
-                vec.size(),
-                n_rows,
-                n_rows + padding,
-                default_values.y,
-                config->random_init_x);   
-            }
+        if (config->random_init_x == 'm'){
+            default_values.x = config->matrix_mean;
         }
-  
-  virtual VT& operator()(int i, int j) = 0;
 
-  int nr, nc;
-  int pad;
-  int nr_padded;
-  std::vector<VT> vec;
+        if (vec_type == 'x'){
+        init_std_vec_with_ptr_or_value(
+            config,
+            vec, 
+            vec.size(),
+            n_rows,
+            n_rows + padding,
+            default_values.x,
+            config->random_init_x);
+        }
+        else if (vec_type == 'y'){
+        init_std_vec_with_ptr_or_value(
+            config,
+            vec, 
+            vec.size(),
+            n_rows,
+            n_rows + padding,
+            default_values.y,
+            config->random_init_x);   
+        }
+#endif
+    }
+  
+    virtual VT& operator()(int i, int j) = 0;
+
+    int nr, nc;
+    int pad;
+    int nr_padded;
+    std::vector<VT> vec;
 };
 
 template<typename VT>
@@ -2636,7 +2651,11 @@ void partition_precisions(
                     ++dp_elem_ctr;
                 }
                 else{
-                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#ifdef HAVE_HALF_MATH
+                    printf("Cannot cast into _Float16 at the moment.\n");
+                    exit(1);
+                    // hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#endif
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++hp_elem_ctr;
@@ -2650,7 +2669,11 @@ void partition_precisions(
                     ++dp_elem_ctr;
                 }
                 else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold_1){
-                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#ifdef HAVE_HALF_MATH
+                    printf("Cannot cast into _Float16 at the moment.\n");
+                    exit(1);
+                    // hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#endif
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++hp_elem_ctr;
@@ -2685,7 +2708,11 @@ void partition_precisions(
                 }
                 else{
                     // else, place in sp_local_mtx 
-                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#ifdef HAVE_HALF_MATH
+        printf("Cannot cast into _Float16 at the moment.\n");
+        exit(1);
+                    // hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#endif
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++hp_elem_ctr;
@@ -2700,7 +2727,11 @@ void partition_precisions(
                 }
                 else if (std::abs(static_cast<double>(local_mtx->values[i])) < threshold_1){
                     // else, place in sp_local_mtx 
-                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#ifdef HAVE_HALF_MATH
+                    printf("Cannot cast into _Float16 at the moment.\n");
+                    exit(1);
+                    // hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#endif
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++hp_elem_ctr;
@@ -2748,7 +2779,11 @@ void partition_precisions(
                 else
                 {
                     // else, element is between 0 and lowest threshold
-                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#ifdef HAVE_HALF_MATH
+        printf("Cannot cast into _Float16 at the moment.\n");
+        exit(1);
+                    // hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#endif
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++hp_elem_ctr;
@@ -2775,7 +2810,11 @@ void partition_precisions(
                 else
                 {
                     // else, element is between 0 and lowest threshold
-                    hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#ifdef HAVE_HALF_MATH
+                    printf("Cannot cast into _Float16 at the moment.\n");
+                    exit(1);
+                    // hp_local_mtx->values.push_back(static_cast<_Float16>(local_mtx->values[i]));
+#endif
                     hp_local_mtx->I.push_back(local_mtx->I[i]);
                     hp_local_mtx->J.push_back(local_mtx->J[i]);
                     ++hp_elem_ctr;
@@ -3620,7 +3659,9 @@ void copy_data_to_ap_vectors(
         dp_local_x->vec[i] = static_cast<double>(local_x_vec[i]);
         sp_local_x->vec[i] = static_cast<float>(local_x_vec[i]);
 #ifdef HAVE_HALF_MATH
-        hp_local_x->vec[i] = static_cast<_Float16>(local_x_vec[i]);
+        // hp_local_x->vec[i] = static_cast<_Float16>(local_x_vec[i]);
+        printf("Cannot cast into _Float16 at the moment.\n");
+        exit(1);
 #endif
     }
 
