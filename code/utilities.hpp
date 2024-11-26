@@ -1419,14 +1419,21 @@ void parse_cli_inputs(
         }
     }
 #ifdef HAVE_HALF_MATH
-        // TODO!
-        if(my_rank == 0){
-            fprintf(stderr, "ERROR: Half precision is not supported at the moment.\n");
-            exit(1);
-        }
-
         if(my_rank == 0){
             fprintf(stderr, "ERROR: Half precision is not supported when using MPI at the moment.\n");
+            exit(1);
+        }
+#endif
+
+#ifdef MULTIVEC_MPI_MODE
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Multi-vector MPI communication not yet supported.\n");
+            exit(1);
+        }
+#endif
+#ifdef GRAPHTOPO_MPI_MODE
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Graph-based MPI communication not yet supported.\n");
             exit(1);
         }
 #endif

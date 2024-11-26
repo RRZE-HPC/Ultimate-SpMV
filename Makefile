@@ -1,9 +1,5 @@
 include config.mk
 
-# apply user-defined variables
-CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH) -DTHREADS_PER_BLOCK=$(THREADS_PER_BLOCK)
-
-
 # Validate Makefile options (sanity checks)
 ifneq ($(COMPILER),nvcc)
 GPGPU_ARCH = none
@@ -69,6 +65,7 @@ endif
   ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH
   endif
+  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 ifeq ($(COMPILER),icc)
@@ -81,6 +78,7 @@ ifeq ($(USE_MKL),1)
   CXXFLAGS += $(MKL)
 endif
   CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
+  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 ifeq ($(COMPILER),icx)
@@ -96,8 +94,9 @@ ifeq ($(USE_MKL),1)
 endif
   CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(GATHER_FIX) $(OPT_ARCH)
   ifeq ($(CPP_VERSION), c++23)
-  CXXFLAGS += -DHAVE_HALF_MATH 
+    CXXFLAGS += -DHAVE_HALF_MATH 
   endif
+  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 ifeq ($(COMPILER),llvm)
@@ -111,8 +110,9 @@ ifeq ($(USE_MKL),1)
 endif
   CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
   ifeq ($(CPP_VERSION), c++23)
-  CXXFLAGS += -DHAVE_HALF_MATH 
+    CXXFLAGS += -DHAVE_HALF_MATH 
   endif
+  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 ifeq ($(COMPILER),nvcc)
@@ -128,6 +128,7 @@ ifeq ($(USE_MKL),1)
 	MKL += -I${MKLROOT}/include -L${MKLROOT}/lib/intel64 -lmkl_intel_ilp64 -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl
 	CXXFLAGS += $(MKL)
 endif
+  CXXFLAGS += -DTHREADS_PER_BLOCK=$(THREADS_PER_BLOCK)
 endif
 
 ifeq ($(DEBUG_MODE),1)
@@ -180,6 +181,15 @@ endif
 
 ifeq ($(USE_MPI),1)
   CXXFLAGS  += -DUSE_MPI
+  ifeq ($(MPI_MODE),singlevec)
+  CXXFLAGS  += -DSINGLEVEC_MPI_MODE
+  endif
+  ifeq ($(MPI_MODE),multivec)
+  CXXFLAGS  += -DMULTIVEC_MPI_MODE
+  endif
+  ifeq ($(MPI_MODE),graphtopo)
+  CXXFLAGS  += -DGRAPHTOPO_MPI_MODE
+  endif
 else
   MPICXX = $(CXX)
 endif
