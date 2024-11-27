@@ -4,8 +4,8 @@ COMPILER = gcc
 SIMD_LENGTH = 4
 # [colwise, rowwise] (If using single vector SpMV, select "colwise")
 BLOCK_VECTOR_LAYOUT = colwise
-# [none, singlevec, multivec, graphtopo]
-MPI_MODE = singlevec
+# [none, singlevec, multivec, bulkvec, graphtopo]
+MPI_MODE = none
 # [1/0]
 DEBUG_MODE = 0
 # [1/0]

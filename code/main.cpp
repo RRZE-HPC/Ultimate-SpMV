@@ -25,7 +25,6 @@
 #include <omp.h>
 #endif
 
-
 /**
     @brief Perform spmv kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
@@ -104,22 +103,61 @@ void bench_spmv(
     CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
 
 #ifdef USE_MPI
-    // Allocate a send buffer for each process we're sending a message to
-    int nz_comms = local_context->non_zero_receivers.size();
-    int nz_recver;
-
-    VT *to_send_elems[nz_comms];
-    for(int i = 0; i < nz_comms; ++i){
-        nz_recver = local_context->non_zero_receivers[i];
-        to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size()];
-    }
-
     int nzr_size = local_context->non_zero_receivers.size();
     int nzs_size = local_context->non_zero_senders.size();
 
+    // Allocate a send buffer for each process we're sending a message to
+    int to_send_count;
+#ifdef SINGLEVEC_MPI_MODE
+    to_send_count = nzr_size;
+#endif
+#ifdef MULTIVEC_MPI_MODE
+    to_send_count = nzr_size * config->block_vec_size;
+#endif
+#ifdef BULKVEC_MPI_MODE
+    to_send_count = nzr_size;
+#endif
+
+    VT *to_send_elems[to_send_count];
+    
+#ifdef SINGLEVEC_MPI_MODE
+        for(int i = 0; i < nzr_size; ++i){
+            int nz_recver = local_context->non_zero_receivers[i];
+            to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size()];
+        }
+#endif
+#ifdef MULTIVEC_MPI_MODE
+    // With multivec mode, we need to replicate the to_send buffers for each vector
+    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+        for(int i = 0; i < nzr_size; ++i){
+            int nz_recver = local_context->non_zero_receivers[i];
+            to_send_elems[i + vec_idx * nzr_size] = new VT[local_context->comm_send_idxs[nz_recver].size()];
+        }
+    }
+#endif
+#ifdef BULKVEC_MPI_MODE
+        for(int i = 0; i < nzr_size; ++i){
+            int nz_recver = local_context->non_zero_receivers[i];
+            to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size() * config->block_vec_size];
+        }
+#endif
     // Delare MPI requests for non-blocking communication
-    MPI_Request *recv_requests = new MPI_Request[local_context->non_zero_senders.size()];
-    MPI_Request *send_requests = new MPI_Request[local_context->non_zero_receivers.size()];
+    int recv_request_buf_size = 0;
+    int send_request_buf_size = 0;
+#ifdef SINGLEVEC_MPI_MODE
+    recv_request_buf_size = nzs_size;
+    send_request_buf_size = nzr_size;
+#endif
+#ifdef MULTIVEC_MPI_MODE
+    recv_request_buf_size = nzs_size * config->block_vec_size;
+    send_request_buf_size = nzr_size * config->block_vec_size;
+#endif
+#ifdef BULKVEC_MPI_MODE_MPI_MODE
+    recv_request_buf_size = nzs_size;
+    send_request_buf_size = nzr_size;
+#endif
+    MPI_Request *recv_requests = new MPI_Request[recv_request_buf_size];
+    MPI_Request *send_requests = new MPI_Request[send_request_buf_size];
 #endif
 
 #ifdef __CUDACC__
@@ -334,10 +372,8 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
         for(int k = 0; k < WARM_UP_REPS; ++k){
 #ifdef USE_MPI
-            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                spmv_kernel.init_offset_halo_exchange(vec_idx);
-                spmv_kernel.finalize_offset_halo_exchange();
-            }
+            begin_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
+            finish_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
 #endif
             spmv_kernel.execute(warmup_flag);
 
@@ -392,13 +428,9 @@ assign_spmv_kernel_gpu_data<VT>(
                 MPI_Barrier(MPI_COMM_WORLD);
                 begin_bench_loop_time = MPI_Wtime();
                 for(int k=0; k<n_iter; ++k) {
-                    // TODO: This solution for communicating block vectors isn't the best, but it works
-                    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                        spmv_kernel.init_offset_halo_exchange(vec_idx);
-                        spmv_kernel.finalize_offset_halo_exchange();
-                    }
+                    begin_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
+                    finish_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
                     spmv_kernel.execute(warmup_flag);
-                    spmv_kernel.swap_local_vectors();
                     if(config->ba_synch)
                         MPI_Barrier(MPI_COMM_WORLD);
                 }
@@ -472,7 +504,7 @@ assign_spmv_kernel_gpu_data<VT>(
         for (int i = 0; i < config->n_repetitions; ++i)
         {
 #ifdef DEBUG_MODE_FINE
-            int test_rank = 2;
+            int test_rank = 1;
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -509,10 +541,10 @@ assign_spmv_kernel_gpu_data<VT>(
 
             // NOTE: In the current implementation, we reuse tags, send buffers, and MPI requests each loop iteration. 
             // NOTE: This may be risky at high process counts?
-            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                spmv_kernel.init_offset_halo_exchange(vec_idx);
-                spmv_kernel.finalize_offset_halo_exchange();
-            }
+#ifdef USE_MPI
+            begin_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
+            finish_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
+#endif
             
 #ifdef DEBUG_MODE_FINE
 #ifdef USE_MPI
@@ -643,12 +675,19 @@ assign_spmv_kernel_gpu_data<VT>(
 
     // Delete the allocated space for each other process send buffers
 #ifdef USE_MPI
-    for(int i = 0; i < nz_comms; ++i){
+    for(int i = 0; i < to_send_count; ++i){
         delete[] to_send_elems[i];
     }
+#ifndef BULKVEC_MPI_MODE
     for(int i = 0; i < local_context->non_zero_senders.size(); ++i){
         MPI_Type_free(&local_context->strided_recv_types[i]);
     }
+#else
+    for(int i = 0; i < local_context->non_zero_senders.size(); ++i){
+        MPI_Type_free(&local_context->bulk_recv_types[i]);
+    }
+#endif
+
 #endif
 
     double mem_matrix_b =
@@ -896,7 +935,7 @@ void gather_results(
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
-            int test_rank = 2;
+            int test_rank = 1;
             if(my_rank == test_rank){
                 printf("Gathering results: rank %i local_x_mkl_copy = [\n", my_rank);
                 // TODO: Integrate ROWWISE
@@ -1203,6 +1242,7 @@ void init_local_structs(
     std::vector<IT> recv_counts_cumsum(comm_size + 1, 0);
     std::vector<IT> send_counts_cumsum(comm_size + 1, 0);
     std::vector<MPI_Datatype> strided_recv_types;
+    std::vector<MPI_Datatype> bulk_recv_types;
 
     // Main routine for collecting all sending and receiving information!
     collect_comm_info<VT, IT>(
@@ -1218,6 +1258,7 @@ void init_local_structs(
         &recv_counts_cumsum,
         &send_counts_cumsum,
         &strided_recv_types,
+        &bulk_recv_types,
         my_rank,
         comm_size
     );
@@ -1234,6 +1275,7 @@ void init_local_structs(
     local_context->send_counts_cumsum = send_counts_cumsum;
     local_context->num_local_rows = work_sharing_arr[my_rank + 1] - work_sharing_arr[my_rank];
     local_context->strided_recv_types = strided_recv_types;
+    local_context->bulk_recv_types = bulk_recv_types;
 #else
     local_context->num_local_rows = local_scs->n_rows;
 #endif
@@ -1380,7 +1422,7 @@ void compute_result(
 #ifdef USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
-    int test_rank = 2;
+    int test_rank = 1;
     if(my_rank == test_rank){
         // check vectors are "padded" correctly
         printf("local_x (size %i)= [\n", local_x.vec.size());

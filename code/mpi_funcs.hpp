@@ -12,8 +12,59 @@
 #include <unistd.h>
 #include <set>
 
-
 #ifdef USE_MPI
+template <typename VT, typename IT>
+void begin_communicate_halo_elements(
+    Config *config,
+    SpmvKernel<VT, IT> *spmv_kernel
+){
+/*
+In single vector mode, we initialize and finalize the send and receive routines
+one after the other
+*/
+#ifdef SINGLEVEC_MPI_MODE
+    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+        spmv_kernel->init_halo_exchange(vec_idx);
+        spmv_kernel->finalize_halo_exchange();
+    }
+#endif
+
+/*
+In multi vector mode, we initialize all send and receive routines
+*/
+#ifdef MULTIVEC_MPI_MODE
+    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+        spmv_kernel->init_halo_exchange(vec_idx);
+    }
+#endif
+
+#ifdef BULKVEC_MPI_MODE
+    /*
+    In bulk vector mode, we need only initialize a single set of send and recvs
+    */
+        spmv_kernel->init_halo_exchange();
+#endif
+}
+
+template <typename VT, typename IT>
+void finish_communicate_halo_elements(
+    Config *config,
+    SpmvKernel<VT, IT> *spmv_kernel
+){
+#ifdef MULTIVEC_MPI_MODE
+/*
+We finalize all recv call at once if using multi vector mode.
+*/
+    spmv_kernel->finalize_halo_exchange(config->block_vec_size);
+#endif
+#ifdef BULKVEC_MPI_MODE
+// /*
+// We finalize all recv call at once if using multi vector mode.
+// */
+    spmv_kernel->finalize_halo_exchange();
+#endif
+}
+
 /**
     @brief Generate unique tags for communication, based on the cantor pairing function. 
     @param *send_tags : tags used in the main communication loop for Isend
@@ -24,14 +75,36 @@ void gen_unique_comm_tags(
     std::vector<std::vector<IT>> *send_tags,
     std::vector<std::vector<IT>> *recv_tags,
     int my_rank,
-    int comm_size)
+    int comm_size,
+    int block_size)
 {
+    // If we're using multivec mode, then we need one set of unique send and recv pairs per vector
+#ifdef SINGLEVEC_MPI_MODE
     for(int i = 0; i < comm_size; ++i){
         for(int j = 0; j < comm_size; ++j){
             (*send_tags)[j].push_back(cantor_pairing(j, i)); // TODO: seems too large
             (*recv_tags)[i].push_back(cantor_pairing(i, j)); // this size seems right
         }
     }
+#endif
+#ifdef MULTIVEC_MPI_MODE
+    for(int vec_idx = 0; vec_idx < block_size; ++vec_idx){
+        for(int i = 0; i < comm_size; ++i){
+            for(int j = 0; j < comm_size; ++j){
+                (*send_tags)[j].push_back(cantor_pairing(j + vec_idx * comm_size, i + vec_idx * comm_size)); // TODO: seems too large
+                (*recv_tags)[i].push_back(cantor_pairing(i + vec_idx * comm_size, j + vec_idx * comm_size)); // this size seems right
+            }
+        }
+    }
+#endif
+#ifdef BULKVEC_MPI_MODE
+    for(int i = 0; i < comm_size; ++i){
+        for(int j = 0; j < comm_size; ++j){
+            (*send_tags)[j].push_back(cantor_pairing(j, i)); // TODO: seems too large
+            (*recv_tags)[i].push_back(cantor_pairing(i, j)); // this size seems right
+        }
+    }
+#endif
 }
 
 
@@ -778,11 +851,12 @@ void localize_row_idx(
     local_mtx->I = local_row_coords;
 }
 
-void defineRecvType(
-    MPI_Datatype *strided_recv_type,
-    MPI_Datatype MPI_ELEM_TYPE, 
+void define_concat_recv_type(
+    MPI_Datatype *MPI_STRIDED_RECV_TYPE,
+    MPI_Datatype MPI_STRIDED_RECV_SUBTYPE, 
     int count, 
-    int stride
+    int stride,
+    int length = 1
 )
     // int offset, 
     // int vec_length, 
@@ -798,8 +872,47 @@ void defineRecvType(
     printf("Committing stride-%i MPI_DATATYPE for %i elements.\n", stride, count);
 #endif
 
-    MPI_Type_vector(count, 1, stride, MPI_ELEM_TYPE, strided_recv_type);
-    MPI_Type_commit(strided_recv_type);
+    MPI_Aint displacements[count];
+    displacements[0] = 0;
+    for(int vec_idx = 1; vec_idx < count; ++vec_idx){
+        displacements[vec_idx] = stride * vec_idx;
+    }
+    MPI_Datatype types[count];
+    for(int i = 0; i < count; ++i)
+        types[i] = MPI_STRIDED_RECV_SUBTYPE;
+        
+    int block_lengths[count];
+    for(int i = 0; i < count; ++i)
+        block_lengths[i] = length;
+
+    MPI_Type_create_struct(count, block_lengths, displacements, types, MPI_STRIDED_RECV_TYPE);
+    MPI_Type_commit(MPI_STRIDED_RECV_TYPE);
+}
+
+
+void define_recv_type(
+    MPI_Datatype *MPI_STRIDED_RECV_TYPE,
+    MPI_Datatype MPI_ELEM_TYPE, 
+    int count,
+    int stride,
+    int length = 1
+)
+    // int offset, 
+    // int vec_length, 
+    // int blocksize, 
+    // int num_blocks) 
+{    
+    // int arr_sizes[2] = { blocksize * vec_length, num_blocks };
+    // int arr_subsizes[2] = { blocksize * elems_per_vec, num_blocks };
+    // int arr_starts[2] = { blocksize * offset, 0 };
+    // MPI_Type_create_subarray(2, arr_sizes, arr_subsizes, arr_starts, MPI_ORDER_FORTRAN, eltype, pnewtype);
+    // MPI_Type_commit(pnewtype);
+#ifdef DEBUG_MODE_FINE
+    printf("Committing stride-%i MPI_DATATYPE for %i elements.\n", stride, count);
+#endif
+
+    MPI_Type_vector(count, length, stride, MPI_ELEM_TYPE, MPI_STRIDED_RECV_TYPE);
+    MPI_Type_commit(MPI_STRIDED_RECV_TYPE);
 }
 
 template <typename VT, typename IT>
@@ -839,15 +952,85 @@ void gen_strided_recv_types(
     //     defineSendType(&send_types[to_proc_idx], eltype, blocktype, vec_length, blocksize, num_blocks);
     //     MPI_Type_free(&blocktype);
     //   }
-
+#ifdef SINGLEVEC_MPI_MODE
     strided_recv_types->resize(nzs_size); // <- needed
     for(int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx) {
         int sending_proc = (*non_zero_senders)[from_proc_idx];
-        // int offset = local_context->num_local_rows + local_context->recv_counts_cumsum[sending_proc];
         int count = (*recv_counts_cumsum)[sending_proc + 1] - (*recv_counts_cumsum)[sending_proc];
-        // defineRecvType(&strided_recv_types[from_proc_idx], MPI_ELEM_TYPE, count, offset, vec_length, blocksize, num_blocks);
-        defineRecvType(&(*strided_recv_types)[from_proc_idx], MPI_ELEM_TYPE, count, block_size);
+        define_recv_type(&(*strided_recv_types)[from_proc_idx], MPI_ELEM_TYPE, count, block_size);
     }
+#endif
+#ifdef MULTIVEC_MPI_MODE
+    strided_recv_types->resize(nzs_size * block_size); // <- needed
+    for(int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx) { // Try this with permuted loops
+        for(int vec_idx = 0; vec_idx < block_size; ++vec_idx){
+            int sending_proc = (*non_zero_senders)[from_proc_idx];
+            int count = (*recv_counts_cumsum)[sending_proc + 1] - (*recv_counts_cumsum)[sending_proc];
+            define_recv_type(&(*strided_recv_types)[from_proc_idx + vec_idx * nzs_size], MPI_ELEM_TYPE, count, block_size);
+        }
+    }
+#endif
+}
+
+
+    // gen_bulk_recv_types<VT, IT>(..., config->block_vec_size, local_scs->n_rows, per_vector_padding);
+
+template <typename VT, typename IT>
+void gen_bulk_recv_types(
+    std::vector<MPI_Datatype> *bulk_recv_types,
+    std::vector<MPI_Datatype> *strided_recv_subtypes,
+    std::vector<IT> *non_zero_senders,
+    std::vector<IT> *recv_counts_cumsum,
+    // int vec_length, <- do I need this?
+    // int num_vecs,  <- do I need this?
+    int block_size,
+    // ScsData<VT,IT> *local_scs, 
+    // ContextData<IT> *local_context
+    int num_local_rows,
+    int per_vector_padding
+){
+    // TODO: bring everything related to SCS back in
+    MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
+
+    // int nzr_size = local_context->non_zero_receivers.size();
+    int nzs_size = non_zero_senders->size();
+
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+    bulk_recv_types->resize(nzs_size); // <- needed
+    for(int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx) {
+        int sending_proc = (*non_zero_senders)[from_proc_idx];
+        int length = (*recv_counts_cumsum)[sending_proc + 1] - (*recv_counts_cumsum)[sending_proc];
+        int block_stride = num_local_rows + per_vector_padding;
+
+        define_recv_type(
+            &(*bulk_recv_types)[from_proc_idx], 
+            MPI_ELEM_TYPE, 
+            block_size,
+            block_stride,
+            length
+        );
+    }
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    // // Here, we just copy the strided multivec approach, but concatenate subtypes into a bulk type
+    bulk_recv_types->resize(nzs_size); // <- needed
+    strided_recv_subtypes->resize(nzs_size);
+    for(int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx) {
+        int sending_proc = (*non_zero_senders)[from_proc_idx];
+        int count = (*recv_counts_cumsum)[sending_proc + 1] - (*recv_counts_cumsum)[sending_proc];
+        define_recv_type(&(*strided_recv_subtypes)[from_proc_idx], MPI_ELEM_TYPE, count, block_size);
+        // ^ Just used as a template for the concatenated structs
+
+        int block_stride = 8; // <- byte offset, template! 
+
+        define_concat_recv_type(
+            &(*bulk_recv_types)[from_proc_idx], 
+            (*strided_recv_subtypes)[from_proc_idx], 
+            block_size, 
+            block_stride
+        );
+    }
+#endif
 }
 
 template <typename VT, typename IT>
@@ -864,6 +1047,7 @@ void collect_comm_info(
     std::vector<IT> *recv_counts_cumsum,
     std::vector<IT> *send_counts_cumsum,
     std::vector<MPI_Datatype> *strided_recv_types,
+    std::vector<MPI_Datatype> *bulk_recv_types,
     int my_rank,
     int comm_size
 ){
@@ -903,9 +1087,15 @@ void collect_comm_info(
         recv_tags->push_back(std::vector<IT>());
     }
 
-    gen_unique_comm_tags<VT, IT>(send_tags, recv_tags, my_rank, comm_size);
-    
+    gen_unique_comm_tags<VT, IT>(send_tags, recv_tags, my_rank, comm_size, config->block_vec_size);
+
+#ifndef BULKVEC_MPI_MODE
     gen_strided_recv_types<VT, IT>(strided_recv_types, non_zero_senders, recv_counts_cumsum, config->block_vec_size);
+#else
+    int scs_padding = (IT)(local_scs->n_rows_padded - local_scs->n_rows);
+    int per_vector_padding = std::max(scs_padding, recv_counts_cumsum->back());
+    gen_bulk_recv_types<VT, IT>(bulk_recv_types, strided_recv_types, non_zero_senders, recv_counts_cumsum, config->block_vec_size, local_scs->n_rows, per_vector_padding);
+#endif
 }
 #endif
 

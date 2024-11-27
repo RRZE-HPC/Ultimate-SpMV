@@ -155,6 +155,7 @@ struct ContextData
     // NOTE: For receiving messages into a strided buffer for rowwise block vectors
 #ifdef USE_MPI
     std::vector<MPI_Datatype> strided_recv_types;
+    std::vector<MPI_Datatype> bulk_recv_types;
 #endif
 
     IT num_local_rows;
@@ -433,7 +434,6 @@ class SpmvKernel {
 #ifdef __CUDACC__
                         one_prec_kernel_func_ptr = spmv_gpu_csr_launcher<VT, IT>;
 #else
-                        if(my_rank == 0){printf("CRS SpMV kernel selected\n");}
                         one_prec_kernel_func_ptr = spmv_omp_csr<VT, IT>;
 #endif
                     }
@@ -660,66 +660,7 @@ class SpmvKernel {
             }
         }
 
-        inline void init_halo_exchange(void){
-#ifdef USE_MPI
-            int outgoing_buf_size, incoming_buf_size;
-            int receiving_proc, sending_proc;
-
-            // First, post receives
-            for (int from_proc_idx = 0; from_proc_idx < nzs_size; ++from_proc_idx)
-            {
-                sending_proc = local_context->non_zero_senders[from_proc_idx];
-                incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
-#ifdef DEBUG_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-#endif
-                MPI_Irecv(
-                    &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc]],
-                    incoming_buf_size,
-                    this->MPI_ELEM_TYPE,
-                    sending_proc,
-                    (local_context->recv_tags[sending_proc])[my_rank],
-                    MPI_COMM_WORLD,
-                    &recv_requests[from_proc_idx]
-                );
-            }
-
-            // Second, fulfill those with sends
-            for (int to_proc_idx = 0; to_proc_idx < nzr_size; ++to_proc_idx)
-            {
-                receiving_proc = local_context->non_zero_receivers[to_proc_idx];
-                outgoing_buf_size = local_context->send_counts_cumsum[receiving_proc + 1] - local_context->send_counts_cumsum[receiving_proc];
-
-#ifdef DEBUG_MODE
-                if(local_context->comm_send_idxs[receiving_proc].size() != outgoing_buf_size){
-                    std::cout << "init_halo_exchange ERROR: Mismatched buffer lengths in communication" << std::endl;
-                    exit(1);
-                }
-#endif
-
-                // Move non-contiguous data to a contiguous buffer for communication
-                #pragma omp parallel for if(config->par_pack)   
-                for(int i = 0; i < outgoing_buf_size; ++i)
-                    (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
-                
-#ifdef DEBUG_MODE
-                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
-#endif
-                MPI_Isend(
-                    &(to_send_elems[to_proc_idx])[0],
-                    outgoing_buf_size,
-                    this->MPI_ELEM_TYPE,
-                    receiving_proc,
-                    (local_context->send_tags[my_rank])[receiving_proc],
-                    MPI_COMM_WORLD,
-                    &send_requests[to_proc_idx]
-                );
-            }
-#endif
-        }
-
-        // TODO: integrate with above function
-        inline void init_offset_halo_exchange(int vec_idx){
+        inline void init_halo_exchange(int vec_idx = 0){
 #ifdef USE_MPI
             int outgoing_buf_size, incoming_buf_size;
             int receiving_proc, sending_proc;
@@ -732,17 +673,34 @@ class SpmvKernel {
             {
                 sending_proc = local_context->non_zero_senders[from_proc_idx];
                 incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
+
 #ifdef DEBUG_MODE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+#ifdef SINGLEVEC_MPI_MODE
                 std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
 #endif
+#ifdef MULTIVEC_MPI_MODE
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[my_rank + vec_idx * nzs_size] << std::endl;
+#endif
+#ifdef BULKVEC_MPI_MODE
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+#endif
+#endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+#ifdef SINGLEVEC_MPI_MODE
                 std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-
+#endif
+#ifdef MULTIVEC_MPI_MODE
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx + vec_idx * nzs_size] << std::endl;
+#endif
+#ifdef BULKVEC_MPI_MODE
+                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+#endif
 #endif
 #endif
 
                 MPI_Irecv(
+#ifdef SINGLEVEC_MPI_MODE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                     &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset],
                     incoming_buf_size,
@@ -757,6 +715,39 @@ class SpmvKernel {
                     (local_context->recv_tags[sending_proc])[my_rank],
                     MPI_COMM_WORLD,
                     &recv_requests[from_proc_idx]
+#endif
+#ifdef MULTIVEC_MPI_MODE
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                    &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset],
+                    incoming_buf_size,
+                    this->MPI_ELEM_TYPE,
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                    &(local_x)[(config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] * config->block_vec_size + vec_idx],
+                    incoming_buf_size,
+                    local_context->strided_recv_types[from_proc_idx + vec_idx * nzs_size],
+#endif
+                    sending_proc,
+                    (local_context->recv_tags[sending_proc])[my_rank + vec_idx * comm_size],
+                    MPI_COMM_WORLD,
+                    &recv_requests[from_proc_idx + vec_idx * nzs_size]
+#endif
+#ifdef BULKVEC_MPI_MODE
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                    &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc]],
+                    incoming_buf_size * config->block_vec_size,
+                    local_context->bulk_recv_types[from_proc_idx],
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                    &(local_x)[(config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] * config->block_vec_size],
+                    incoming_buf_size * config->block_vec_size,
+                    local_context->bulk_recv_types[from_proc_idx],
+#endif
+                    sending_proc,
+                    (local_context->recv_tags[sending_proc])[my_rank],
+                    MPI_COMM_WORLD,
+                    &recv_requests[from_proc_idx]
+#endif
                 );
             }
 
@@ -773,23 +764,67 @@ class SpmvKernel {
                 }
 #endif
 
+#ifndef BULKVEC_MPI_MODE
                 // Move non-contiguous data to a contiguous buffer for communication
                 #pragma omp parallel for if(config->par_pack)   
                 for(int i = 0; i < outgoing_buf_size; ++i){
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+#ifdef SINGLEVEC_MPI_MODE
                     (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
-                    // NOTE: Ignoring perm for now, since only focusing on CSR format
-                    // (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]]];
+#endif
+#ifdef MULTIVEC_MPI_MODE
+                    (to_send_elems[to_proc_idx + vec_idx * nzr_size])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
+#endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+#ifdef SINGLEVEC_MPI_MODE
                     (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
 #endif
-                }
-                
-#ifdef DEBUG_MODE
-                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message with send request: " << &send_requests[to_proc_idx] << std::endl;
+#ifdef MULTIVEC_MPI_MODE
+                    (to_send_elems[to_proc_idx + vec_idx * nzr_size])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
 #endif
+#endif
+                }
+#else
+                // Need to pack differently if in bulk vector mode
+                // NOTE: could combine with above, if you guard outer loop...
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                // NOTE: Could probably benefit from a `collapse` clause, and parallelize out here
+                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                    #pragma omp parallel for if(config->par_pack)   
+                    for(int i = 0; i < outgoing_buf_size; ++i){
+                        int block_offset = vec_idx * (num_local_rows + per_vector_padding);
+                        (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
+                    }
+                }
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                // NOTE: Could probably benefit from a `collapse` clause, and parallelize out here
+                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                    #pragma omp parallel for if(config->par_pack)   
+                    for(int i = 0; i < outgoing_buf_size; ++i){
+                        (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
+                        printf("Packing: %f\n", (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx]);
+                    }
+                }
+#endif
+#endif
+
+#ifdef DEBUG_MODE
+#ifdef SINGLEVEC_MPI_MODE          
+                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message send request: " << &send_requests[to_proc_idx] << std::endl;
+#endif
+#ifdef MULTIVEC_MPI_MODE          
+                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message send request: " << &send_requests[receiving_proc + vec_idx * nzr_size] << std::endl;
+#endif
+#ifdef BULKVEC_MPI_MODE          
+                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size * config->block_vec_size << " elements with a message send request: " << &send_requests[receiving_proc] << std::endl;
+#endif
+#endif
+
+
                 MPI_Isend(
+#ifdef SINGLEVEC_MPI_MODE
                     &(to_send_elems[to_proc_idx])[0],
                     outgoing_buf_size,
                     this->MPI_ELEM_TYPE,
@@ -797,22 +832,44 @@ class SpmvKernel {
                     (local_context->send_tags[my_rank])[receiving_proc],
                     MPI_COMM_WORLD,
                     &send_requests[to_proc_idx]
+#endif
+#ifdef MULTIVEC_MPI_MODE
+                    &(to_send_elems[to_proc_idx + vec_idx * nzr_size])[0],
+                    outgoing_buf_size,
+                    this->MPI_ELEM_TYPE,
+                    receiving_proc,
+                    (local_context->send_tags[my_rank])[receiving_proc + vec_idx * comm_size],
+                    MPI_COMM_WORLD,
+                    &send_requests[to_proc_idx + vec_idx * nzr_size]
+#endif
+#ifdef BULKVEC_MPI_MODE
+                    &(to_send_elems[to_proc_idx])[0],
+                    outgoing_buf_size * config->block_vec_size,
+                    this->MPI_ELEM_TYPE,
+                    receiving_proc,
+                    (local_context->send_tags[my_rank])[receiving_proc],
+                    MPI_COMM_WORLD,
+                    &send_requests[to_proc_idx]
+#endif
                 );
             }
 #endif
         }
 
-        inline void finalize_halo_exchange(void){
+        inline void finalize_halo_exchange(int block_size = 1){
 #ifdef USE_MPI
+#ifdef SINGLEVEC_MPI_MODE
             MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
 #endif
-        }
-
-        inline void finalize_offset_halo_exchange(void){
-#ifdef USE_MPI
+#ifdef MULTIVEC_MPI_MODE
+            MPI_Waitall(nzr_size * block_size, send_requests, MPI_STATUS_IGNORE);
+            MPI_Waitall(nzs_size * block_size, recv_requests, MPI_STATUS_IGNORE);
+#endif
+#ifdef BULKVEC_MPI_MODE
             MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
+#endif
 #endif
         }
 

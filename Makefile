@@ -187,6 +187,9 @@ ifeq ($(USE_MPI),1)
   ifeq ($(MPI_MODE),multivec)
   CXXFLAGS  += -DMULTIVEC_MPI_MODE
   endif
+  ifeq ($(MPI_MODE),bulkvec)
+  CXXFLAGS  += -DBULKVEC_MPI_MODE
+  endif
   ifeq ($(MPI_MODE),graphtopo)
   CXXFLAGS  += -DGRAPHTOPO_MPI_MODE
   endif
