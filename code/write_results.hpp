@@ -397,7 +397,9 @@ void validate_result(
 #ifdef HAVE_HALF_MATH
     Result<_Float16, int> *r_hp,
 #endif
-    std::vector<double> *mkl_result
+    std::vector<double> *mkl_result,
+    int *metis_perm = nullptr,
+    int *metis_inv_perm = nullptr
 ){    
 #ifdef __CUDACC__
     long num_rows = total_mtx->n_rows;
@@ -439,6 +441,11 @@ void validate_result(
 #endif
     }
 
+    if(config->seg_method == "seg-metis"){
+        for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+            apply_permutation<double, int>(&(mkl_result_permuted[vec_idx * num_rows]), &((*mkl_result)[vec_idx * num_rows]), metis_inv_perm, (int)num_rows);
+        }
+    }
 
     for (int i = 0; i < num_rows * config->block_vec_size; i++) {
         y[i] = 0.0;
@@ -454,7 +461,7 @@ void validate_result(
         'C'}; // zero-based indexing (C-style)
 
     for(int i = 0; i < config->n_repetitions; ++i){
-        for(int j = 0; j < config->block_vec_size; ++j){
+        for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
         // Computes y := alpha*A*x + beta*y, for A -> m * k, 
         // mkl_dcsrmv(transa, m, k, alpha, matdescra, val, indx, pntrb, pntre, x, beta, y)
         
@@ -462,11 +469,21 @@ void validate_result(
             // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
             spmv_omp_csr<double, int>(&chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_result)[0], &y[0]);
 #else
-            mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &((*mkl_result)[num_rows * j]), &beta, &(y[num_rows * j]));
+            if(config->seg_method == "seg-metis"){
+                mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(mkl_result_permuted[num_rows * vec_idx]), &beta, &(y[num_rows * vec_idx]));
+            }
+            else{
+                mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &((*mkl_result)[num_rows * vec_idx]), &beta, &(y[num_rows * vec_idx]));
+            }
 #endif
         }
-
-        std::swap(*mkl_result, y);
+        if(config->seg_method == "seg-metis"){
+            std::swap(mkl_result_permuted, y);
+            std::swap(*mkl_result, mkl_result_permuted);
+        }
+        else{
+            std::swap(*mkl_result, y);
+        }
     }
 
     delete scs;

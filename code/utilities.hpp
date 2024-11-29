@@ -2255,34 +2255,42 @@ public:
 
 template <typename VT, typename IT>
 void extract_matrix_min_mean_max( 
-    MtxData<VT, IT> *local_mtx,
-    Config *config
+    MtxData<VT, IT> *total_mtx,
+    Config *config,
+    int my_rank
 ){
+    if(my_rank == 0){
     // Get max
-    double max_val = 0;
+        double max_val = 0;
 
-    #pragma omp parallel for reduction(max:max_val) 
-    for (int idx = 0; idx < local_mtx->nnz; idx++)
-       max_val = max_val > fabs(static_cast<double>(local_mtx->values[idx])) ? max_val : fabs(static_cast<double>(local_mtx->values[idx]));
+        #pragma omp parallel for reduction(max:max_val) 
+        for (int idx = 0; idx < total_mtx->nnz; idx++)
+        max_val = max_val > fabs(static_cast<double>(total_mtx->values[idx])) ? max_val : fabs(static_cast<double>(total_mtx->values[idx]));
 
-    //    max_val = max_val > fabs(local_mtx->values[idx]) ? max_val : fabs(local_mtx->values[idx]);
+        //    max_val = max_val > fabs(total_mtx->values[idx]) ? max_val : fabs(total_mtx->values[idx]);
 
-    // Get min
-    double min_val = DBL_MAX;
+        // Get min
+        double min_val = DBL_MAX;
 
-    #pragma omp parallel for reduction(min:min_val) 
-    for (int idx = 0; idx < local_mtx->nnz; idx++)
-       min_val = min_val < fabs(static_cast<double>(local_mtx->values[idx])) ? min_val : fabs(static_cast<double>(local_mtx->values[idx]));
+        #pragma omp parallel for reduction(min:min_val) 
+        for (int idx = 0; idx < total_mtx->nnz; idx++)
+        min_val = min_val < fabs(static_cast<double>(total_mtx->values[idx])) ? min_val : fabs(static_cast<double>(total_mtx->values[idx]));
 
-    // Take average and save max and min
-    config->matrix_mean = min_val + ((max_val - min_val) / 2.0);
-    config->matrix_max = max_val;
-    config->matrix_min = min_val;
+        // Take average and save max and min
+        config->matrix_mean = min_val + ((max_val - min_val) / 2.0);
+        config->matrix_max = max_val;
+        config->matrix_min = min_val;
 
-#ifdef DEBUG_MODE
-    printf("matrix_min = %f\n", config->matrix_min);
-    printf("matrix_mean = %f\n", config->matrix_mean);
-    printf("matrix_max = %f\n", config->matrix_max);
+    #ifdef DEBUG_MODE
+        printf("matrix_min = %f\n", config->matrix_min);
+        printf("matrix_mean = %f\n", config->matrix_mean);
+        printf("matrix_max = %f\n", config->matrix_max);
+#endif
+    }
+#ifdef USE_MPI
+    MPI_Bcast(&(config->matrix_min), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&(config->matrix_mean), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&(config->matrix_max), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 #endif
 };
 

@@ -810,7 +810,8 @@ void gather_results(
     std::vector<VT> *local_x_mkl_copy,
     std::vector<VT> *local_y,
     int my_rank,
-    int comm_size
+    int comm_size,
+    int *metis_inv_perm
 ){
 
     IT num_local_rows = local_context->num_local_rows;
@@ -988,11 +989,49 @@ void gather_results(
             // If we're verifying results, assign total vectors to Result object
             // NOTE: Garbage values for all but root process
             r->total_x = total_x;
-            r->total_uspmv_result = total_uspmv_result;
+            r->total_uspmv_result.resize(total_uspmv_result.size());
 #else
+
             r->total_x = *local_x_mkl_copy;
-            r->total_uspmv_result = r->y_out;
+            r->total_uspmv_result.resize(r->y_out.size());
 #endif
+            if(config->seg_method == "seg-metis"){
+        #ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){
+                printf("total result before perm back: [");
+                for(int i = 0; i < r->total_uspmv_result.size(); ++i){
+                    printf("%f, ", r->total_uspmv_result[i]);
+                }
+                printf("]\n");
+                
+            }
+        #endif
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                if(my_rank == 0){
+        #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                    apply_permutation(&(r->total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), &(total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), metis_inv_perm, local_context->total_n_rows);
+
+        #endif
+        #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                    apply_strided_permutation(&(r->total_uspmv_result.data()[vec_idx]), &(total_uspmv_result.data()[vec_idx]), metis_inv_perm, local_context->total_n_rows, config->block_vec_size);
+
+        #endif
+                }
+            }
+        #ifdef DEBUG_MODE_FINE
+            if(my_rank == 0){
+                printf("total result after perm back: [");
+                for(int i = 0; i < r->total_uspmv_result.size(); ++i){
+                    printf("%f, ", r->total_uspmv_result[i]);
+                }
+                printf("]\n");
+                
+            }
+        #endif
+            }
+            else{
+                r->total_uspmv_result = total_uspmv_result;
+            }
         }
 
 #ifdef DEBUG_MODE_FINE
@@ -1023,7 +1062,7 @@ void gather_results(
 #ifdef USE_MPI
         MPI_Barrier(MPI_COMM_WORLD);
 #endif
-#endif
+#endif        
     }
 }
 
@@ -1058,9 +1097,11 @@ void init_local_structs(
     MtxData<VT, IT> *local_mtx = new MtxData<VT, IT>;
 
     local_context->total_nnz = total_mtx->nnz;
+    // extract matrix mean (and give to x-vector if option chosen at cli)
+    extract_matrix_min_mean_max(total_mtx, config, my_rank);
 
 #ifdef USE_MPI
-
+    // MPI_Bcast(&(local_context->total_nnz), 1, MPI_INT, 0, MPI_COMM_WORLD); // <- ?
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Segmenting and sending work to other processes.\n");}
 #endif
@@ -1087,9 +1128,6 @@ void init_local_structs(
     {
         equilibrate_matrix<VT, IT>(local_mtx);
     }
-
-    // extract matrix mean (and give to x-vector if option chosen at cli)
-    extract_matrix_min_mean_max(local_mtx, config);
 
     // convert local_mtx to local_scs (and permute rows if sigma > 1)
     convert_to_scs<VT, VT, IT>(local_mtx, config->chunk_size, config->sigma, local_scs, NULL, work_sharing_arr, my_rank);
@@ -1325,7 +1363,11 @@ void compute_result(
     Config *config,
     Result<VT, IT> *r,
     int my_rank,
-    int comm_size)
+    int comm_size,
+    int *metis_part,
+    int *metis_perm,
+    int *metis_inv_perm
+)
 {
     // TODO: bring back matrix stats!
     // MatrixStats<double> matrix_stats;
@@ -1342,28 +1384,13 @@ void compute_result(
 
     ContextData<IT> local_context;
     local_context.total_n_rows = total_mtx->n_rows;
-
+#ifdef USE_MPI
+    MPI_Bcast(&(local_context.total_n_rows), 1, MPI_INT, 0, MPI_COMM_WORLD);
+#endif
     // Used for distributed work sharing
     // Allocate space for work sharing array
     IT work_sharing_arr[comm_size + 1];
     work_sharing_arr[0] = 0; // Initialize first element, since it's used always
-
-    // Used with METIS library, always initialized for convenience
-    // Allocate global permutation vectors
-    int *metis_part = NULL;
-    int *metis_perm = NULL;
-    int *metis_inv_perm = NULL;
-
-#ifdef USE_MPI
-    if(config->seg_method == "seg-metis"){
-        metis_part = new int[total_mtx->n_rows];
-        metis_perm = new int[total_mtx->n_rows];
-        for(int i = 0; i < total_mtx->n_rows; ++i){
-            metis_perm[i] = i;
-        }
-        metis_inv_perm = new int[total_mtx->n_rows];
-    }
-#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Init local structures.\n");}
@@ -1581,16 +1608,7 @@ void compute_result(
     if(my_rank == 0){printf("Gather results to root process.\n");}
 #endif
 
-    gather_results(config, &local_context, r, work_sharing_arr, &local_x_mkl_copy, &(local_y.vec), my_rank, comm_size);
-
-#ifdef USE_MPI
-    // Delete allocated permutation vectors, if metis used
-    if(config->seg_method == "seg-metis"){
-        delete[] metis_part;
-        delete[] metis_perm;
-        delete[] metis_inv_perm;
-    }
-#endif
+    gather_results(config, &local_context, r, work_sharing_arr, &local_x_mkl_copy, &(local_y.vec), my_rank, comm_size, metis_inv_perm);
 }
 
 /**
@@ -1665,17 +1683,35 @@ void standalone_bench(
     if(my_rank == 0){printf("Enter compute_result.\n");}
 #endif
 
+    // Used with METIS library, always initialized for convenience
+    // Allocate global permutation vectors
+    int *metis_part = nullptr;
+    int *metis_perm = nullptr;
+    int *metis_inv_perm = nullptr;
+
+    // TODO: Guard, since this is only on root process?
+#ifdef USE_MPI
+    if(config.seg_method == "seg-metis"){
+        metis_part = new int[total_mtx.n_rows];
+        metis_perm = new int[total_mtx.n_rows];
+        for(int i = 0; i < total_mtx.n_rows; ++i){
+            metis_perm[i] = i;
+        }
+        metis_inv_perm = new int[total_mtx.n_rows];
+    }
+#endif
+
     // What taks place in this routine depends on "config.mode", i.e. the "result" in
     // "compute_result" is either a measure of performance, or an output vector y to validate
     if(config.value_type == "dp" || config.value_type == "ap[dp_sp]" || config.value_type == "ap[dp_hp]" || config.value_type == "ap[dp_sp_hp]"){
-        compute_result<double, int>(&total_dp_mtx, &config, &r_dp, my_rank, comm_size);
+        compute_result<double, int>(&total_dp_mtx, &config, &r_dp, my_rank, comm_size, metis_part, metis_perm, metis_inv_perm);
     }
     else if(config.value_type == "sp" || config.value_type == "ap[sp_hp]"){
-        compute_result<float, int>(&total_sp_mtx, &config, &r_sp, my_rank, comm_size);
+        compute_result<float, int>(&total_sp_mtx, &config, &r_sp, my_rank, comm_size, metis_part, metis_perm, metis_inv_perm);
     }
     else if (config.value_type == "hp"){
 #ifdef HAVE_HALF_MATH
-        compute_result<_Float16, int>(&total_hp_mtx, &config, &r_hp, my_rank, comm_size);
+        compute_result<_Float16, int>(&total_hp_mtx, &config, &r_hp, my_rank, comm_size, metis_part, metis_perm, metis_inv_perm);
 #endif
     }
 
@@ -1721,7 +1757,9 @@ void standalone_bench(
 #ifdef HAVE_HALF_MATH
                     &r_hp,
 #endif 
-                    &mkl_result
+                    &mkl_result,
+                    metis_perm,
+                    metis_inv_perm
                 );
                 
 #ifdef DEBUG_MODE
@@ -1758,6 +1796,14 @@ void standalone_bench(
             }
         }
     }
+#ifdef USE_MPI
+    // Delete allocated permutation vectors, if metis used
+    if(config.seg_method == "seg-metis"){
+        delete[] metis_part;
+        delete[] metis_perm;
+        delete[] metis_inv_perm;
+    }
+#endif
 }
 
 int main(int argc, char *argv[]){

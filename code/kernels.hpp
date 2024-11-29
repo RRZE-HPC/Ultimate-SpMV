@@ -49,6 +49,9 @@ spmv_omp_csr(
             #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sum)
             for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
                 sum += values[j] * x[col_idxs[j]];
+#ifdef DEBUG_MODE_FINE
+                printf("rank %i: %f += %f * %f using col idx %i w/ j=%i, row=%i\n", *my_rank, sum, values[j], x[col_idxs[j]], col_idxs[j], j, row);
+#endif
             }
             y[row] = sum;
         }

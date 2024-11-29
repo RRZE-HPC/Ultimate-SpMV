@@ -500,7 +500,7 @@ void seg_work_sharing_arr(
 #endif
 
         ScsData<VT, IT> global_crs;
-        convert_to_scs(config->ap_threshold_1, total_mtx, 1, 1, &global_crs);
+        convert_to_scs(total_mtx, 1, 1, &global_crs);
 
         //partition using METIS
         int ncon = 1;
@@ -529,8 +529,33 @@ void seg_work_sharing_arr(
         // from RACE library, sort partitioning and generate permutation vector
         sortPerm<int>(metis_part, metis_perm, 0, nrows);
 
+#ifdef DEBUG_MODE_FINE
+    if(my_rank == 0){
+        printf("METIS perm: [");
+        for(int i = 0; i < nrows; ++i){
+            printf("%i, ", metis_perm[i]);
+        }
+        printf("]\n");
+        
+    }
+#endif
+
+#ifdef DEBUG_MODE
+    if(my_rank == 0){printf("Permuting global scs matrix with METIS\n");}
+#endif
         // Generate inverse permutation vector
         generate_inv_perm<int>(metis_perm, metis_inv_perm, nrows);
+
+#ifdef DEBUG_MODE_FINE
+    if(my_rank == 0){
+        printf("METIS inverse perm: [");
+        for(int i = 0; i < nrows; ++i){
+            printf("%i, ", metis_inv_perm[i]);
+        }
+        printf("]\n");
+        
+    }
+#endif
 
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Permuting global scs matrix with METIS\n");}
