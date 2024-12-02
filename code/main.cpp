@@ -996,6 +996,7 @@ void gather_results(
             r->total_uspmv_result.resize(r->y_out.size());
 #endif
             if(config->seg_method == "seg-metis"){
+#ifdef USE_MPI
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
                 printf("total result before perm back: [");
@@ -1022,9 +1023,10 @@ void gather_results(
                 
             }
 #endif
+#endif
             }
             else{
-                r->total_uspmv_result = total_uspmv_result;
+                r->total_uspmv_result = r->y_out;
             }
         }
 

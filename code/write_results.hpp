@@ -53,10 +53,14 @@ void write_bench_to_file(
     int num_omp_threads;
 
 #ifndef __CUDACC__
+#ifdef _OPENMP
     #pragma omp parallel
     {
         num_omp_threads = omp_get_num_threads();
     }
+#else
+    num_omp_threads = 1;
+#endif
 #endif
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
@@ -165,10 +169,14 @@ void write_result_to_file(
     int num_omp_threads;
 
 #ifndef __CUDACC__
+#ifdef _OPENMP
     #pragma omp parallel
     {
         num_omp_threads = omp_get_num_threads();
     }
+#else
+    num_omp_threads = 1;
+#endif
 #endif
 
     // Print parameters

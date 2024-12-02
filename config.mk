@@ -21,6 +21,9 @@ THREADS_PER_BLOCK=128
 
 ### External Libraries ###
 # [1/0]
+USE_OPENMP = 0
+
+# [1/0]
 USE_MKL = 0
 # MKL_INC = 
 # MKL_LIB = 
@@ -35,7 +38,7 @@ USE_METIS = 0
 # METIS_INC = 
 # METIS_LIB = 
 # GK_INC = 
-# GK_LIB =
+# GK_LIB = 
 
 # [1/0]
 USE_LIKWID = 0

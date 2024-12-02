@@ -2515,11 +2515,14 @@ void bogus_init_pin(void){
     int num_threads;
     double bogus = 0.0;
 
+#ifdef _OPENMP
     #pragma omp parallel
     {
         num_threads = omp_get_num_threads();
     }
-
+#else
+    num_threads = 1;
+#endif
     #pragma omp parallel for
     for(int i = 0; i < num_threads; ++i){
         bogus += 1;

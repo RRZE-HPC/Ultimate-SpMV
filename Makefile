@@ -56,7 +56,10 @@ ifeq ($(COMPILER),gcc)
   OPT_LEVEL = -O3
   # OPT_LEVEL = -ffast-math
   OPT_ARCH  = -march=native
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall $(OPT_ARCH)
+ifeq ($(USE_OPENMP),1)
+  CXXFLAGS += -fopenmp
+endif
 ifeq ($(USE_MKL),1)
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
   CXXFLAGS += $(MKL)
@@ -77,7 +80,10 @@ ifeq ($(USE_MKL),1)
   MKL = -qmkl
   CXXFLAGS += $(MKL)
 endif
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall $(OPT_ARCH)
+ifeq ($(USE_OPENMP),1)
+  CXXFLAGS += -fopenmp
+endif
   CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
@@ -92,10 +98,13 @@ ifeq ($(USE_MKL),1)
   MKL = -qmkl
   CXXFLAGS += $(MKL)
 endif
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(GATHER_FIX) $(OPT_ARCH)
-  ifeq ($(CPP_VERSION), c++23)
-    CXXFLAGS += -DHAVE_HALF_MATH 
-  endif
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall $(GATHER_FIX) $(OPT_ARCH)
+ifeq ($(USE_OPENMP),1)
+  CXXFLAGS += -fopenmp
+endif
+ifeq ($(CPP_VERSION), c++23)
+  CXXFLAGS += -DHAVE_HALF_MATH 
+endif
   CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
@@ -108,10 +117,13 @@ ifeq ($(USE_MKL),1)
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
   CXXFLAGS += $(MKL)
 endif
-  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall -fopenmp $(OPT_ARCH)
-  ifeq ($(CPP_VERSION), c++23)
-    CXXFLAGS += -DHAVE_HALF_MATH 
-  endif
+  CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall $(OPT_ARCH)
+ifeq ($(USE_OPENMP),1)
+  CXXFLAGS += -fopenmp
+endif
+ifeq ($(CPP_VERSION), c++23)
+  CXXFLAGS += -DHAVE_HALF_MATH 
+endif
   CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
@@ -157,7 +169,7 @@ ifeq ($(USE_METIS),1)
     $(error USE_METIS selected, but no library path given in METIS_LIB)
   endif
 
-  CXXFLAGS  += -DUSE_METIS $(METIS_INC) $(GK_INC)
+  CXXFLAGS  += -DUSE_METIS -I$(METIS_INC) -I$(GK_INC)
   LIBS += $(METIS_LIB) $(GK_LIB)
 endif
 
@@ -211,37 +223,37 @@ ifeq ($(UBSAN),1)
 endif
 
 # Also rebuild when following files change.
-REBUILD_DEPS = $(MAKEFILE_LIST) code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
+REBUILD_DEPS = $(LIBS) code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
 all: uspmv
 
 uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
-	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ $(filter-out $(REBUILD_DEPS),$^)
 else
 	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 endif
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
-	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ -c $<
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ -c $<
 else
-	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ -c $<
 endif
 
 code/timing.o: code/timing.c $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
-	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ -c $<
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ -c $<
 else
-	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ -c $<
 endif
 
 code/mmio.o: code/mmio.cpp code/mmio.h
 ifeq ($(COMPILER),nvcc)
-	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ -c $<
+	nvcc -x cu $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ -c $<
 else
-	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ -c $<
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ -c $<
 endif
 
 TEST_INC_DIR = $(PWD)/code
