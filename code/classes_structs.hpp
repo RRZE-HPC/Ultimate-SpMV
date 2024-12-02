@@ -791,6 +791,7 @@ class SpmvKernel {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 #pragma omp parallel for collapse(2) if(config->par_pack)   
                 for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                    int block_offset = vec_idx * (num_local_rows + per_vector_padding); // <- redeclare for parallel region
                     for(int i = 0; i < outgoing_buf_size; ++i){
                         (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
                     }

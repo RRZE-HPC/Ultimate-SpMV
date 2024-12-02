@@ -504,7 +504,7 @@ assign_spmv_kernel_gpu_data<VT>(
         for (int i = 0; i < config->n_repetitions; ++i)
         {
 #ifdef DEBUG_MODE_FINE
-            int test_rank = 1;
+            int test_rank = 0;
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -936,7 +936,7 @@ void gather_results(
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
-            int test_rank = 1;
+            int test_rank = 0;
             if(my_rank == test_rank){
                 printf("Gathering results: rank %i local_x_mkl_copy = [\n", my_rank);
                 // TODO: Integrate ROWWISE
@@ -996,29 +996,23 @@ void gather_results(
             r->total_uspmv_result.resize(r->y_out.size());
 #endif
             if(config->seg_method == "seg-metis"){
-        #ifdef DEBUG_MODE_FINE
+#ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
                 printf("total result before perm back: [");
-                for(int i = 0; i < r->total_uspmv_result.size(); ++i){
-                    printf("%f, ", r->total_uspmv_result[i]);
+                for(int i = 0; i < total_uspmv_result.size(); ++i){
+                    printf("%f, ", total_uspmv_result[i]);
                 }
                 printf("]\n");
                 
             }
-        #endif
+#endif
             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
                 if(my_rank == 0){
-        #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                    // Permute back results for comparison against MKL
                     apply_permutation(&(r->total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), &(total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), metis_inv_perm, local_context->total_n_rows);
-
-        #endif
-        #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                    apply_strided_permutation(&(r->total_uspmv_result.data()[vec_idx]), &(total_uspmv_result.data()[vec_idx]), metis_inv_perm, local_context->total_n_rows, config->block_vec_size);
-
-        #endif
                 }
             }
-        #ifdef DEBUG_MODE_FINE
+#ifdef DEBUG_MODE_FINE
             if(my_rank == 0){
                 printf("total result after perm back: [");
                 for(int i = 0; i < r->total_uspmv_result.size(); ++i){
@@ -1027,7 +1021,7 @@ void gather_results(
                 printf("]\n");
                 
             }
-        #endif
+#endif
             }
             else{
                 r->total_uspmv_result = total_uspmv_result;
@@ -1449,7 +1443,7 @@ void compute_result(
 #ifdef USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
-    int test_rank = 1;
+    int test_rank = 0;
     if(my_rank == test_rank){
         // check vectors are "padded" correctly
         printf("local_x (size %i)= [\n", local_x.vec.size());

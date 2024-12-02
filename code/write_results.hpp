@@ -441,9 +441,15 @@ void validate_result(
 #endif
     }
 
+    // To account for global metis row reordering
     if(config->seg_method == "seg-metis"){
         for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-            apply_permutation<double, int>(&(mkl_result_permuted[vec_idx * num_rows]), &((*mkl_result)[vec_idx * num_rows]), metis_inv_perm, (int)num_rows);
+// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+            apply_permutation(&(mkl_result_permuted[vec_idx * num_rows]), &((*mkl_result)[vec_idx * num_rows]), metis_inv_perm, num_rows);
+// #endif
+// #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+//             apply_strided_permutation(&(mkl_result_permuted[vec_idx]), &((*mkl_result)[vec_idx]), metis_inv_perm, num_rows, config->block_vec_size);
+// #endif
         }
     }
 

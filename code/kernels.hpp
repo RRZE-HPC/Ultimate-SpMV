@@ -119,6 +119,9 @@ block_spmv_omp_csr(
 //                     printf("rank %i: j = %i\n", *my_rank, j);
 // #endif
                     tmp[vec_idx] += values[j] * X[(*vec_length * vec_idx) + col_idxs[j]];
+#ifdef DEBUG_MODE_FINE
+                    printf("rank %i: %f += %f * %f using col idx %i w/ j=%i, row=%i\n", *my_rank,tmp[vec_idx], values[j], X[(*vec_length * vec_idx) + col_idxs[j]], col_idxs[j], j, row);
+#endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
                     tmp[vec_idx] += values[j] * X[col_idxs[j] * (*block_size) + vec_idx];
