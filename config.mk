@@ -1,5 +1,5 @@
 # [gcc, icc, icx, llvm, nvcc]
-COMPILER = gcc
+COMPILER = icx
 # [int] (CPU only)
 SIMD_LENGTH = 4
 # [colwise, rowwise] (If using single vector SpMV, use "colwise")
