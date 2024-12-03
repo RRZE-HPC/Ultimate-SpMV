@@ -1,0 +1,5 @@
+when using mpi only benchmarking is happening nor validation
+
+also lot of erroros now 
+
+there is a deadlock in mpi code

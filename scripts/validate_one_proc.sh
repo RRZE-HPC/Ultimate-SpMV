@@ -1,14 +1,17 @@
 #!/bin/bash -l
 #SBATCH -J validation_tests_single_proc
 #SBATCH -N 1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=1
-#SBATCH -t 04:00:00
+#SBATCH -t 00:50:00
 #SBATCH --exclusive
-#SBATCH --output=/home/hpc/k107ce/k107ce17/linking_it_solve/Ultimate-SpMV/code/scripts/results/%j_%x.out
+#SBATCH --output=./results/%j_%x.out
 
 module load intel
 module load intelmpi
 module load mkl
+
+./exemaker.sh
 
 export I_MPI_PIN=1
 export I_MPI_PIN_PROCESSOR_LIST="allcores"
@@ -30,11 +33,11 @@ declare -a sigmas=("1" "2" "3" "4" "8" "10" "16" "32" "64")
 #     do
 #         for rand_opt in 0 1;
 #         do
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/impcol_e.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx $kernel_format -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
 #         done
 #     done
 # done
@@ -50,11 +53,11 @@ declare -a sigmas=("1" "2" "3" "4" "8" "10" "16" "32" "64")
 #     do
 #         for rand_opt in 0 1;
 #         do
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/impcol_e.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s 1 -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
 #         done
 #     done
 # done
@@ -70,11 +73,11 @@ declare -a sigmas=("1" "2" "3" "4" "8" "10" "16" "32" "64")
 #     do
 #         for rand_opt in 0 1;
 #         do
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-#             mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/impcol_e.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#             mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c 1 -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
 #         done
 #     done
 # done
@@ -94,11 +97,11 @@ declare -a sigmas=("1" "2" "3" "4" "8" "10" "16" "32" "64")
 #             do
 #                 if [ "$sigma" -gt "$C" ];
 #                 then
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
 #                 fi
 #             done
 #         done
@@ -120,11 +123,11 @@ declare -a sigmas=("1" "2" "3" "4" "8" "10" "16" "32" "64")
 #             do
 #                 if [ "$sigma" -le "$C" ];
 #                 then
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-#                     mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+#                     mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
 #                 fi
 #             done
 #         done
@@ -148,11 +151,11 @@ do
                 export OMP_NUM_THREADS=36
                 export OMP_PLACES=cores
                 export OMP_PROC_BIND=close
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/impcol_e.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -dp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode s $seg_method -rand_x $rand_opt -rev 3 -sp
             done
         done
     done
@@ -175,11 +178,11 @@ do
                 export OMP_NUM_THREADS=36
                 export OMP_PLACES=cores
                 export OMP_PROC_BIND=close
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/impcol_e.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -sp
-                mpirun -n 1 ./../../uspmv_one_proc ../../matrices/matrix1.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -sp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/impcol_e.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -dp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/FDM-2d-16.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -sp
+                mpirun -n 1 ./EXE/uspmv_mkl1_mpi0 ./matrices/matrix1.mtx scs -c $C -s $sigma -mode b $seg_method -rand_x $rand_opt -sp
             done
         done
     done
