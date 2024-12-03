@@ -86,6 +86,12 @@ void write_bench_to_file(
             working_file << std::fixed << std::setprecision(8) << ", beta: " << r->beta;
         }
     }
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+    working_file << ", block_vec_layout: " << "colwise";
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    working_file << ", block_vec_layout: " << "rowwise";
+#endif
     if (config->value_type == "ap[dp_sp]"){
         working_file << ", data_type: ap[dp_sp]" << ", threshold: " << std::fixed << std::setprecision(2) << config->ap_threshold_1 << ", % dp elems: " << r->total_dp_percent << ", % sp elems: " << r->total_sp_percent;    
     }
@@ -107,7 +113,15 @@ void write_bench_to_file(
             working_file << ", data_type: half";
     }
 #ifdef USE_MPI
-    working_file << ", revisions: " << r->n_calls << ", seg_method: " << *seg_method << std::endl;
+#ifdef SINGLEVEC_MPI_MODE
+    working_file << ", revisions: " << r->n_calls << ", seg_method: " << *seg_method << ", MPI_mode: singlevec" << std::endl;
+#endif
+#ifdef MULTIVEC_MPI_MODE
+    working_file << ", revisions: " << r->n_calls << ", seg_method: " << *seg_method << ", MPI_mode: multivec" << std::endl;
+#endif
+#ifdef BULKVEC_MPI_MODE
+    working_file << ", revisions: " << r->n_calls << ", seg_method: " << *seg_method << ", MPI_mode: bulkvec" << std::endl;
+#endif
 #else
     working_file << ", revisions: " << r->n_calls << std::endl;
 #endif
@@ -237,6 +251,12 @@ void write_result_to_file(
             working_file << std::fixed << std::setprecision(8) << ", beta: " << r->beta;
         }
     }
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+    working_file << ", block_vec_layout: " << "colwise";
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+    working_file << ", block_vec_layout: " << "rowwise";
+#endif
     if(config->value_type == "dp")
         working_file << ", data_type: " << "dp";
     else if(config->value_type == "sp")
@@ -256,7 +276,15 @@ void write_result_to_file(
     
 
 #ifdef USE_MPI
-    working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << std::endl;
+#ifdef SINGLEVEC_MPI_MODE
+    working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << ", MPI_mode: singlevec" << std::endl;
+#endif
+#ifdef MULTIVEC_MPI_MODE
+    working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << ", MPI_mode: multivec" << std::endl;
+#endif
+#ifdef BULKVEC_MPI_MODE
+    working_file << ", revisions: " << config->n_repetitions << ", seg_method: " << *seg_method << ", MPI_mode: bulkvec" << std::endl;
+#endif
 #else
     working_file << ", revisions: " << config->n_repetitions << std::endl;
 #endif

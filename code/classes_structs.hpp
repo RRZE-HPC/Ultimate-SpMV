@@ -89,8 +89,7 @@ struct Config
     char mode = 'b'; 
 
     // Runs benchmark for a specified number of seconds
-    double bench_time = 10.0;
-    // double bench_time = 1.0;
+    double bench_time = 3.0; // Seems like an okay default (?)
 
     // Mixed Precision bucket size, used for partitioning matrix
     double ap_threshold_1 = 0.0;
@@ -674,6 +673,7 @@ class SpmvKernel {
                 sending_proc = local_context->non_zero_senders[from_proc_idx];
                 incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
 
+                // TODO: Clean up
 #ifdef DEBUG_MODE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
 #ifdef SINGLEVEC_MPI_MODE
@@ -735,12 +735,14 @@ class SpmvKernel {
 #ifdef BULKVEC_MPI_MODE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                     &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc]],
-                    incoming_buf_size * config->block_vec_size,
+                    // incoming_buf_size * config->block_vec_size,
+                    incoming_buf_size,
                     local_context->bulk_recv_types[from_proc_idx],
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
                     &(local_x)[(config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] * config->block_vec_size],
-                    incoming_buf_size * config->block_vec_size,
+                    // incoming_buf_size * config->block_vec_size,
+                    incoming_buf_size,
                     local_context->bulk_recv_types[from_proc_idx],
 #endif
                     sending_proc,
@@ -841,7 +843,7 @@ class SpmvKernel {
 #endif
 #ifdef BULKVEC_MPI_MODE
                     &(to_send_elems[to_proc_idx])[0],
-                    outgoing_buf_size * config->block_vec_size,
+                    outgoing_buf_size * config->block_vec_size, // <- NOTE: could reduce if using custom send type
                     this->MPI_ELEM_TYPE,
                     receiving_proc,
                     (local_context->send_tags[my_rank])[receiving_proc],
@@ -990,7 +992,7 @@ class SpmvKernel {
 #endif
         }
 
-        void execute(bool warmup_flag){
+        void execute(bool warmup_flag = false){
             if(config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                 execute_one_prec(warmup_flag);
             }
@@ -1698,21 +1700,21 @@ struct Result
     std::vector<unsigned long> dp_nnz_per_proc;
     std::vector<unsigned long> sp_nnz_per_proc;
     std::vector<unsigned long> hp_nnz_per_proc;
-    unsigned long dp_nnz = 0;
-    unsigned long sp_nnz = 0;
-    unsigned long hp_nnz = 0;
-    unsigned long cumulative_dp_nnz;
-    unsigned long cumulative_sp_nnz;
-    unsigned long cumulative_hp_nnz;
-    double total_dp_percent;
-    double total_sp_percent;
-    double total_hp_percent;
+    unsigned long dp_nnz{};
+    unsigned long sp_nnz{};
+    unsigned long hp_nnz{};
+    unsigned long cumulative_dp_nnz{};
+    unsigned long cumulative_sp_nnz{};
+    unsigned long cumulative_hp_nnz{};
+    double total_dp_percent{};
+    double total_sp_percent{};
+    double total_hp_percent{};
 
-    unsigned long total_nnz;
-    unsigned long total_rows;
+    unsigned long total_nnz{};
+    unsigned long total_rows{};
 
-    double euclid_dist;
-    double mkl_magnitude;
+    double euclid_dist{};
+    double mkl_magnitude{};
 
     unsigned int size_value_type{};
     unsigned int size_index_type{};

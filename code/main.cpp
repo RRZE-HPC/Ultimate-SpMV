@@ -136,6 +136,7 @@ void bench_spmv(
     }
 #endif
 #ifdef BULKVEC_MPI_MODE
+    // With bulkvec mode, the send buffers just need to be larger
         for(int i = 0; i < nzr_size; ++i){
             int nz_recver = local_context->non_zero_receivers[i];
             to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size() * config->block_vec_size];
@@ -495,7 +496,7 @@ assign_spmv_kernel_gpu_data<VT>(
 #else
         r->duration_total_s = runtime;
 #endif
-        r->duration_kernel_s = r->duration_total_s/ r->n_calls;
+        r->duration_kernel_s = r->duration_total_s / r->n_calls;
         r->perf_gflops = (double)local_context->total_nnz * 2.0 * config->block_vec_size
                             / r->duration_kernel_s
                             / 1e9;                   // Only count usefull flops
@@ -504,7 +505,7 @@ assign_spmv_kernel_gpu_data<VT>(
         for (int i = 0; i < config->n_repetitions; ++i)
         {
 #ifdef DEBUG_MODE_FINE
-            int test_rank = 0;
+            int test_rank = 1;
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -541,9 +542,15 @@ assign_spmv_kernel_gpu_data<VT>(
 
             // NOTE: In the current implementation, we reuse tags, send buffers, and MPI requests each loop iteration. 
             // NOTE: This may be risky at high process counts?
+#ifdef DEBUG_MODE
+            if(my_rank == 0){printf("Communicating halo elements\n");}
+#endif
 #ifdef USE_MPI
             begin_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
             finish_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
+#endif
+#ifdef DEBUG_MODE
+            if(my_rank == 0){printf("Performing SpM(M)V kernel\n");}
 #endif
             
 #ifdef DEBUG_MODE_FINE
@@ -580,7 +587,7 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
 #endif
 
-            spmv_kernel.execute(warmup_flag);
+            spmv_kernel.execute();
 
 #ifdef DEBUG_MODE_FINE
 #ifdef USE_MPI
@@ -609,6 +616,10 @@ assign_spmv_kernel_gpu_data<VT>(
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
+#endif
+
+#ifdef DEBUG_MODE
+            if(my_rank == 0){printf("Swapping X <-> Y\n");}
 #endif
             // TODO: Guard against rectangular matrices
             spmv_kernel.swap_local_vectors();
@@ -644,6 +655,9 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
 
 #ifdef USE_MPI
+#ifdef DEBUG_MODE
+            if(my_rank == 0){printf("Synchronizing MPI processes");}
+#endif
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
 #endif
@@ -883,7 +897,7 @@ void gather_results(
 #ifdef HAVE_HALF_MATH
         r->cumulative_hp_nnz = r->hp_nnz;
 #endif
-
+        // NOTE: AP stuff isn't relevant for MPI right now...
         r->total_dp_percent = (r->cumulative_dp_nnz / (double)r->total_nnz) * 100.0;
         r->total_sp_percent = (r->cumulative_sp_nnz / (double)r->total_nnz) * 100.0;
 #ifdef HAVE_HALF_MATH
@@ -936,7 +950,7 @@ void gather_results(
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
-            int test_rank = 0;
+            int test_rank = 1;
             if(my_rank == test_rank){
                 printf("Gathering results: rank %i local_x_mkl_copy = [\n", my_rank);
                 // TODO: Integrate ROWWISE
@@ -989,45 +1003,58 @@ void gather_results(
             // If we're verifying results, assign total vectors to Result object
             // NOTE: Garbage values for all but root process
             r->total_x = total_x;
-            r->total_uspmv_result.resize(total_uspmv_result.size());
+            if(config->seg_method == "seg-metis"){
+                r->total_uspmv_result.resize(total_uspmv_result.size());
+                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                    if(my_rank == 0){
+                        // Permute back results for comparison against MKL
+                        apply_permutation(&(r->total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), &(total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), metis_inv_perm, local_context->total_n_rows);
+                    }
+                }
+            }
+            else{
+                r->total_uspmv_result = total_uspmv_result;
+            }
+            
 #else
 
             r->total_x = *local_x_mkl_copy;
-            r->total_uspmv_result.resize(r->y_out.size());
+            // r->total_uspmv_result.resize(r->y_out.size());
+            r->total_uspmv_result = r->y_out;
 #endif
-            if(config->seg_method == "seg-metis"){
-#ifdef USE_MPI
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 0){
-                printf("total result before perm back: [");
-                for(int i = 0; i < total_uspmv_result.size(); ++i){
-                    printf("%f, ", total_uspmv_result[i]);
-                }
-                printf("]\n");
+            // if(config->seg_method == "seg-metis"){
+// #ifdef USE_MPI
+// #ifdef DEBUG_MODE_FINE
+//             if(my_rank == 0){
+//                 printf("total result before perm back: [");
+//                 for(int i = 0; i < total_uspmv_result.size(); ++i){
+//                     printf("%f, ", total_uspmv_result[i]);
+//                 }
+//                 printf("]\n");
                 
-            }
-#endif
-            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                if(my_rank == 0){
-                    // Permute back results for comparison against MKL
-                    apply_permutation(&(r->total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), &(total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), metis_inv_perm, local_context->total_n_rows);
-                }
-            }
-#ifdef DEBUG_MODE_FINE
-            if(my_rank == 0){
-                printf("total result after perm back: [");
-                for(int i = 0; i < r->total_uspmv_result.size(); ++i){
-                    printf("%f, ", r->total_uspmv_result[i]);
-                }
-                printf("]\n");
+//             }
+// #endif
+//             for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+//                 if(my_rank == 0){
+//                     // Permute back results for comparison against MKL
+//                     apply_permutation(&(r->total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), &(total_uspmv_result.data()[vec_idx * local_context->total_n_rows]), metis_inv_perm, local_context->total_n_rows);
+//                 }
+//             }
+// #ifdef DEBUG_MODE_FINE
+//             if(my_rank == 0){
+//                 printf("total result after perm back: [");
+//                 for(int i = 0; i < r->total_uspmv_result.size(); ++i){
+//                     printf("%f, ", r->total_uspmv_result[i]);
+//                 }
+//                 printf("]\n");
                 
-            }
-#endif
-#endif
-            }
-            else{
-                r->total_uspmv_result = r->y_out;
-            }
+//             }
+// #endif
+// #endif
+            // }
+            // else{
+            //     r->total_uspmv_result = r->y_out;
+            // }
         }
 
 #ifdef DEBUG_MODE_FINE
@@ -1097,7 +1124,7 @@ void init_local_structs(
     extract_matrix_min_mean_max(total_mtx, config, my_rank);
 
 #ifdef USE_MPI
-    // MPI_Bcast(&(local_context->total_nnz), 1, MPI_INT, 0, MPI_COMM_WORLD); // <- ?
+    MPI_Bcast(&(local_context->total_nnz), 1, MPI_INT, 0, MPI_COMM_WORLD); // <- necessary?
 #ifdef DEBUG_MODE
     if(my_rank == 0){printf("Segmenting and sending work to other processes.\n");}
 #endif
@@ -1445,7 +1472,7 @@ void compute_result(
 #ifdef USE_MPI
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
-    int test_rank = 0;
+    int test_rank = 1;
     if(my_rank == test_rank){
         // check vectors are "padded" correctly
         printf("local_x (size %i)= [\n", local_x.vec.size());
