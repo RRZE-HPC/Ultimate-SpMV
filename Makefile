@@ -59,15 +59,21 @@ ifeq ($(COMPILER),gcc)
   CXXFLAGS += $(OPT_LEVEL) -std=$(CPP_VERSION) -Wall $(OPT_ARCH)
 ifeq ($(USE_OPENMP),1)
   CXXFLAGS += -fopenmp
-endif
 ifeq ($(USE_MKL),1)
   MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread -lpthread -lm -ldl
   CXXFLAGS += $(MKL)
   LIBS += -L${MKLROOT}/lib/intel64 
 endif
-  ifeq ($(CPP_VERSION), c++23)
+else
+ifeq ($(USE_MKL),1)
+  MKL = -I${MKLROOT}/include -Wl,--no-as-needed -L${MKLROOT}/lib/intel64 -lmkl_intel_lp64 -lmkl_core -lmkl_sequential -lm -ldl
+  CXXFLAGS += $(MKL)
+  LIBS += -L${MKLROOT}/lib/intel64 
+endif
+endif
+ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH
-  endif
+endif
   CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
@@ -86,6 +92,7 @@ ifeq ($(USE_OPENMP),1)
 endif
   CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
+
 
 ifeq ($(COMPILER),icx)
   CXX       = icpx
@@ -107,6 +114,7 @@ ifeq ($(CPP_VERSION), c++23)
 endif
   CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
+
 
 ifeq ($(COMPILER),llvm)
   CXX       = clang++
@@ -223,7 +231,7 @@ ifeq ($(UBSAN),1)
 endif
 
 # Also rebuild when following files change.
-REBUILD_DEPS = $(LIBS) code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
+REBUILD_DEPS = code/timing.h code/classes_structs.hpp code/utilities.hpp code/kernels.hpp code/mpi_funcs.hpp code/write_results.hpp code/mmio.h
 
 .PHONY: all
 all: uspmv
@@ -232,7 +240,7 @@ uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
 	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ $(filter-out $(REBUILD_DEPS),$^)
 else
-	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ $(filter-out $(REBUILD_DEPS),$^)
 endif
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)
@@ -287,5 +295,4 @@ tests_clean:
 
 .PHONY: rm
 rm:
-	-rm uspmv
-
+	-rm uspmv*
