@@ -25,3 +25,5 @@ ML_Geer_data_vol_tests/
 
 *.o
 *.gch
+
+EXE/
