@@ -1,5 +1,7 @@
-when using mpi only benchmarking is happening nor validation
+in crs code
 
-also lot of erroros now 
-
-there is a deadlock in mpi code
+WARN: Skipping region block_colwise_spmv_scs_benchmark-0 for evaluation.
+WARN: Regions are skipped because:
+      - The region was only registered
+      - The region was started but never stopped
+      - The region was never started but stopped
