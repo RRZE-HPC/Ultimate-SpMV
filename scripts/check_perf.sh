@@ -7,7 +7,7 @@
 #SBATCH -c 72
 #SBATCH --constraint=hwperf
 #SBATCH --cpu-freq=2000000-2000000:performance 
-#SBATCH --output=/home/hpc/k107ce/k107ce17/Ultimate-SpMV/code/scripts/results/%j_%x.out
+#SBATCH --output=./results/%j_%x.out
 
 unset SLURM_EXPORT_ENV 
 
