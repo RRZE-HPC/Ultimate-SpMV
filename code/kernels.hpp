@@ -377,31 +377,31 @@ block_spmv_omp_scs_general(
                 #pragma omp simd
                 for (IT vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-	                    Y[(c * *C + i) + vec_idx * (*vec_length)] = tmp[i * (*block_size) + vec_idx];
+                        Y[(c * *C + i) + vec_idx * (*vec_length)] = tmp[i * (*block_size) + vec_idx];
 #ifdef DEBUG_MODE
                         if(*my_rank == test_rank){printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) + vec_idx * (*n_chunks * *C));}
 #endif
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-	                    Y[(c * *C + i) * (*block_size) + vec_idx] = tmp[i * (*block_size) + vec_idx];
+                        Y[(c * *C + i) * (*block_size) + vec_idx] = tmp[i * (*block_size) + vec_idx];
 #ifdef DEBUG_MODE
                         if(*my_rank == test_rank){printf("Assigning %f to Y[%i]\n", tmp[i * (*block_size) + vec_idx], (c * *C + i) * (*block_size) + vec_idx);}
 #endif
 #endif
                 }
             }
+        }
 
 #ifdef USE_LIKWID
-            if(!warmup_flag){
+        if(!warmup_flag){
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                LIKWID_MARKER_STOP("block_colwise_spmv_scs_benchmark");
+            LIKWID_MARKER_STOP("block_colwise_spmv_scs_benchmark");
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                LIKWID_MARKER_STOP("block_rowwise_spmv_scs_benchmark");
-#endif
-            }
+            LIKWID_MARKER_STOP("block_rowwise_spmv_scs_benchmark");
 #endif
         }
+#endif
     }
 }
 
@@ -409,7 +409,7 @@ block_spmv_omp_scs_general(
 /**
  * Sell-C-sigma implementation templated by C, where X and Y are block vectors. Supports specific Cs > 0.
  */
-template <ST C, ST block_size, typename VT, typename IT>
+template <ST C, typename VT, typename IT>
 static void
 block_scs_impl_cpu(
     bool warmup_flag,
@@ -419,10 +419,12 @@ block_scs_impl_cpu(
     const IT * RESTRICT col_idxs,
     const VT * RESTRICT values,
     const IT * vec_length,
+    const IT * block_size,
     VT * RESTRICT X,
     VT * RESTRICT Y
 )
 {
+    const int fixed_block_size = *block_size;
     #pragma omp parallel
     {
 #ifdef USE_LIKWID
@@ -437,32 +439,32 @@ block_scs_impl_cpu(
 #endif
         #pragma omp for schedule(static)
         for (ST c = 0; c < *n_chunks; ++c) {
-            VT tmp[C * block_size]{};
+            VT tmp[C * fixed_block_size];
 
-                IT cs = chunk_ptrs[c];
+            IT cs = chunk_ptrs[c];
 
-                for (IT j = 0; j < chunk_lengths[c]; ++j) {
-                    for (IT i = 0; i < C; ++i) {
-                        #pragma omp simd
-                        for (IT n = 0; n < block_size; ++n) {
+            for (IT j = 0; j < chunk_lengths[c]; ++j) {
+                for (IT i = 0; i < C; ++i) {
+                    #pragma omp simd
+                    for (IT n = 0; n < (*block_size); ++n) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                            tmp[i * block_size + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] + n * (*vec_length)];
+                        tmp[i * (*block_size) + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] + n * (*vec_length)];
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                            tmp[i * block_size + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] * block_size + n];
+                        tmp[i * (*block_size) + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] * (*block_size) + n];
 #endif
-                        }
-                    } 
-                }
+                    }
+                } 
+            }
             
             for (IT i = 0; i < C; ++i) {
                 #pragma omp simd
-                for (IT n = 0; n < block_size; ++n) {
+                for (IT n = 0; n < (*block_size); ++n) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                    Y[(c * C + i) + n * (*vec_length)] = tmp[i * block_size + n];
+                    Y[(c * C + i) + n * (*vec_length)] = tmp[i * (*block_size) + n];
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                    Y[(c * C + i) * block_size + n] = tmp[i * block_size + n];
+                    Y[(c * C + i) * (*block_size) + n] = tmp[i * (*block_size) + n];
 #endif
                 }
             }
@@ -482,40 +484,41 @@ block_scs_impl_cpu(
     }
 }
 
-/**
- * Dispatch to Sell-C-sigma kernels templated by C, where X and Y are blcok vectors.
- *
- * Note: only works for selected Cs, see INSTANTIATE_CS.
- */
-template <ST C, typename VT, typename IT>
-static void
-call_scs_block(
-    bool warmup_flag,
-    const ST * CC,
-    const ST * n_chunks,
-    const IT * RESTRICT chunk_ptrs,
-    const IT * RESTRICT chunk_lengths,
-    const IT * RESTRICT col_idxs,
-    const VT * RESTRICT values,
-    VT * RESTRICT x,
-    VT * RESTRICT y,
-    int * block_size,
-    int * vec_length
-)
-{
-    switch (*block_size)
-    {
-        #define INSTANTIATE_CS_B X(2) X(4) X(8) X(16) X(32) X(64) X(128)
+// TODO: We currently do no dispatching for block vector width
+// /**
+//  * Dispatch to Sell-C-sigma kernels templated by C, where X and Y are block vectors.
+//  *
+//  * Note: only works for selected Cs, see INSTANTIATE_CS.
+//  */
+// template <ST C, typename VT, typename IT>
+// static void
+// call_scs_block(
+//     bool warmup_flag,
+//     const ST * CC,
+//     const ST * n_chunks,
+//     const IT * RESTRICT chunk_ptrs,
+//     const IT * RESTRICT chunk_lengths,
+//     const IT * RESTRICT col_idxs,
+//     const VT * RESTRICT values,
+//     VT * RESTRICT x,
+//     VT * RESTRICT y,
+//     int * block_size,
+//     int * vec_length
+// )
+// {
+//     switch (*block_size)
+//     {
+//         #define INSTANTIATE_CS_B X(2) X(4) X(8) X(16) X(32) X(64) X(128)
 
-        #define X(BS) case BS: block_scs_impl_cpu<C,BS>(warmup_flag, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, vec_length, x, y); return;
-        INSTANTIATE_CS_B
-        #undef X
+//         #define X(BS) case BS: block_scs_impl_cpu<C,BS>(warmup_flag, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, vec_length, x, y); return;
+//         INSTANTIATE_CS_B
+//         #undef X
 
-	default:
-            // Call this kernel, in the case where chunk size C is dispatched, but block_vec_size is not
-            block_spmv_omp_scs_general<VT, IT>(warmup_flag, CC, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size, vec_length); return;
-    }
-}
+// 	default:
+//             // Call this kernel, in the case where chunk size C is dispatched, but block_vec_size is not
+//             block_spmv_omp_scs_general<VT, IT>(warmup_flag, CC, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size, vec_length); return;
+//     }
+// }
 
 /**
  * Dispatch to Sell-C-sigma kernels templated by C.
@@ -534,25 +537,25 @@ block_spmv_omp_scs_adv(
     const VT * RESTRICT values,
     VT * RESTRICT x,
     VT * RESTRICT y,
-    int *block_size,
+    int * block_size,
     int * vec_length,
     const int * my_rank = NULL
 )
 {
-    // switch (*C)
-    // {
-    //     #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128)
+    switch (*C)
+    {
+        #define INSTANTIATE_CS X(2) X(4) X(8) X(16) X(32) X(64) X(128)
 
-    //     #define X(CC) case CC: call_scs_block<CC>(warmup_flag, C, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y, block_size); break;
-    //     INSTANTIATE_CS
-    //     #undef X
+        #define X(CC) case CC: block_scs_impl_cpu<CC>(warmup_flag, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, vec_length, block_size, x, y); break;
+        INSTANTIATE_CS
+        #undef X
 
-    // default:
-    //     fprintf(stderr,
-    //             "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
-    //             long(C));
-    //     exit(1);
-    // }
+	default:
+        fprintf(stderr,
+                "ERROR: for C=%ld no instantiation of a sell-c-sigma kernel exists.\n",
+                long(C));
+        exit(1);    
+    }
 }
 
 #ifdef __CUDACC__

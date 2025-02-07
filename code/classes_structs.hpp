@@ -89,7 +89,7 @@ struct Config
     char mode = 'b'; 
 
     // Runs benchmark for a specified number of seconds
-    double bench_time = 3.0; // Seems like an okay default (?)
+    double bench_time = 5.0; // Seems like an okay default (?)
 
     // Mixed Precision bucket size, used for partitioning matrix
     double ap_threshold_1 = 0.0;
@@ -501,8 +501,7 @@ class SpmvKernel {
                         if(my_rank == 0){fprintf(stderr, "ERROR: Advanced SCS SpMMV kernel not yet implemented on GPU.\n");}
                         exit(1);
 #else
-                        // one_prec_kernel_func_ptr = block_spmv_omp_scs_adv<VT, IT>;
-                        one_prec_kernel_func_ptr = block_spmv_omp_scs_general<VT, IT>;
+                        one_prec_kernel_func_ptr = block_spmv_omp_scs_adv<VT, IT>;
 #endif
                         }
                         else{
@@ -661,6 +660,7 @@ class SpmvKernel {
 
         inline void init_halo_exchange(int vec_idx = 0){
 #ifdef USE_MPI
+#ifndef NO_MPI_MODE
             int outgoing_buf_size, incoming_buf_size;
             int receiving_proc, sending_proc;
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
@@ -852,6 +852,7 @@ class SpmvKernel {
 #endif
                 );
             }
+#endif
 #endif
         }
 

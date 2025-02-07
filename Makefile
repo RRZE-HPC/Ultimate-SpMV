@@ -201,6 +201,9 @@ endif
 
 ifeq ($(USE_MPI),1)
   CXXFLAGS  += -DUSE_MPI
+  ifeq ($(MPI_MODE),none)
+  CXXFLAGS  += -DNO_MPI_MODE
+  endif
   ifeq ($(MPI_MODE),singlevec)
   CXXFLAGS  += -DSINGLEVEC_MPI_MODE
   endif
@@ -238,9 +241,9 @@ all: uspmv
 
 uspmv: code/main.o code/mmio.o code/timing.o $(REBUILD_DEPS)
 ifeq ($(COMPILER),nvcc)
-	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ $(filter-out $(REBUILD_DEPS),$^)
+	nvcc $(CXXFLAGS) $(GPGPU_ARCH_FLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 else
-	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) $(LIBS) -o $@ $(filter-out $(REBUILD_DEPS),$^)
+	$(MPICXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $@ $(filter-out $(REBUILD_DEPS),$^) $(LIBS)
 endif
 
 code/main.o: code/main.cpp $(REBUILD_DEPS)

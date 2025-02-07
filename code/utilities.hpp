@@ -1438,6 +1438,13 @@ void parse_cli_inputs(
             exit(1);
         }
 #endif
+
+#ifdef NO_MPI_MODE
+        if(my_rank == 0){
+            fprintf(stderr, "ERROR: Please select an MPI communication mode (MPI_MODE).\n");
+            exit(1);
+        }
+#endif
 #endif
 
 #ifndef HAVE_HALF_MATH
@@ -2455,7 +2462,7 @@ void register_likwid_markers(
             else if(config->value_type == "ap[sp_hp]"){
                 LIKWID_MARKER_REGISTER("spmv_apsphp_crs_benchmark");
             }
-            if(config->value_type == "ap[dp_sp_hp]"){
+            else if(config->value_type == "ap[dp_sp_hp]"){
                 LIKWID_MARKER_REGISTER("spmv_apdpsphp_crs_benchmark");
             }
             else{
@@ -2468,19 +2475,13 @@ void register_likwid_markers(
 #endif   
                 }
                 else{
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                    LIKWID_MARKER_REGISTER("block_colwise_spmv_scs_benchmark");  
-#endif
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                    LIKWID_MARKER_REGISTER("block_rowwise_spmv_scs_benchmark");  
-#endif   
+                    LIKWID_MARKER_REGISTER("spmv_crs_benchmark");  
                 }
             }
         }
         else if(config->kernel_format == "scs"){
             if(
-                config->chunk_size != 1
-                && config->chunk_size != 2 
+                config->chunk_size != 2 
                 && config->chunk_size != 4
                 && config->chunk_size != 8
                 && config->chunk_size != 16
@@ -2489,19 +2490,41 @@ void register_likwid_markers(
                 && config->chunk_size != 128
                 && config->chunk_size != 256
             ){
+                // If we are not using an advanced version, then:
                 if(config->value_type == "ap"){
                     LIKWID_MARKER_REGISTER("spmv_ap_scs_benchmark");
                 }
                 else{
-                    LIKWID_MARKER_REGISTER("spmv_scs_benchmark");
+                    if(config->block_vec_size > 1){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                        LIKWID_MARKER_REGISTER("block_colwise_spmv_scs_benchmark");  
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                        LIKWID_MARKER_REGISTER("block_rowwise_spmv_scs_benchmark");  
+#endif   
+                    }
+                    else{
+                        LIKWID_MARKER_REGISTER("spmv_scs_benchmark");
+                    }
                 }
             }
             else{
+                // If we ARE using an advanced version, then:
                 if(config->value_type == "ap"){
                     LIKWID_MARKER_REGISTER("spmv_ap_scs_adv_benchmark");
                 }
                 else{
-                    LIKWID_MARKER_REGISTER("spmv_scs_adv_benchmark");
+                    if(config->block_vec_size > 1){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+                        LIKWID_MARKER_REGISTER("block_colwise_spmv_scs_adv_benchmark");  
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+                        LIKWID_MARKER_REGISTER("block_rowwise_spmv_scs_adv_benchmark");  
+#endif   
+                    }
+                    else{
+                        LIKWID_MARKER_REGISTER("spmv_scs_adv_benchmark");
+                    }
                 }
             }
         }
