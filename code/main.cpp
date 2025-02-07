@@ -26,6 +26,10 @@
 #include <omp.h>
 #endif
 
+#ifdef USE_SCAMAC
+    #include "scamac.h"
+#endif
+
 /**
     @brief Perform spmv kernel, either in "solve" mode or "bench" mode
     @param *config : struct to initialze default values and user input
@@ -1496,7 +1500,6 @@ void compute_result(
 */
 void standalone_bench(
     Config config,
-    std::string matrix_file_name,
     int my_rank,
     int comm_size,
     double begin_main_time
@@ -1517,10 +1520,46 @@ void standalone_bench(
 
     // The .mtx file is read only by the root process
     if(my_rank == 0){
+
+#ifdef USE_SCAMAC
+#ifdef DEBUG_MODE
+        if(my_rank == 0){printf("Begin serial SCAMAC matrix generation.\n");}
+#endif
+        int scamac_nrows = 0;
+        int scamac_nnz = 0;
+
+        // To clarify that we are generating the entire matrix on root process
+        int root_my_rank = 0;
+        int root_comm_size = 1;
+
+        // Fill scs arrays with proper data
+        scamac_generate(
+            &config, 
+            root_my_rank, 
+            root_comm_size, 
+            &scamac_nrows,
+            &scamac_nnz,
+            &total_mtx
+        );
+
+        // Finish up mtx struct creation 
+        total_mtx.n_rows = (std::set<int>( (total_mtx.I).begin(), (total_mtx.I).end() )).size();
+        total_mtx.n_cols = (std::set<int>( (total_mtx.J).begin(), (total_mtx.J).end() )).size();
+        total_mtx.nnz = (total_mtx.values).size();
+
+        if(total_mtx.nnz != scamac_nnz) {printf("ERROR: total_mtx.nnz: %d != scamac_nnz:%d\n", total_mtx.nnz, scamac_nnz); exit(1);}
+#ifdef DEBUG_MODE
+        if(my_rank == 0){printf("Finish serial SCAMAC matrix generation.\n");}
+#endif
+#else
 #ifdef DEBUG_MODE
         if(my_rank == 0){printf("Reading mtx file.\n");}
 #endif
-        read_mtx(matrix_file_name, config, &total_mtx, my_rank);
+        read_mtx(config, &total_mtx, my_rank);
+#ifdef DEBUG_MODE
+        if(my_rank == 0){printf("Finished reading mtx file.\n");}
+#endif
+#endif
 
         if(config.value_type == "dp" || config.value_type == "ap[dp_sp]" || config.value_type == "ap[dp_hp]" || config.value_type == "ap[dp_sp_hp]"){
             // copy to total_dp_mtx
@@ -1645,14 +1684,14 @@ void standalone_bench(
                 if(my_rank == 0){printf("Writing validation results to file.\n");}
 #endif
                 if(config.value_type == "dp" || config.value_type == "ap[dp_sp]" || config.value_type == "ap[dp_hp]" || config.value_type == "ap[dp_sp_hp]"){
-                    write_result_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r_dp, &mkl_result, comm_size);
+                    write_result_to_file<double, int>(&(config.seg_method), &config, &r_dp, &mkl_result, comm_size);
                 }
                 else if(config.value_type == "sp" || config.value_type == "ap[sp_hp]"){
-                    write_result_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r_sp, &mkl_result, comm_size);
+                    write_result_to_file<float, int>(&(config.seg_method), &config, &r_sp, &mkl_result, comm_size);
                 }
                 else if(config.value_type == "hp"){
 #ifdef HAVE_HALF_MATH
-                    write_result_to_file<_Float16, int>(&matrix_file_name, &(config.seg_method), &config, &r_hp, &mkl_result, comm_size);
+                    write_result_to_file<_Float16, int>(&(config.seg_method), &config, &r_hp, &mkl_result, comm_size);
 #endif
                 }
             }
@@ -1663,14 +1702,14 @@ void standalone_bench(
             if(my_rank == 0){printf("Writing benchmark results to file.\n");}
 #endif
             if(config.value_type == "dp" || config.value_type == "ap[dp_sp]" || config.value_type == "ap[dp_hp]" || config.value_type == "ap[dp_sp_hp]"){
-                write_bench_to_file<double, int>(&matrix_file_name, &(config.seg_method), &config, &r_dp, comm_size);
+                write_bench_to_file<double, int>(&(config.seg_method), &config, &r_dp, comm_size);
             }
             else if(config.value_type == "sp" || config.value_type == "ap[sp_hp]"){
-                write_bench_to_file<float, int>(&matrix_file_name, &(config.seg_method), &config, &r_sp, comm_size);
+                write_bench_to_file<float, int>(&(config.seg_method), &config, &r_sp, comm_size);
             }
             else if(config.value_type == "hp"){
 #ifdef HAVE_HALF_MATH
-                write_bench_to_file<_Float16, int>(&matrix_file_name, &(config.seg_method), &config, &r_hp, comm_size);
+                write_bench_to_file<_Float16, int>(&(config.seg_method), &config, &r_hp, comm_size);
 #endif            
             }
         }
@@ -1719,7 +1758,6 @@ int main(int argc, char *argv[]){
 #endif
 
     Config config;
-    std::string matrix_file_name{};
 
     // Set defaults for cl inputs
     // TODO: Really should be done elsewhere
@@ -1730,13 +1768,13 @@ int main(int argc, char *argv[]){
     int sigma = config.sigma;
     int revisions = config.n_repetitions;
 
-    parse_cli_inputs(argc, argv, &matrix_file_name, &seg_method, &kernel_format, &value_type, &config, my_rank);
+    parse_cli_inputs(argc, argv, &seg_method, &kernel_format, &value_type, &config, my_rank);
 
     config.seg_method = seg_method;
     config.kernel_format = kernel_format;
     config.value_type = value_type;
 
-    standalone_bench(config, matrix_file_name, my_rank, comm_size, begin_main_time);
+    standalone_bench(config, my_rank, comm_size, begin_main_time);
 
 #ifdef USE_MPI
     MPI_Finalize();

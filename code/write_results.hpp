@@ -41,7 +41,6 @@ void compute_euclid_magnitude(
 
 template<typename VT, typename IT>
 void write_bench_to_file(
-    const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
     Result<VT, IT> *r,
@@ -64,7 +63,7 @@ void write_bench_to_file(
 #endif
     // Print parameters
     working_file.open(config->output_filename_bench, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with ";
+    working_file << config->matrix_file_name << " with ";
 #ifdef USE_MPI
     working_file << comm_size << " MPI processes, and ";
 #endif 
@@ -153,7 +152,6 @@ void write_bench_to_file(
 */
 template<typename VT, typename IT>
 void write_result_to_file(
-    const std::string *matrix_file_name,
     const std::string *seg_method,
     Config *config,
     Result<VT, IT> *r,
@@ -208,7 +206,7 @@ void write_result_to_file(
         output_filename = config->output_filename_ap;
     }
     working_file.open(output_filename, std::fstream::in | std::fstream::out | std::fstream::app);
-    working_file << *matrix_file_name << " with ";
+    working_file << config->matrix_file_name << " with ";
 #ifdef USE_MPI
     working_file << comm_size << " MPI processes, and ";
 #endif 
@@ -421,7 +419,6 @@ void write_result_to_file(
 #ifdef USE_MKL
 /**
     @brief Read in the mtx struct to csr format, and use the mkl_dcsrmv to validate our double precision result against mkl
-    @param *matrix_file_name : name of the matrix-matket format data, taken from the cli
     @param *seg_method : the method by which the rows of mtx are partiitoned, either by rows or by number of non zeros
     @param *config : struct to initialze default values and user input
 */

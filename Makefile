@@ -224,6 +224,11 @@ ifeq ($(USE_MKL),1)
   CXXFLAGS  += -DUSE_MKL
 endif
 
+ifeq ($(USE_SCAMAC),1)
+  CXXFLAGS  += -DUSE_SCAMAC -I$(SCAMAC_INC)
+  LIBS += $(SCAMAC_LIB)
+endif
+
 # Further memory debugging options
 ifeq ($(ASAN),1)
   CXXFLAGS += -fsanitize=address -fno-omit-frame-pointer -g

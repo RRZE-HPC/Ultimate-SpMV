@@ -107,6 +107,8 @@ struct Config
     long tpb = 0;
 #endif
 
+    std::string matrix_file_name{};
+
     // Default matrix segmentation method
     std::string seg_method = "seg-rows";
 

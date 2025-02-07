@@ -5,7 +5,7 @@ SIMD_LENGTH = 4
 # [colwise, rowwise] (If using single vector SpMV, select "colwise")
 BLOCK_VECTOR_LAYOUT = colwise
 # [none, singlevec, multivec, bulkvec, graphtopo]
-MPI_MODE = none
+MPI_MODE = singlevec
 # [1/0]
 DEBUG_MODE = 0
 # [1/0]
@@ -21,7 +21,7 @@ THREADS_PER_BLOCK=128
 
 ### External Libraries ###
 # [1/0]
-USE_OPENMP = 0
+USE_OPENMP = 1
 
 # [1/0]
 USE_MKL = 0
@@ -48,3 +48,7 @@ USE_LIKWID = 0
 # [1/0]
 USE_CUSPARSE = 0
 # NVJITPATH = 
+
+USE_SCAMAC = 0
+# SCAMAC_INC = 
+# SCAMAC_LIB = 
