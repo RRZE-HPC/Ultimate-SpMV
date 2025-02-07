@@ -4,6 +4,7 @@
 #include "ap_kernels.hpp"
 #include "mpi_funcs.hpp"
 #include "write_results.hpp"
+#include "sanity_checker.hpp"
 #include "timing.h"
 
 #include <cinttypes>
@@ -510,38 +511,13 @@ assign_spmv_kernel_gpu_data<VT>(
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
             if(my_rank == test_rank){
-                printf("Before comm spmv_kernel.local_x on rank %i = [\n", my_rank);
-                // TODO: Integrate ROWWISE
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-#endif
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i){
-                    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i * config->block_vec_size + vec_idx]);
-                }
-#endif
-                printf("]\n");
-
-                printf("Before comm spmv_kernel.local_y on rank %i = [\n", my_rank);
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-// #endif
-                printf("]\n");
+                SanityChecker::check_vectors_before_comm<VT, IT>(config, local_scs, local_context, &spmv_kernel, my_rank);
             }
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
 #endif
 
-            // NOTE: In the current implementation, we reuse tags, send buffers, and MPI requests each loop iteration. 
-            // NOTE: This may be risky at high process counts?
 #ifdef DEBUG_MODE
             if(my_rank == 0){printf("Communicating halo elements\n");}
 #endif
@@ -558,29 +534,7 @@ assign_spmv_kernel_gpu_data<VT>(
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
             if(my_rank == test_rank){
-                printf("After comm spmv_kernel.local_x on rank %i = [\n", my_rank);
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-#endif
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i){
-                    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i * config->block_vec_size + vec_idx]);
-                }
-#endif
-                printf("]\n");
-
-                printf("After comm spmv_kernel.local_y on rank %i = [\n", my_rank);
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-// #endif
-                printf("]\n");
+                SanityChecker::check_vectors_after_comm<VT, IT>(config, local_scs, local_context, &spmv_kernel, my_rank);
             }
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
@@ -594,24 +548,7 @@ assign_spmv_kernel_gpu_data<VT>(
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
             if(my_rank == test_rank){
-                printf("spmv_kernel->local_x after spmv_kernel.execute() on rank %i = [\n", my_rank);
-                // TODO: Integrate ROWWISE
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-// #endif
-                printf("]\n");
-
-                printf("spmv_kernel->local_y after spmv_kernel.execute() on rank %i = [\n", my_rank);
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-// #endif
-                printf("]\n");
+                SanityChecker::check_vectors_after_spmv<VT, IT>(config, local_scs, local_context, &spmv_kernel, my_rank);
             }
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
@@ -630,24 +567,7 @@ assign_spmv_kernel_gpu_data<VT>(
             MPI_Barrier(MPI_COMM_WORLD);
 #endif
             if(my_rank == test_rank){
-                printf("After spmv_kernel.swap_local_vectors() local_x on rank %i = [\n", my_rank);
-                // TODO: Integrate ROWWISE
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_x[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-// #endif
-                printf("]\n");
-
-                printf("After spmv_kernel.swap_local_vectors() local_y on rank %i = [\n", my_rank);
-// #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_scs->n_rows + local_context->per_vector_padding; ++i)
-                        printf("vec %i: %f,\n", vec_idx, spmv_kernel.local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
-                }
-// #endif
-                printf("]\n");
+                SanityChecker::check_vectors_after_swap<VT, IT>(config, local_scs, local_context, &spmv_kernel, my_rank);
             }
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
@@ -952,24 +872,7 @@ void gather_results(
 #endif
             int test_rank = 1;
             if(my_rank == test_rank){
-                printf("Gathering results: rank %i local_x_mkl_copy = [\n", my_rank);
-                // TODO: Integrate ROWWISE
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_context->num_local_rows; ++i)
-                        printf("vec %i: %f,\n", vec_idx, r->x_out[i + vec_idx * local_context->num_local_rows]);
-                }
-#endif
-                printf("]\n");
-
-                printf("Gathering results: rank %i local_y = [\n", my_rank);
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < local_context->num_local_rows; ++i)
-                        printf("vec %i: %f,\n", vec_idx, r->y_out[i + vec_idx * local_context->num_local_rows]);
-                }
-#endif
-                printf("]\n");
+                SanityChecker::check_vectors_before_gather<VT, IT>(config, local_context, r, my_rank);
             }
 #ifdef USE_MPI
             MPI_Barrier(MPI_COMM_WORLD);
@@ -1063,24 +966,7 @@ void gather_results(
 #endif
         // NOTE: Only root process has useful data on it 
         if(my_rank == 0){
-            printf("global_x_mkl_copy = [\n");
-            // TODO: Integrate ROWWISE
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                for(int i = 0; i < r->total_rows; ++i)
-                    printf("vec %i: %f,\n", vec_idx, r->total_x[i + vec_idx * r->total_rows]);
-            }
-#endif
-            printf("]\n");
-
-            printf("global_y = [\n");
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                for(int i = 0; i < r->total_rows; ++i)
-                    printf("vec %i: %f,\n", vec_idx, r->total_uspmv_result[i + vec_idx * r->total_rows]);
-            }
-#endif
-            printf("]\n");
+            SanityChecker::check_vectors_after_gather<VT, IT>(config, local_context, r, my_rank);
         }
 #ifdef USE_MPI
         MPI_Barrier(MPI_COMM_WORLD);
@@ -1157,17 +1043,7 @@ void init_local_structs(
 
 
 #ifdef DEBUG_MODE_FINE
-    printf("perm = [");
-    for(int i = 0; i < local_scs->n_rows; ++i){
-        printf("%i, ", local_scs->old_to_new_idx[i]);
-    }
-    printf("]\n");
-
-    printf("inv_perm = [");
-    for(int i = 0; i < local_scs->n_rows; ++i){
-        printf("%i, ", local_scs->new_to_old_idx[i]);
-    }
-    printf("]\n");
+    SanityChecker::check_perm_vectors<VT, IT>(local_scs);
 #endif
 
     // Only used for adaptive precision
@@ -1474,17 +1350,7 @@ void compute_result(
 #endif
     int test_rank = 1;
     if(my_rank == test_rank){
-        // check vectors are "padded" correctly
-        printf("local_x (size %i)= [\n", local_x.vec.size());
-        if(local_x.vec.size() != (local_scs.n_rows + local_context.per_vector_padding) * config->block_vec_size){
-            printf("ERROR: local_x size not expected.\n");
-            exit(0);
-        }
-            
-        for(int i = 0; i < local_x.vec.size(); ++i){
-            printf("%f, \n", local_x.vec[i]);
-        }
-        printf("]\n");
+        SanityChecker::check_vector_padding<VT, IT>(config, local_scs, local_context, local_x);
     }
 
 #ifdef USE_MPI
@@ -1569,17 +1435,7 @@ void compute_result(
     MPI_Barrier(MPI_COMM_WORLD);
 #endif
     if(my_rank == test_rank){
-        printf("local_x = [\n");
-        for(int i = 0; i < local_x.vec.size(); ++i){
-            printf("%f, \n", local_x.vec[i]);
-        }
-        printf("]\n");
-
-        printf("local_x_mkl_copy = [\n");
-        for(int i = 0; i < local_x_mkl_copy.size(); ++i){
-            printf("%f, \n", local_x_mkl_copy[i]);
-        }
-        printf("]\n");
+        SanityChecker::check_local_x_vectors<VT, IT>(local_x_mkl_copy, local_x);
     }
 
 
@@ -1854,7 +1710,6 @@ int main(int argc, char *argv[]){
 
     // Bogus parallel region pin threads to cores
     bogus_init_pin();
-
     double begin_main_time;
 
 #ifdef USE_MPI
