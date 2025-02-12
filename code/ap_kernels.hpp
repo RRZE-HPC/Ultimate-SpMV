@@ -634,60 +634,6 @@ spmv_omp_scs_ap(
 }
 
 #ifdef __CUDACC__
-
-template <typename IT>
-void spmv_gpu_ap_scs_launcher(
-    bool warmup_flag, // not_used
-    const ST * dp_C, // 1
-    const ST * dp_n_chunks, // n_chunks (same for both)
-    const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
-    const IT * RESTRICT dp_chunk_lengths, // unused
-    const IT * RESTRICT dp_col_idxs,
-    const double * RESTRICT dp_values,
-    double * RESTRICT dp_x,
-    double * RESTRICT dp_y, 
-    const ST * sp_C, // 1
-    const ST * sp_n_chunks, // n_chunks (same for both)
-    const IT * RESTRICT sp_chunk_ptrs, // sp_chunk_ptrs
-    const IT * RESTRICT sp_chunk_lengths, // unused
-    const IT * RESTRICT sp_col_idxs,
-    const float * RESTRICT sp_values,
-    float * RESTRICT sp_x,
-    float * RESTRICT sp_y, // unused
-    const ST * n_thread_blocks,
-    const int * my_rank = NULL
-){
-    spmv_gpu_ap_scs<IT><<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
-        dp_C,
-        dp_n_chunks,
-        dp_chunk_ptrs,
-        dp_chunk_lengths,
-        dp_col_idxs,
-        dp_values,
-        dp_x,
-        dp_y,
-        sp_C,
-        sp_n_chunks,
-        sp_chunk_ptrs,
-        sp_chunk_lengths,
-        sp_col_idxs,
-        sp_values,
-        sp_x,
-        sp_y,
-        my_rank
-    );
-
-    // spmv_gpu_scs<double, int><<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
-    //     dp_C, dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y
-    // );
-
-    // spmv_gpu_scs<float, int><<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
-    //     sp_C, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y
-    // );
-
-}
-
-
 template <typename IT>
 __global__ void 
 spmv_gpu_ap_csr(
@@ -749,10 +695,10 @@ void spmv_gpu_ap_csr_launcher(
     const float * RESTRICT sp_values,
     float * RESTRICT sp_x,
     float * RESTRICT sp_y, // unused
-    const ST * n_thread_blocks,
+    const ST n_thread_block,
     const int * my_rank = NULL
 ){
-    spmv_gpu_ap_csr<IT><<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
+    spmv_gpu_ap_csr<IT><<<n_thread_block, THREADS_PER_BLOCK>>>(
         dp_C,  
         dp_n_rows,
         dp_row_ptrs, 
@@ -815,6 +761,58 @@ spmv_gpu_ap_scs(
         dp_y[row] = tmp;
 
     }
+}
+
+template <typename IT>
+void spmv_gpu_ap_scs_launcher(
+    bool warmup_flag, // not_used
+    const ST * dp_C, // 1
+    const ST * dp_n_chunks, // n_chunks (same for both)
+    const IT * RESTRICT dp_chunk_ptrs, // dp_chunk_ptrs
+    const IT * RESTRICT dp_chunk_lengths, // unused
+    const IT * RESTRICT dp_col_idxs,
+    const double * RESTRICT dp_values,
+    double * RESTRICT dp_x,
+    double * RESTRICT dp_y, 
+    const ST * sp_C, // 1
+    const ST * sp_n_chunks, // n_chunks (same for both)
+    const IT * RESTRICT sp_chunk_ptrs, // sp_chunk_ptrs
+    const IT * RESTRICT sp_chunk_lengths, // unused
+    const IT * RESTRICT sp_col_idxs,
+    const float * RESTRICT sp_values,
+    float * RESTRICT sp_x,
+    float * RESTRICT sp_y, // unused
+    const ST n_thread_block,
+    const int * my_rank = NULL
+){
+    spmv_gpu_ap_scs<IT><<<n_thread_block, THREADS_PER_BLOCK>>>(
+        dp_C,
+        dp_n_chunks,
+        dp_chunk_ptrs,
+        dp_chunk_lengths,
+        dp_col_idxs,
+        dp_values,
+        dp_x,
+        dp_y,
+        sp_C,
+        sp_n_chunks,
+        sp_chunk_ptrs,
+        sp_chunk_lengths,
+        sp_col_idxs,
+        sp_values,
+        sp_x,
+        sp_y,
+        my_rank
+    );
+
+    // spmv_gpu_scs<double, int><<<n_thread_block, THREADS_PER_BLOCK>>>(
+    //     dp_C, dp_n_chunks, dp_chunk_ptrs, dp_chunk_lengths, dp_col_idxs, dp_values, dp_x, dp_y
+    // );
+
+    // spmv_gpu_scs<float, int><<<n_thread_block, THREADS_PER_BLOCK>>>(
+    //     sp_C, sp_n_chunks, sp_chunk_ptrs, sp_chunk_lengths, sp_col_idxs, sp_values, sp_x, sp_y
+    // );
+
 }
 
 /**
@@ -930,11 +928,11 @@ void spmv_gpu_ap_scs_adv_launcher(
     const float * RESTRICT sp_values,
     float * RESTRICT sp_x,
     float * RESTRICT sp_y, // unused
-    const ST * n_thread_blocks,
+    const ST n_thread_block,
     const int * my_rank = NULL
 ){
-    // printf("Do I get to the launcher? n_thread_blocks = %i\n", *n_thread_blocks);
-    spmv_gpu_scs_ap_adv<IT><<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
+    // printf("Do I get to the launcher? n_thread_blocks = %i\n", n_thread_block);
+    spmv_gpu_scs_ap_adv<IT><<<n_thread_block, THREADS_PER_BLOCK>>>(
         dp_C, // 1
         dp_n_chunks, // n_chunks (same for both)
         dp_chunk_ptrs, // dp_chunk_ptrs

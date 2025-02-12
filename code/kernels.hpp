@@ -31,9 +31,9 @@ spmv_omp_csr(
     const VT * RESTRICT values,
     VT * RESTRICT x,
     VT * RESTRICT y,
-    int * block_size,
-    int * vec_length,
-    const int * my_rank = NULL
+    int * block_size = nullptr,
+    int * vec_length = nullptr,
+    const int * my_rank = nullptr
 )
 {
     #pragma omp parallel 
@@ -570,8 +570,6 @@ spmv_gpu_scs(
     const VT * RESTRICT values,
     const VT * RESTRICT x,
     VT * RESTRICT y,
-    int *block_size,
-    int * vec_length,
     const int * my_rank = NULL
 )
 {
@@ -603,10 +601,12 @@ void spmv_gpu_scs_launcher(
     const VT * RESTRICT values,
     VT * RESTRICT x,
     VT * RESTRICT y,
-    const ST * n_thread_blocks,
+    int *block_size,
+    int * vec_length,
+    const ST n_thread_blocks,
     const int * my_rank = NULL
 ){
-    spmv_gpu_scs<<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
+    spmv_gpu_scs<<<n_thread_blocks, THREADS_PER_BLOCK>>>(
         C, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y
     );
 }
@@ -652,10 +652,12 @@ void spmv_gpu_csr_launcher(
     const VT * RESTRICT values,
     VT * RESTRICT x,
     VT * RESTRICT y,
-    const ST * n_thread_blocks,
+    int * block_size, // not used
+    int * vec_length, // not used
+    const ST n_thread_blocks,
     const int * my_rank = NULL
 ){
-    spmv_gpu_csr<<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
+    spmv_gpu_csr<<<n_thread_blocks, THREADS_PER_BLOCK>>>(
         C, num_rows, row_ptrs, row_lengths, col_idxs, values, x, y
     );
 }
@@ -745,13 +747,85 @@ void spmv_gpu_scs_adv_launcher(
     const VT * RESTRICT values,
     const VT * RESTRICT x,
     VT * RESTRICT y,
-    const ST * n_thread_blocks,
+    int * block_size,
+    int * vec_length,
+    const ST n_thread_blocks,
     const int * my_rank = NULL
 ){
-    spmv_gpu_scs_adv<<<*n_thread_blocks, THREADS_PER_BLOCK>>>(
+    spmv_gpu_scs_adv<<<n_thread_blocks, THREADS_PER_BLOCK>>>(
         C, n_chunks, chunk_ptrs, chunk_lengths, col_idxs, values, x, y
     );
 }
+
+template <typename VT, typename IT>
+void block_spmv_gpu_csr_launcher(
+    bool warmup_flag, // not used
+    const ST * C, // 1
+    const ST * num_rows, // n_chunks
+    const IT * RESTRICT row_ptrs, // chunk_ptrs
+    const IT * RESTRICT row_lengths, // unused
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT X,
+    VT * RESTRICT Y,
+    int * block_size,
+    int * vec_length,
+    const ST n_thread_blocks,
+    const int * my_rank = NULL
+){
+    // TODO
+    if(my_rank == 0){
+        printf("Kernel not yet implemented.\n");
+        exit(0);
+    }
+}
+
+template <typename VT, typename IT>
+void block_spmv_gpu_scs_adv_launcher(
+    bool warmup_flag, // not used
+    const ST * C, // 1
+    const ST * num_rows, // n_chunks
+    const IT * RESTRICT row_ptrs, // chunk_ptrs
+    const IT * RESTRICT row_lengths, // unused
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT X,
+    VT * RESTRICT Y,
+    int * block_size,
+    int * vec_length,
+    const ST n_thread_blocks,
+    const int * my_rank = NULL
+){
+    // TODO
+    if(my_rank == 0){
+        printf("Kernel not yet implemented.\n");
+        exit(0);
+    }
+}
+
+template <typename VT, typename IT>
+void block_spmv_gpu_scs_general_launcher(
+    bool warmup_flag, // not used
+    const ST * C, // 1
+    const ST * num_rows, // n_chunks
+    const IT * RESTRICT row_ptrs, // chunk_ptrs
+    const IT * RESTRICT row_lengths, // unused
+    const IT * RESTRICT col_idxs,
+    const VT * RESTRICT values,
+    VT * RESTRICT X,
+    VT * RESTRICT Y,
+    int * block_size,
+    int * vec_length,
+    const ST n_thread_blocks,
+    const int * my_rank = NULL
+){
+    // TODO
+    if(my_rank == 0){
+        printf("Kernel not yet implemented.\n");
+        exit(0);
+    }
+}
+
 #endif
 
 #endif

@@ -3245,14 +3245,14 @@ void assign_spmv_kernel_gpu_data(
     IT *d_col_idxs_sp,
     float *d_values_sp,
 #ifdef HAVE_HALF_MATH
-    _Float16 *d_x_sp,
-    _Float16 *d_y_sp,
-    ST *d_C_sp,
-    ST *d_n_chunks_sp,
-    IT *d_chunk_ptrs_sp,
-    IT *d_chunk_lengths_sp,
-    IT *d_col_idxs_sp,
-    _Float16  *d_values_sp,
+    _Float16 *d_x_hp,
+    _Float16 *d_y_hp,
+    ST *d_C_hp,
+    ST *d_n_chunks_hp,
+    IT *d_chunk_ptrs_hp,
+    IT *d_chunk_lengths_hp,
+    IT *d_col_idxs_hp,
+    _Float16  *d_values_hp,
 #endif
     ST n_blocks,
 #ifdef USE_CUSPARSE
@@ -3600,7 +3600,7 @@ void assign_spmv_kernel_gpu_data(
         multi_prec_kernel_args_encoded->hp_local_x =       d_x_hp;
         multi_prec_kernel_args_encoded->hp_local_y =       d_y_hp;
 #endif
-        multi_prec_kernel_args_encoded->n_blocks =         &n_blocks;
+        multi_prec_kernel_args_encoded->n_thread_blocks =         n_blocks;
     }
     else{
         long n_scs_elements = local_scs->chunk_ptrs[local_scs->n_chunks - 1]
@@ -3706,7 +3706,7 @@ void assign_spmv_kernel_gpu_data(
         one_prec_kernel_args_encoded->values =        d_values;
         one_prec_kernel_args_encoded->local_x =       d_x;
         one_prec_kernel_args_encoded->local_y =       d_y;
-        one_prec_kernel_args_encoded->n_blocks =      &n_blocks;
+        one_prec_kernel_args_encoded->n_thread_blocks =      n_blocks;
     }
 #endif
 }

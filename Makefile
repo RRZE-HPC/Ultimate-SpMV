@@ -74,7 +74,6 @@ endif
 ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH
 endif
-  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 ifeq ($(COMPILER),icc)
@@ -90,7 +89,6 @@ endif
 ifeq ($(USE_OPENMP),1)
   CXXFLAGS += -fopenmp
 endif
-  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 
@@ -112,7 +110,6 @@ endif
 ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH 
 endif
-  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 
@@ -132,7 +129,6 @@ endif
 ifeq ($(CPP_VERSION), c++23)
   CXXFLAGS += -DHAVE_HALF_MATH 
 endif
-  CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 endif
 
 ifeq ($(COMPILER),nvcc)
@@ -150,6 +146,8 @@ ifeq ($(USE_MKL),1)
 endif
   CXXFLAGS += -DTHREADS_PER_BLOCK=$(THREADS_PER_BLOCK)
 endif
+
+CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)
 
 ifeq ($(DEBUG_MODE),1)
 	DEBUGFLAGS += -g -DDEBUG_MODE

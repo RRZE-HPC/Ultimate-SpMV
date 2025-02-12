@@ -169,7 +169,7 @@ void bench_spmv(
 #ifdef __CUDACC__
     // If using cuda compiler, move data to device and assign device pointers
     printf("Moving data to device...\n");
-    long n_thread_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    ST n_thread_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
     config->num_blocks = n_thread_blocks; // Just for ease of results printing later
     config->tpb = THREADS_PER_BLOCK;

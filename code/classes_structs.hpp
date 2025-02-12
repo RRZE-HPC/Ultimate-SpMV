@@ -201,7 +201,7 @@ struct OnePrecKernelArgs
     VT * RESTRICT local_x           = nullptr;
     VT * RESTRICT local_y           = nullptr;
 #ifdef __CUDACC__
-    ST * n_thread_blocks            = nullptr;
+    ST n_thread_blocks            = 0;
 #endif
 };
 
@@ -235,7 +235,7 @@ struct MultiPrecKernelArgs
     _Float16 * RESTRICT hp_local_y  = nullptr;
 #endif
 #ifdef __CUDACC__
-    ST * n_thread_blocks            = nullptr;
+    ST n_thread_blocks            = 0;
 #endif
 };
 
@@ -272,7 +272,7 @@ class SpmvKernel {
             int *, // block_vec_size
             int *, // vec length
 #ifdef __CUDACC__
-            const ST *, // n_thread_blocks
+            const ST, // n_thread_blocks
 #endif
             const int * // my_rank
         )> OnePrecFuncPtr;
@@ -306,7 +306,7 @@ class SpmvKernel {
             _Float16 * RESTRICT, // hp_y
 #endif
 #ifdef __CUDACC__
-            const ST *, // n_thread_blocks
+            const ST, // n_thread_blocks
 #endif
             const int *
         )> MultiPrecFuncPtr;
@@ -333,7 +333,7 @@ class SpmvKernel {
         const IT * RESTRICT col_idxs = one_prec_kernel_args_decoded->col_idxs;
         const VT * RESTRICT values = one_prec_kernel_args_decoded->values;
 #ifdef __CUDACC__
-        const ST * n_thread_blocks_1 = one_prec_kernel_args_decoded->n_thread_blocks;
+        const ST n_thread_blocks_1 = one_prec_kernel_args_decoded->n_thread_blocks;
 #endif
 
         // Need different names on all of unpacked args
@@ -359,7 +359,7 @@ class SpmvKernel {
 #endif
 
 #ifdef __CUDACC__
-        const ST * n_thread_blocks_2 = multi_prec_kernel_args_decoded->n_thread_blocks;
+        const ST n_thread_blocks_2 = multi_prec_kernel_args_decoded->n_thread_blocks;
 #endif
 
 #ifdef USE_CUSPARSE
@@ -424,7 +424,11 @@ class SpmvKernel {
                 if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                     if(config->block_vec_size > 1){
                         if(my_rank == 0){printf("CRS SpMMV kernel selected\n");}
+#ifdef __CUDACC__
+                        one_prec_kernel_func_ptr = block_spmv_gpu_csr_launcher<VT, IT>;
+#else
                         one_prec_kernel_func_ptr = block_spmv_omp_csr<VT, IT>;
+#endif
                     }
                     else{
 #ifdef USE_CUSPARSE
@@ -500,17 +504,16 @@ class SpmvKernel {
                     if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                         if(config->block_vec_size > 1){
 #ifdef __CUDACC__
-                        if(my_rank == 0){fprintf(stderr, "ERROR: Advanced SCS SpMMV kernel not yet implemented on GPU.\n");}
-                        exit(1);
+                            one_prec_kernel_func_ptr = block_spmv_gpu_scs_adv_launcher<VT, IT>;
 #else
-                        one_prec_kernel_func_ptr = block_spmv_omp_scs_adv<VT, IT>;
+                            one_prec_kernel_func_ptr = block_spmv_omp_scs_adv<VT, IT>;
 #endif
                         }
                         else{
 #ifdef __CUDACC__
-                        one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
+                            one_prec_kernel_func_ptr = spmv_gpu_scs_adv_launcher<VT, IT>;
 #else
-                        one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
+                            one_prec_kernel_func_ptr = spmv_omp_scs_adv<VT, IT>;
 #endif
                         }
                     }
@@ -586,10 +589,9 @@ class SpmvKernel {
                     if (config->value_type == "dp" || config->value_type == "sp" || config->value_type == "hp"){
                         if(config->block_vec_size > 1){
 #ifdef __CUDACC__
-                        if(my_rank == 0){fprintf(stderr, "ERROR: Basic SCS SpMMV kernel not yet implemented on GPU.\n");}
-                        exit(1);
+                            one_prec_kernel_func_ptr = block_spmv_gpu_scs_general_launcher<VT, IT>;
 #else
-                        one_prec_kernel_func_ptr = block_spmv_omp_scs_general<VT, IT>;
+                            one_prec_kernel_func_ptr = block_spmv_omp_scs_general<VT, IT>;
 #endif
                         }
                         else{
