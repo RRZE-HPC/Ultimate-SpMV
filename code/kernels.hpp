@@ -560,6 +560,31 @@ block_spmv_omp_scs_adv(
 
 #ifdef __CUDACC__
 template <typename VT, typename IT>
+__global__ void pack_d_send_buf(
+    VT **d_to_send_elems, 
+    VT *d_local_x, 
+    IT *d_perm, 
+    IT **d_comm_send_idxs, 
+    IT block_offset, 
+    IT outgoing_buf_size,
+    IT to_proc_idx,
+    IT receiving_proc
+)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < outgoing_buf_size) {
+        // printf("to_proc_idx = %i\n", to_proc_idx);
+        // printf("i = %i\n", i);
+        // printf("%f ", d_to_send_elems[to_proc_idx][i]);
+        (d_to_send_elems[to_proc_idx])[i] = d_local_x[d_perm[d_comm_send_idxs[receiving_proc][i]] + block_offset];
+        // d_to_send_elems[to_proc_idx][i] = (VT) 1.0;
+        // printf("to_proc_idx = %i\n", to_proc_idx);
+        // printf("outgoing_buf_size = %i\n", outgoing_buf_size);
+        // printf("d_to_send_elems[to_proc_idx] = %f\n", d_to_send_elems[to_proc_idx]);
+    }
+}
+
+template <typename VT, typename IT>
 __global__ void
 spmv_gpu_scs(
     const ST *C,

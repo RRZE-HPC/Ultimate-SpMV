@@ -18,6 +18,9 @@ public:
 		int my_rank
 	) {
 		printf("Before comm spmv_kernel.local_x on rank %i = [\n", my_rank);
+#ifdef __CUDACC__
+		// TODO: adapt for CUDA
+#else
 		// TODO: Integrate ROWWISE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
 		for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
@@ -40,7 +43,9 @@ public:
 						printf("vec %i: %f,\n", vec_idx, spmv_kernel->local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
 		}
 // #endif
+#endif
 		printf("]\n");
+
 	};
 
 	template<typename VT, typename IT>
@@ -51,6 +56,9 @@ public:
 		SpmvKernel<VT, IT> *spmv_kernel,
 		int my_rank
 	) {
+#ifdef __CUDACC__
+		// TODO: adapt for CUDA
+#else
 			printf("After comm spmv_kernel.local_x on rank %i = [\n", my_rank);
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
 		for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
@@ -73,7 +81,9 @@ public:
 						printf("vec %i: %f,\n", vec_idx, spmv_kernel->local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
 		}
 // #endif
-		printf("]\n");
+#endif
+	printf("]\n");
+
 	};
 
 	template<typename VT, typename IT>
@@ -85,6 +95,9 @@ public:
 		int my_rank
 	) {
 			printf("spmv_kernel->local_x after spmv_kernel.execute() on rank %i = [\n", my_rank);
+#ifdef __CUDACC__
+			// TODO: adapt for CUDA
+#else
 			// TODO: Integrate ROWWISE
 // #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
 			for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
@@ -101,6 +114,7 @@ public:
 							printf("vec %i: %f,\n", vec_idx, spmv_kernel->local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
 			}
 // #endif
+#endif
 			printf("]\n");
 
 	};
@@ -113,6 +127,9 @@ public:
 		SpmvKernel<VT, IT> *spmv_kernel,
 		int my_rank
 	) {
+#ifdef __CUDACC__
+		// TODO: adapt for CUDA
+#else
 			printf("After spmv_kernel.swap_local_vectors() local_x on rank %i = [\n", my_rank);
 		// TODO: Integrate ROWWISE
 // #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
@@ -130,6 +147,7 @@ public:
 						printf("vec %i: %f,\n", vec_idx, spmv_kernel->local_y[i + vec_idx * (local_scs->n_rows + local_context->per_vector_padding)]);
 		}
 // #endif
+#endif
 		printf("]\n");
 	};
 
@@ -140,6 +158,9 @@ public:
 		Result<VT, IT> *r,
 		int my_rank
 	) {
+#ifdef __CUDACC__
+		// TODO: adapt for CUDA
+#else
 				printf("Gathering results: rank %i local_x_mkl_copy = [\n", my_rank);
 			// TODO: Integrate ROWWISE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
@@ -157,6 +178,7 @@ public:
 							printf("vec %i: %f,\n", vec_idx, r->y_out[i + vec_idx * local_context->num_local_rows]);
 			}
 #endif
+#endif
 			printf("]\n");
 	};
 
@@ -167,6 +189,9 @@ public:
 		Result<VT, IT> *r,
 		int my_rank
 	) {
+#ifdef __CUDACC__
+		// TODO: adapt for CUDA
+#else
 			printf("global_x_mkl_copy = [\n");
 			// TODO: Integrate ROWWISE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
@@ -184,8 +209,73 @@ public:
 							printf("vec %i: %f,\n", vec_idx, r->total_uspmv_result[i + vec_idx * r->total_rows]);
 			}
 #endif
+#endif
 			printf("]\n");
 	};
+
+#ifdef USE_MPI
+	static void check_MPI_Recv_data(
+		Config *config,
+		MPI_Request *send_requests,
+		int outgoing_buf_size,
+		int to_proc_idx,
+		int receiving_proc,
+		int vec_idx,
+		int nzr_size,
+		int my_rank
+	){
+#ifdef DEBUG_MODE
+#ifdef SINGLEVEC_MPI_MODE          
+			std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message send request: " << send_requests[to_proc_idx] << std::endl;
+#endif
+#ifdef MULTIVEC_MPI_MODE          
+			std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message send request: " << send_requests[receiving_proc + vec_idx * nzr_size] << std::endl;
+#endif
+#ifdef BULKVEC_MPI_MODE          
+			std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size * config->block_vec_size << " elements with a message send request: " << send_requests[receiving_proc] << std::endl;
+#endif
+#endif
+	}
+
+	template<typename VT>
+	static void check_MPI_Send_data(
+		ContextData<VT> *local_context,
+		MPI_Request *recv_requests,
+		int incoming_buf_size,
+		int num_local_rows,
+		int sending_proc,
+		int block_offset,
+		int from_proc_idx,
+		int vec_idx,
+		int nzs_size,
+		int my_rank
+	) {
+		#ifdef DEBUG_MODE
+		#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+		#ifdef SINGLEVEC_MPI_MODE
+		                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+		#endif
+		#ifdef MULTIVEC_MPI_MODE
+		                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[my_rank + vec_idx * nzs_size] << std::endl;
+		#endif
+		#ifdef BULKVEC_MPI_MODE
+		                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+		#endif
+		#endif
+		#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+		#ifdef SINGLEVEC_MPI_MODE
+		                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+		#endif
+		#ifdef MULTIVEC_MPI_MODE
+		                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx + vec_idx * nzs_size] << std::endl;
+		#endif
+		#ifdef BULKVEC_MPI_MODE
+		                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
+		#endif
+		#endif
+		#endif
+	}
+#endif
 
 	template<typename VT, typename IT>
 	static void check_perm_vectors(

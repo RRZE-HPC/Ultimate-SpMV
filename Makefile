@@ -43,12 +43,6 @@ endif
 endif
 endif
 
-ifeq ($(COMPILER),nvcc)
-ifeq ($(USE_MPI),1)
-$(error MPI is not currently supported for GPUs)
-endif
-endif
-
 # compiler options
 ifeq ($(COMPILER),gcc)
   CXX       = g++
@@ -145,6 +139,11 @@ ifeq ($(USE_MKL),1)
 	CXXFLAGS += $(MKL)
 endif
   CXXFLAGS += -DTHREADS_PER_BLOCK=$(THREADS_PER_BLOCK)
+  # CXXFLAGS += -DHAVE_HALF_MATH TODO!
+ifeq ($(USE_MPI),1)
+  CXXFLAGS += -I$(OPENMPI_ROOT)/include
+  LIBS += -L$(OPENMPI_ROOT)/lib -lmpi
+endif
 endif
 
 CXXFLAGS += -DSIMD_LENGTH=$(SIMD_LENGTH)

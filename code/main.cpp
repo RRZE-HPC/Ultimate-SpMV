@@ -27,7 +27,11 @@
 #endif
 
 #ifdef USE_SCAMAC
-    #include "scamac.h"
+#include "scamac.h"
+#endif
+
+#ifdef __CUDACC__
+#include <cuda_fp16.h>
 #endif
 
 /**
@@ -107,12 +111,18 @@ void bench_spmv(
 #endif
     CommArgs<VT, IT> *comm_args_encoded = new CommArgs<VT, IT>;
 
+    int nzr_size = 0;
+    int nzs_size = 0;
+    int to_send_count = 0;
+#ifndef USE_MPI
+    VT *to_send_elems[to_send_count];
+#endif
+
 #ifdef USE_MPI
-    int nzr_size = local_context->non_zero_receivers.size();
-    int nzs_size = local_context->non_zero_senders.size();
+    nzr_size = local_context->non_zero_receivers.size();
+    nzs_size = local_context->non_zero_senders.size();
 
     // Allocate a send buffer for each process we're sending a message to
-    int to_send_count;
 #ifdef SINGLEVEC_MPI_MODE
     to_send_count = nzr_size;
 #endif
@@ -125,28 +135,6 @@ void bench_spmv(
 
     VT *to_send_elems[to_send_count];
     
-#ifdef SINGLEVEC_MPI_MODE
-        for(int i = 0; i < nzr_size; ++i){
-            int nz_recver = local_context->non_zero_receivers[i];
-            to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size()];
-        }
-#endif
-#ifdef MULTIVEC_MPI_MODE
-    // With multivec mode, we need to replicate the to_send buffers for each vector
-    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-        for(int i = 0; i < nzr_size; ++i){
-            int nz_recver = local_context->non_zero_receivers[i];
-            to_send_elems[i + vec_idx * nzr_size] = new VT[local_context->comm_send_idxs[nz_recver].size()];
-        }
-    }
-#endif
-#ifdef BULKVEC_MPI_MODE
-    // With bulkvec mode, the send buffers just need to be larger
-        for(int i = 0; i < nzr_size; ++i){
-            int nz_recver = local_context->non_zero_receivers[i];
-            to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size() * config->block_vec_size];
-        }
-#endif
     // Delare MPI requests for non-blocking communication
     int recv_request_buf_size = 0;
     int send_request_buf_size = 0;
@@ -168,12 +156,14 @@ void bench_spmv(
 
 #ifdef __CUDACC__
     // If using cuda compiler, move data to device and assign device pointers
-    printf("Moving data to device...\n");
+#ifdef DEBUG_MODE
+    if(my_rank == 0) printf("Moving data to device...\n");
+#endif
     ST n_thread_blocks = (local_scs->n_rows_padded + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
 
     config->num_blocks = n_thread_blocks; // Just for ease of results printing later
     config->tpb = THREADS_PER_BLOCK;
-    
+
     // NOTE: Allocating all these pointers out here isn't the cleanest...
     VT *d_x = new VT;
     VT *d_y = new VT;
@@ -183,7 +173,17 @@ void bench_spmv(
     IT *d_chunk_lengths = new IT;
     IT *d_col_idxs = new IT;
     VT *d_values = new VT;
-    ST *d_n_thread_blocks = new ST;
+    // ST *d_n_thread_blocks = new ST;
+#ifdef USE_MPI
+    // device pointers for packing kernel
+    VT **d_to_send_elems_ptr;
+    VT **h_to_send_elems_ptr = new VT* [to_send_count];
+    VT **d_to_send_elems_data = new VT* [to_send_count];
+    int **d_comm_send_idxs_ptr = new int*;
+    int **h_comm_send_idxs_ptr = new int* [comm_size];
+    int **d_comm_send_idxs_data = new int* [comm_size];
+    int *d_perm = new int; 
+#endif
 
     double *d_x_dp = new double;
     double *d_y_dp = new double;
@@ -202,19 +202,26 @@ void bench_spmv(
     IT *d_col_idxs_sp = new IT;
     float *d_values_sp = new float;
 #ifdef HAVE_HALF_MATH
-    _Float16 *d_x_sp = new _Float16;
-    _Float16 *d_y_sp = new _Float16;
-    ST *d_C_sp = new ST;
-    ST *d_n_chunks_sp = new ST;
-    IT *d_chunk_ptrs_sp = new IT;
-    IT *d_chunk_lengths_sp = new IT;
-    IT *d_col_idxs_sp = new IT;
-    _Float16  *d_values_sp = new _Float16;
+    _Float16 *d_x_hp = new _Float16;
+    _Float16 *d_y_hp = new _Float16;
+    ST *d_C_hp = new ST;
+    ST *d_n_chunks_hp = new ST;
+    IT *d_chunk_ptrs_hp = new IT;
+    IT *d_chunk_lengths_hp = new IT;
+    IT *d_col_idxs_hp = new IT;
+    _Float16  *d_values_hp = new _Float16;
 #endif
 
 assign_spmv_kernel_gpu_data<VT>(
     config,
+    local_context,
+    nzr_size,
     local_scs,
+#ifdef USE_MPI
+    d_to_send_elems_ptr,
+    h_to_send_elems_ptr,
+    d_to_send_elems_data,
+#endif
     dp_local_scs,
     sp_local_scs,
 #ifdef HAVE_HALF_MATH
@@ -244,7 +251,6 @@ assign_spmv_kernel_gpu_data<VT>(
     d_chunk_lengths,
     d_col_idxs,
     d_values,
-    d_n_thread_blocks,
     d_x_dp,
     d_y_dp,
     d_C_dp,
@@ -283,7 +289,9 @@ assign_spmv_kernel_gpu_data<VT>(
     assign_spmv_kernel_cpu_data<VT, int>(
         config,
         local_context,
+        nzr_size,
         local_scs,
+        to_send_elems,
         dp_local_scs,
         sp_local_scs,
 #ifdef HAVE_HALF_MATH
@@ -312,16 +320,25 @@ assign_spmv_kernel_gpu_data<VT>(
 
     assign_mpi_args<VT, int>(
         comm_args_encoded,
-        comm_args_void_ptr,
         local_context,
 #ifdef USE_MPI
         local_scs,
         work_sharing_arr,
+#ifdef __CUDACC__
+        d_to_send_elems_ptr,
+#else
         to_send_elems,
+#endif
         recv_requests,
         send_requests,
         &nzs_size,
         &nzr_size,
+#ifdef __CUDACC__
+        d_perm,
+        d_comm_send_idxs_ptr,
+        h_comm_send_idxs_ptr,
+        d_comm_send_idxs_data,
+#endif
 #endif
         &my_rank,
         &comm_size
@@ -348,13 +365,26 @@ assign_spmv_kernel_gpu_data<VT>(
         comm_args_void_ptr
     );
 
+#ifdef DEBUG_MODE_FINE
+#ifdef __CUDACC__
+    cudaDeviceSynchronize();
+#endif
+#ifdef USE_MPI
+    MPI_Barrier(MPI_COMM_WORLD);
+    if(my_rank == 0)
+#endif
+    {
+    spmv_kernel.validate_pointers();
+    }
+#endif
+
     // Enter main COMM-spmv-SWAP loop, bench mode
     bool warmup_flag = false;
     if(config->mode == 'b'){
 #ifdef __CUDACC__
     cudaEvent_t start, stop, warmup_start, warmup_stop;
-    cudaEventCreate(&warmup_start);
-    cudaEventCreate(&warmup_stop);
+    CUDA_CHECK(cudaEventCreate(&warmup_start));
+    CUDA_CHECK(cudaEventCreate(&warmup_stop));
 #endif
 
 #ifdef USE_MPI
@@ -365,8 +395,8 @@ assign_spmv_kernel_gpu_data<VT>(
         bool warmup_flag = true;
 
 #ifdef __CUDACC__
-    cudaEventRecord(warmup_start, 0);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaEventRecord(warmup_start, 0));
+    CUDA_CHECK(cudaDeviceSynchronize());
 #else
         double begin_warm_up_loop_time, end_warm_up_loop_time;
         
@@ -391,10 +421,10 @@ assign_spmv_kernel_gpu_data<VT>(
 
 #ifdef __CUDACC__
         float warmup_runtime;
-        cudaEventRecord(warmup_stop, 0);
-        cudaEventSynchronize(warmup_stop);
-        cudaEventElapsedTime(&warmup_runtime, warmup_start, warmup_stop);
-        std::cout << "warm up time: " << warmup_runtime * MILLI_TO_SEC << std::endl;
+        CUDA_CHECK(cudaEventRecord(warmup_stop, 0));
+        CUDA_CHECK(cudaEventSynchronize(warmup_stop));
+        CUDA_CHECK(cudaEventElapsedTime(&warmup_runtime, warmup_start, warmup_stop));
+        if(my_rank == 0) std::cout << "warm up time: " << warmup_runtime * MILLI_TO_SEC << std::endl;
 #else
 
 #ifdef USE_MPI
@@ -404,17 +434,15 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
 #ifdef USE_MPI
         MPI_Barrier(MPI_COMM_WORLD);
-        if(my_rank == 0)
-            std::cout << "warm up time: " << end_warm_up_loop_time - begin_warm_up_loop_time << std::endl;  
+        if(my_rank == 0) std::cout << "warm up time: " << end_warm_up_loop_time - begin_warm_up_loop_time << std::endl;  
 #endif
 #endif
 
 #ifdef __CUDACC__
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-#else
-        double begin_bench_loop_time, end_bench_loop_time = 0.0;
+    CUDA_CHECK(cudaEventCreate(&start));
+    CUDA_CHECK(cudaEventCreate(&stop));
 #endif
+        double begin_bench_loop_time, end_bench_loop_time = 0.0;
 
         float runtime;
 
@@ -429,6 +457,7 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
 
         if(config->comm_halos){
+        // When using MPI, we opt for the MPI_Wtime timers
 #ifdef USE_MPI
             do{
                 MPI_Barrier(MPI_COMM_WORLD);
@@ -437,8 +466,7 @@ assign_spmv_kernel_gpu_data<VT>(
                     begin_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
                     finish_communicate_halo_elements<VT, IT>(config, &spmv_kernel);
                     spmv_kernel.execute(warmup_flag);
-                    if(config->ba_synch)
-                        MPI_Barrier(MPI_COMM_WORLD);
+                    if(config->ba_synch) MPI_Barrier(MPI_COMM_WORLD);
                 }
                 MPI_Barrier(MPI_COMM_WORLD);
                 n_iter = n_iter*2;
@@ -459,17 +487,15 @@ assign_spmv_kernel_gpu_data<VT>(
                 begin_bench_loop_time = MPI_Wtime();
 #else
 #ifdef __CUDACC__
-                cudaEventRecord(start);
-#else
-                begin_bench_loop_time = getTimeStamp();
+                CUDA_CHECK(cudaEventRecord(start));
 #endif
+                begin_bench_loop_time = getTimeStamp();
 #endif
                 
                 for(int k=0; k<n_iter; ++k) {
                     spmv_kernel.execute(warmup_flag);
 #ifdef USE_MPI
-                    if(config->ba_synch)
-                        MPI_Barrier(MPI_COMM_WORLD);
+                    if(config->ba_synch) MPI_Barrier(MPI_COMM_WORLD);
 #endif
                 }
 #ifdef USE_MPI
@@ -480,27 +506,21 @@ assign_spmv_kernel_gpu_data<VT>(
                 runtime = MPI_Wtime() - begin_bench_loop_time;
 #else
 #ifdef __CUDACC__
-                cudaEventRecord(stop);
-                cudaEventSynchronize(stop);
-                cudaEventElapsedTime(&runtime, start, stop);
+                CUDA_CHECK(cudaEventRecord(stop));
+                CUDA_CHECK(cudaEventSynchronize(stop));
+                CUDA_CHECK(cudaEventElapsedTime(&runtime, start, stop));
+                runtime *= MILLI_TO_SEC;
 #else
                 runtime = getTimeStamp() - begin_bench_loop_time;
 #endif
 #endif
-#ifdef __CUDACC__
-            } while (runtime * MILLI_TO_SEC < config->bench_time);
-#else
             } while (runtime < config->bench_time);
-#endif
 
             n_iter = n_iter/2;
         }
+        
         r->n_calls = n_iter;
-#ifdef __CUDACC__
-        r->duration_total_s = runtime * MILLI_TO_SEC;
-#else
         r->duration_total_s = runtime;
-#endif
         r->duration_kernel_s = r->duration_total_s / r->n_calls;
         r->perf_gflops = (double)local_context->total_nnz * 2.0 * config->block_vec_size
                             / r->duration_kernel_s
@@ -580,7 +600,7 @@ assign_spmv_kernel_gpu_data<VT>(
 
 #ifdef USE_MPI
 #ifdef DEBUG_MODE
-            if(my_rank == 0){printf("Synchronizing MPI processes");}
+            if(my_rank == 0){printf("Synchronizing MPI processes\n");}
 #endif
             if(config->ba_synch)
                 MPI_Barrier(MPI_COMM_WORLD);
@@ -612,10 +632,15 @@ assign_spmv_kernel_gpu_data<VT>(
     }
 
     // Delete the allocated space for each other process send buffers
+#ifdef DEBUG_MODE
+    printf("Deleting send buffers.\n");
+#endif
 #ifdef USE_MPI
+#ifndef __CUDACC__
     for(int i = 0; i < to_send_count; ++i){
         delete[] to_send_elems[i];
     }
+#endif
 #ifndef BULKVEC_MPI_MODE
     for(int i = 0; i < local_context->non_zero_senders.size(); ++i){
         MPI_Type_free(&local_context->strided_recv_types[i]);
@@ -696,39 +721,81 @@ assign_spmv_kernel_gpu_data<VT>(
 //     cusparseDestroy(handle);
 // #endif
 
-// TODO: Memcheck doesn't like this for some reason
-// #ifdef __CUDACC__
-//     if(config->value_type == "ap"){
-//         cudaFree(d_x_hp);
-//         cudaFree(d_y_hp);
-//         cudaFree(d_C_hp);
-//         cudaFree(d_n_chunks_hp);
-//         cudaFree(d_chunk_ptrs_hp);
-//         cudaFree(d_chunk_lengths_hp);
-//         cudaFree(d_col_idxs_hp);
-//         cudaFree(d_values_hp);
-//         cudaFree(d_x_lp);
-//         cudaFree(d_y_lp);
-//         cudaFree(d_C_lp);
-//         cudaFree(d_n_chunks_lp);
-//         cudaFree(d_chunk_ptrs_lp);
-//         cudaFree(d_chunk_lengths_lp);
-//         cudaFree(d_col_idxs_lp);
-//         cudaFree(d_values_lp);
-//     }
-//         cudaFree(d_x);
-//         cudaFree(d_y);
-//         cudaFree(d_C);
-//         cudaFree(d_n_chunks);
-//         cudaFree(d_chunk_ptrs);
-//         cudaFree(d_chunk_lengths);
-//         cudaFree(d_col_idxs);
-//         cudaFree(d_values);
+#ifdef __CUDACC__
+#ifdef DEBUG_MODE
+    printf("Freeing cuda buffers.\n");
+#endif
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaFree(d_x));
+    CUDA_CHECK(cudaFree(d_y));
+    CUDA_CHECK(cudaFree(d_C));
+    CUDA_CHECK(cudaFree(d_n_chunks));
+    CUDA_CHECK(cudaFree(d_chunk_ptrs));
+    CUDA_CHECK(cudaFree(d_chunk_lengths));
+    CUDA_CHECK(cudaFree(d_col_idxs));
+    CUDA_CHECK(cudaFree(d_values));
+
+    if(config->value_type == "ap[dp_sp]" || \
+       config->value_type == "ap[dp_hp]" || \
+       config->value_type == "ap[sp_hp]" || \
+       config->value_type == "ap[dp_sp_hp]")
+    {
+        CUDA_CHECK(cudaFree(d_x_dp));
+        CUDA_CHECK(cudaFree(d_y_dp));
+        CUDA_CHECK(cudaFree(d_C_dp));
+        CUDA_CHECK(cudaFree(d_n_chunks_dp));
+        CUDA_CHECK(cudaFree(d_chunk_ptrs_dp));
+        CUDA_CHECK(cudaFree(d_chunk_lengths_dp));
+        CUDA_CHECK(cudaFree(d_col_idxs_dp));
+        CUDA_CHECK(cudaFree(d_values_dp));
+        CUDA_CHECK(cudaFree(d_x_sp));
+        CUDA_CHECK(cudaFree(d_y_sp));
+        CUDA_CHECK(cudaFree(d_C_sp));
+        CUDA_CHECK(cudaFree(d_n_chunks_sp));
+        CUDA_CHECK(cudaFree(d_chunk_ptrs_sp));
+        CUDA_CHECK(cudaFree(d_chunk_lengths_sp));
+        CUDA_CHECK(cudaFree(d_col_idxs_sp));
+        CUDA_CHECK(cudaFree(d_values_sp));
+#ifdef HAVE_HALF_MATH
+        CUDA_CHECK(cudaFree(d_x_hp));
+        CUDA_CHECK(cudaFree(d_y_hp));
+        CUDA_CHECK(cudaFree(d_C_hp));
+        CUDA_CHECK(cudaFree(d_n_chunks_hp));
+        CUDA_CHECK(cudaFree(d_chunk_ptrs_hp));
+        CUDA_CHECK(cudaFree(d_chunk_lengths_hp));
+        CUDA_CHECK(cudaFree(d_col_idxs_hp));
+        CUDA_CHECK(cudaFree(d_values_hp));
+#endif
+       }
+
+       // TODO
+// #ifdef USE_MPI
+// #ifdef DEBUG_MODE
+//     printf("Freeing mpi-cuda buffers.\n");
 // #endif
+//     for(int i = 0; i < nzr_size; ++i){
+//         CUDA_CHECK(cudaFree(d_to_send_elems_data[i]));
+//     }
+//     delete[] d_to_send_elems_ptr;
+//     CUDA_CHECK(cudaFree(d_to_send_elems_ptr));
+
+//     for(int i = 0; i < comm_size; ++i){
+//         CUDA_CHECK(cudaFree(d_comm_send_idxs_data[i]));
+//     }
+//     delete[] d_comm_send_idxs_ptr;
+//     CUDA_CHECK(cudaFree(d_comm_send_idxs_data));
+
+//     CUDA_CHECK(cudaFree(d_perm));
+// #endif
+#endif
 
     delete comm_args_encoded;
     delete one_prec_kernel_args_encoded;
     delete multi_prec_kernel_args_encoded;
+
+    // cudaDeviceSynchronize();
+    // MPI_Barrier(MPI_COMM_WORLD);
+    // exit(0);
 }
 
 /**
@@ -1514,8 +1581,12 @@ void standalone_bench(
 
     Result<double, int> r_dp;
     Result<float, int> r_sp;
+#ifdef __CUDACC__
+    Result<__half, int> r_hp;
+#else
 #ifdef HAVE_HALF_MATH
     Result<_Float16, int> r_hp;
+#endif
 #endif
 
     // The .mtx file is read only by the root process
@@ -1747,8 +1818,26 @@ int main(int argc, char *argv[]){
     LIKWID_MARKER_INIT;
 #endif
 
+    int num_devices = 0;
+#ifdef __CUDACC__
+    CUDA_CHECK(cudaGetDeviceCount(&num_devices));
+
+    int device = my_rank % num_devices;  // Assign rank to a GPU
+
+    CUDA_CHECK(cudaSetDevice(device));
+#ifdef DEBUG_MODE
+    // Get logical and actual device ID
+    int active_device;
+    cudaGetDevice(&active_device);
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, active_device);
+
+    std::cout << "rank: " << my_rank << " running on device " << device;
+    std::cout << " (Real GPU ID: " << prop.pciBusID << ")" << " - " << prop.name << std::endl;
+#endif
+#endif
     // Bogus parallel region pin threads to cores
-    bogus_init_pin();
+    bogus_init_pin(&num_devices, my_rank);
     double begin_main_time;
 
 #ifdef USE_MPI

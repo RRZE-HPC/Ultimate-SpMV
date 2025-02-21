@@ -506,7 +506,17 @@ void validate_result(
         
 #ifdef __CUDACC__
             // TODO: This is an ugly workaround, since I can't seem to get mkl to work with nvcc
-            spmv_omp_csr<double, int>(true, &chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), &(*mkl_result)[0], &y[0]);
+            // spmv_omp_csr<double, int>(true, &chunk_size, &num_rows, scs->chunk_ptrs.data(), scs->chunk_lengths.data(), scs->col_idxs.data(), scs->values.data(), mkl_result->data(), y.data());
+            #pragma omp for schedule(static)
+            for (ST row = 0; row < num_rows; ++row) {
+                double sum{};
+    
+                #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sum)
+                for (int j = scs->chunk_ptrs[row]; j < scs->chunk_ptrs[row + 1]; ++j) {
+                    sum += scs->values[j] * (*mkl_result)[scs->col_idxs[j]];
+                }
+                y[row] = sum;
+            }
 #else
             if(config->seg_method == "seg-metis"){
                 mkl_dcsrmv(&transa, &num_rows, &num_cols, &alpha, &matdescra[0], scs->values.data(), scs->col_idxs.data(), row_ptrs.data(), &(row_ptrs.data())[1], &(mkl_result_permuted[num_rows * vec_idx]), &beta, &(y[num_rows * vec_idx]));

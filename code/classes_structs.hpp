@@ -30,6 +30,16 @@
 
 using ST = long;
 
+#define CUDA_CHECK(call)                                                               \
+  {                                                                                        \
+    cudaError_t cuErr = call;                                                              \
+    if (cudaSuccess != cuErr)                                                              \
+    {                                                                                      \
+      printf("CUDA Error - %s:%d: '%s'\n", __FILE__, __LINE__, cudaGetErrorString(cuErr)); \
+      exit(0);                                                                             \
+    }                                                                                      \
+  }
+
 // Initialize all matrices and vectors the same.
 // Use -rand to initialize randomly.
 static bool g_same_seed_for_every_vector = true;
@@ -81,6 +91,9 @@ struct Config
 
     // Pack contiguous elements for MPI_Isend in parallel
     int par_pack = 0;
+
+    // Skip packing remote elements to assess performance penalty
+    int no_pack = 0;
 
     // Scale rows and column of matrix
     int equilibrate = 0;
@@ -182,6 +195,10 @@ struct CommArgs
     const IT *num_local_rows       = nullptr;
     const IT *per_vector_padding   = nullptr;
     MPI_Datatype MPI_ELEM_TYPE;
+#ifdef __CUDACC__
+    int *d_perm               = nullptr;
+    int **d_comm_send_idxs    = nullptr;
+#endif
 #endif
     ContextData<IT> *local_context = nullptr;
     int *my_rank                   = nullptr;
@@ -258,7 +275,7 @@ struct CuSparseArgs
 
 template <typename VT, typename IT>
 class SpmvKernel {
-    private:
+    public:
         typedef std::function<void(
             bool, // warmup_flag
             const ST *, // C
@@ -388,13 +405,16 @@ class SpmvKernel {
         const IT num_local_rows        = *(comm_args_decoded->num_local_rows);
         const IT per_vector_padding    = *(comm_args_decoded->per_vector_padding);
         MPI_Datatype MPI_ELEM_TYPE     = comm_args_decoded->MPI_ELEM_TYPE;
+#ifdef __CUDACC__
+        int *d_perm               = comm_args_decoded->d_perm; // Needed for d_send_buf packing
+        int **d_comm_send_idxs     = comm_args_decoded->d_comm_send_idxs; // Needed for d_send_buf packing
 #endif
+#endif
+
         ContextData<IT> *local_context = comm_args_decoded->local_context;
         int my_rank   = *(comm_args_decoded->my_rank);
         int comm_size = *(comm_args_decoded->comm_size);
 
-
-    public:
         VT * RESTRICT local_x        = one_prec_kernel_args_decoded->local_x; // NOTE: cannot be constant, changed by comm routine
         VT * RESTRICT local_y        = one_prec_kernel_args_decoded->local_y; // NOTE: cannot be constant, changed by comp routine
         double * RESTRICT dp_local_x = multi_prec_kernel_args_decoded->dp_local_x;
@@ -662,6 +682,168 @@ class SpmvKernel {
             }
         }
 
+        void validate_pointers(
+        ){
+            printf("d_perm\n");
+            ST size; // Should just be n_rows when using crs
+            cudaMemcpy((void *)&size, this->n_chunks, sizeof(long int), cudaMemcpyDeviceToHost);
+
+            int *h_arr = new int[size];  // Allocate host memory
+
+            // Copy device data to host
+            cudaMemcpy(h_arr, this->d_perm, size * sizeof(int), cudaMemcpyDeviceToHost);
+        
+            // Print the contents
+            printf("d_perm Device Memory:\n");
+            for (int i = 0; i < size; i++) {
+                std::cout << h_arr[i] << " ";
+            }
+            std::cout << std::endl;
+        
+            delete[] h_arr;  // Free host memory
+
+            ///////
+#ifdef USE_MPI
+            printf("d_comm_send_idxs\n");
+            for(int i = 0; i < comm_size; ++i){
+                // NOTE: only scans the nonzero receivers
+                int size = local_context->comm_send_idxs[i].size();
+                // void* addr = h_comm_send_idxs_ptr[i];
+                // CUDA_CHECK(cudaMemcpy(addr, h_comm_send_idxs_ptr[i], sizeof(int *), cudaMemcpyDeviceToHost));
+    
+                // std::cout << "h_comm_send_idxs_ptr[" << i << "] address: " << addr << std::endl;
+    
+                // std::cout << "rank: " << (*my_rank) << " sending: " << size << " elems to rank: " << i << std::endl; 
+    
+                int *h_arr = new int[size];  // Allocate host memory
+    
+                // Copy device data to host
+                // CUDA_CHECK(cudaMemcpy(h_arr, &d_comm_send_idxs_ptr[i], size * sizeof(int *), cudaMemcpyDeviceToHost));
+                int *d_subarray;
+                CUDA_CHECK(cudaMemcpy(&d_subarray, &this->d_comm_send_idxs[i], sizeof(int *), cudaMemcpyDeviceToHost));
+                std::cout << "d_subarray = " << d_subarray << std::endl;
+                CUDA_CHECK(cudaMemcpy(h_arr, d_subarray, size * sizeof(int), cudaMemcpyDeviceToHost));
+    
+    
+                // Print the contents
+                printf("d_comm_send_idxs Device Memory:\n");
+                for (int j = 0; j < size; ++j) {
+                    std::cout << h_arr[j] << " ";
+                }
+                std::cout << std::endl;
+            
+                delete[] h_arr;  // Free host memory 
+            }
+            ///////
+            printf("d_to_send_elems\n");
+            for(int i = 0; i < nzr_size; ++i){
+                int nz_recver = local_context->non_zero_receivers[i];
+                // NOTE: only scans the nonzero receivers
+
+                int size = local_context->comm_send_idxs[nz_recver].size();
+                // void* addr = h_comm_send_idxs_ptr[i];
+                // CUDA_CHECK(cudaMemcpy(addr, h_comm_send_idxs_ptr[i], sizeof(int *), cudaMemcpyDeviceToHost));
+    
+                // std::cout << "h_comm_send_idxs_ptr[" << i << "] address: " << addr << std::endl;
+    
+                // std::cout << "rank: " << (*my_rank) << " sending: " << size << " elems to rank: " << i << std::endl; 
+    
+                VT *h_arr = new VT[size];  // Allocate host memory
+    
+                // Copy device data to host
+                // CUDA_CHECK(cudaMemcpy(h_arr, &d_comm_send_idxs_ptr[i], size * sizeof(int *), cudaMemcpyDeviceToHost));
+                VT *d_subarray;
+                if(config->value_type == "dp"){
+                    CUDA_CHECK(cudaMemcpy(&d_subarray, &this->to_send_elems[i], sizeof(double *), cudaMemcpyDeviceToHost));
+                    CUDA_CHECK(cudaMemcpy(h_arr, d_subarray, size * sizeof(double), cudaMemcpyDeviceToHost));
+                }
+                else if(config->value_type == "sp"){
+                    CUDA_CHECK(cudaMemcpy(&d_subarray, &this->to_send_elems[i], sizeof(float *), cudaMemcpyDeviceToHost));
+                    CUDA_CHECK(cudaMemcpy(h_arr, d_subarray, size * sizeof(float), cudaMemcpyDeviceToHost));
+                }
+                std::cout << "d_subarray = " << d_subarray << std::endl;
+    
+                // Print the contents
+                printf("d_to_send_elems Device Memory:\n");
+                for (int j = 0; j < size; ++j) {
+                    std::cout << h_arr[j] << " ";
+                }
+                std::cout << std::endl;
+            
+                delete[] h_arr;  // Free host memory 
+            }
+#endif
+        }
+
+        // template <typename VT, typename IT>
+        inline void pack_send_buf(int outgoing_buf_size, int to_proc_idx, int receiving_proc, int block_offset){
+#ifdef __CUDACC__
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0) validate_pointers();
+#endif
+
+            // TODO: determine thread block size dynamically
+            int TPB = 32;
+            ST n_thread_blocks = (outgoing_buf_size + TPB - 1) / TPB;
+            pack_d_send_buf<VT, IT><<<n_thread_blocks,TPB>>>(
+                this->to_send_elems, 
+                this->local_x, 
+                this->d_perm, 
+                this->d_comm_send_idxs, 
+                block_offset, 
+                outgoing_buf_size,
+                to_proc_idx,
+                receiving_proc
+            );
+
+            cudaDeviceSynchronize();
+
+#else
+#ifndef BULKVEC_MPI_MODE
+            #pragma omp parallel for if(config->par_pack)   
+            for(int i = 0; i < outgoing_buf_size; ++i){
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+#ifdef SINGLEVEC_MPI_MODE
+                (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
+#endif
+#ifdef MULTIVEC_MPI_MODE
+                (to_send_elems[to_proc_idx + vec_idx * nzr_size])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
+#endif
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+#ifdef SINGLEVEC_MPI_MODE
+                (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
+#endif
+#ifdef MULTIVEC_MPI_MODE
+                (to_send_elems[to_proc_idx + vec_idx * nzr_size])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
+#endif
+#endif
+            }
+#else
+            // Need to pack differently if in bulk vector mode
+            // NOTE: could combine with above, if you guard outer loop...
+#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
+            #pragma omp parallel for collapse(2) if(config->par_pack)   
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                int block_offset = vec_idx * (num_local_rows + per_vector_padding); // <- redeclare for parallel region
+                for(int i = 0; i < outgoing_buf_size; ++i){
+                    (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
+                }
+            }
+#endif
+#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
+            #pragma omp parallel for collapse(2) if(config->par_pack)  
+            for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+                for(int i = 0; i < outgoing_buf_size; ++i){
+                    (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
+                }
+            }
+#endif
+#endif
+
+#endif
+        }
+
         inline void init_halo_exchange(int vec_idx = 0){
 #ifdef USE_MPI
 #ifndef NO_MPI_MODE
@@ -677,31 +859,8 @@ class SpmvKernel {
                 sending_proc = local_context->non_zero_senders[from_proc_idx];
                 incoming_buf_size = local_context->recv_counts_cumsum[sending_proc + 1] - local_context->recv_counts_cumsum[sending_proc];
 
-                // TODO: Clean up
-#ifdef DEBUG_MODE
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-#ifdef SINGLEVEC_MPI_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-#endif
-#ifdef MULTIVEC_MPI_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[my_rank + vec_idx * nzs_size] << std::endl;
-#endif
-#ifdef BULKVEC_MPI_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << num_local_rows + local_context->recv_counts_cumsum[sending_proc] + block_offset << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-#endif
-#endif
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-#ifdef SINGLEVEC_MPI_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-#endif
-#ifdef MULTIVEC_MPI_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx + vec_idx * nzs_size] << std::endl;
-#endif
-#ifdef BULKVEC_MPI_MODE
-                std::cout << "I'm proc: " << my_rank << ", receiving: " << incoming_buf_size << " elements into index " << (config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] + vec_idx << " from a message with recv request: " << &recv_requests[from_proc_idx] << std::endl;
-#endif
-#endif
-#endif
+                // TODO: Rewrite sanity checker so we can use it here
+                // SanityChecker::check_MPI_Send_data<VT>(local_context, recv_requests, incoming_buf_size, num_local_rows, sending_proc, block_offset, from_proc_idx, vec_idx, my_rank);
 
                 MPI_Irecv(
 #ifdef SINGLEVEC_MPI_MODE
@@ -769,66 +928,25 @@ class SpmvKernel {
                     exit(1);
                 }
 #endif
-
-#ifndef BULKVEC_MPI_MODE
                 // Move non-contiguous data to a contiguous buffer for communication
-                #pragma omp parallel for if(config->par_pack)   
-                for(int i = 0; i < outgoing_buf_size; ++i){
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-#ifdef SINGLEVEC_MPI_MODE
-                    (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
-#endif
-#ifdef MULTIVEC_MPI_MODE
-                    (to_send_elems[to_proc_idx + vec_idx * nzr_size])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
-#endif
-#endif
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-#ifdef SINGLEVEC_MPI_MODE
-                    (to_send_elems[to_proc_idx])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
-#endif
-#ifdef MULTIVEC_MPI_MODE
-                    (to_send_elems[to_proc_idx + vec_idx * nzr_size])[i] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
-#endif
-#endif
-                }
-#else
-                // Need to pack differently if in bulk vector mode
-                // NOTE: could combine with above, if you guard outer loop...
-#ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-                #pragma omp parallel for collapse(2) if(config->par_pack)   
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    int block_offset = vec_idx * (num_local_rows + per_vector_padding); // <- redeclare for parallel region
-                    for(int i = 0; i < outgoing_buf_size; ++i){
-                        (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] + block_offset];
-                    }
-                }
-#endif
-#ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
-                #pragma omp parallel for collapse(2) if(config->par_pack)  
-                for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
-                    for(int i = 0; i < outgoing_buf_size; ++i){
-                        (to_send_elems[to_proc_idx])[i + outgoing_buf_size * vec_idx] = local_x[perm[local_context->comm_send_idxs[receiving_proc][i]] * config->block_vec_size + vec_idx];
-                    }
-                }
-#endif
-#endif
+                if(!config->no_pack) pack_send_buf(outgoing_buf_size, to_proc_idx, receiving_proc, block_offset);
+                
+                // TODO: Rewrite sanity checker so we can use it here
+                // SanityChecker::check_MPI_Recv_data<VT>(config, send_requests, outgoing_buf_size, to_proc_idx, receiving_proc, vec_idx, my_rank);
 
-#ifdef DEBUG_MODE
-#ifdef SINGLEVEC_MPI_MODE          
-                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message send request: " << &send_requests[to_proc_idx] << std::endl;
+#ifdef __CUDACC__
+                // TODO: How to get around this?
+                VT *h_subarray;
+                cudaMemcpy(&h_subarray, &to_send_elems[to_proc_idx], sizeof(VT *), cudaMemcpyDeviceToHost);
 #endif
-#ifdef MULTIVEC_MPI_MODE          
-                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size << " elements with a message send request: " << &send_requests[receiving_proc + vec_idx * nzr_size] << std::endl;
-#endif
-#ifdef BULKVEC_MPI_MODE          
-                std::cout << "I'm proc: " << my_rank << ", sending: " << outgoing_buf_size * config->block_vec_size << " elements with a message send request: " << &send_requests[receiving_proc] << std::endl;
-#endif
-#endif
-
 
                 MPI_Isend(
 #ifdef SINGLEVEC_MPI_MODE
-                    &(to_send_elems[to_proc_idx])[0],
+#ifdef __CUDACC__
+                    h_subarray,
+#else
+                    to_send_elems[to_proc_idx],
+#endif              
                     outgoing_buf_size,
                     this->MPI_ELEM_TYPE,
                     receiving_proc,
@@ -873,6 +991,9 @@ class SpmvKernel {
 #ifdef BULKVEC_MPI_MODE
             MPI_Waitall(nzr_size, send_requests, MPI_STATUS_IGNORE);
             MPI_Waitall(nzs_size, recv_requests, MPI_STATUS_IGNORE);
+#endif
+#ifdef __CUDACC__
+            CUDA_CHECK(cudaDeviceSynchronize());
 #endif
 #endif
         }

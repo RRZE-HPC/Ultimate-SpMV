@@ -27,7 +27,6 @@
 #include "scamac.h"
 #endif
 
-
 template <typename T>
 struct max_rel_error
 {
@@ -988,27 +987,28 @@ void cli_options_messge(
     std::string *value_type,
     Config *config){
     fprintf(stderr, "Usage: %s <martix-market-filename/SCAMAC-config> <kernel-format> [options]\n " 
-        "options [defaults] (description): \n \\
-        -block_vec_size [%i] (int: width of block vectors for SpMMV) \n \\
-        -c [%li] (int: chunk size (required for scs)) \n \\
-        -s [%li] (int: sigma (required for scs)) \n \\
-        -rev [%li] (int: number of back-to-back revisions to perform) \n \\
-        -rand_x [%c] (0/1: random x vector option) \n \\
-        -dp / sp / hp / ap[dp_sp] / ap[dp_hp] / ap[sp_hp] / ap[dp_sp_hp] [%s] (numerical precision of matrix data) \n \\
-        -seg_metis / seg_nnz / seg_rows [%s] (global matrix partitioning for MPI) \n \\
-        -validate [%i] (0/1: check result against MKL option) \n \\
-        -verbose [%i] (0/1: verbose validation of results) \n \\
-        -mode [%c] ('s'/'b': either in solve mode or bench mode) \n \\
-        -bench_time [%g] (float: minimum number of seconds for SpMV benchmark) \n \\
-        -ba_synch [%i] (0/1: synch processes each benchmark loop) \n \\
-        -comm_halos [%i] (0/1: communicate halo elements each benchmark loop) \n \\
-        -par_pack [%i] (0/1: pack elements contigously for MPI_Isend in parallel) \n \\
-        -equilibrate [%i] (0/1: normalize rows of matrix) \n \\
-        --------------------------- Adaptive Precision Options --------------------------- \n \\
-        -ap_threshold_1 [%f] (float: threshold for two-way matrix partitioning for adaptive precision `-ap`) \n \\
-        -ap_threshold_2 [%f] (float: threshold for three-way matrix partitioning for adaptive precision `-ap`) \n \\
-        -dropout[%f] (0/1: enable dropout of elements below theh designated threshold) \n \\
-        -dropout_threshold [%f] (float: remove matrix elements below this range) \n\n",
+        "options [defaults] (description): \n" \
+        "-block_vec_size [%i] (int: width of block vectors for SpMMV) \n" \
+        "-c [%li] (int: chunk size (required for scs)) \n" \
+        "-s [%li] (int: sigma (required for scs)) \n" \
+        "-rev [%li] (int: number of back-to-back revisions to perform) \n" \
+        "-rand_x [%c] (0/1: random x vector option) \n" \
+        "-dp / sp / hp / ap[dp_sp] / ap[dp_hp] / ap[sp_hp] / ap[dp_sp_hp] [%s] (numerical precision of matrix data) \n" \
+        "-seg_metis / seg_nnz / seg_rows [%s] (global matrix partitioning for MPI) \n" \
+        "-validate [%i] (0/1: check result against MKL option) \n" \
+        "-verbose [%i] (0/1: verbose validation of results) \n" \
+        "-mode [%c] ('s'/'b': either in solve mode or bench mode) \n" \
+        "-bench_time [%g] (float: minimum number of seconds for SpMV benchmark) \n" \
+        "-ba_synch [%i] (0/1: synch processes each benchmark loop) \n" \
+        "-comm_halos [%i] (0/1: communicate halo elements each benchmark loop) \n" \
+        "-par_pack [%i] (0/1: pack elements contigously for MPI_Isend in parallel) \n" \
+        "-no_pack [%i] (0/1: skip packing remote elements to assess performance penalty) \n" \
+        "-equilibrate [%i] (0/1: normalize rows of matrix) \n" \
+        "--------------------------- Adaptive Precision Options --------------------------- \n" \
+        "-ap_threshold_1 [%f] (float: threshold for two-way matrix partitioning for adaptive precision `-ap`) \n" \
+        "-ap_threshold_2 [%f] (float: threshold for three-way matrix partitioning for adaptive precision `-ap`) \n" \
+        "-dropout[%f] (0/1: enable dropout of elements below theh designated threshold) \n" \
+        "-dropout_threshold [%f] (float: remove matrix elements below this range) \n\n",
         argv[0], \
         config->block_vec_size, \
         config->chunk_size, \
@@ -1024,6 +1024,7 @@ void cli_options_messge(
         config->ba_synch, \
         config->comm_halos, \
         config->par_pack, \
+        config->no_pack, \
         config->equilibrate, \
         config->ap_threshold_1, \
         config->ap_threshold_2, \
@@ -1219,6 +1220,19 @@ void parse_cli_inputs(
             {
                 if(my_rank == 0){
                     fprintf(stderr, "ERROR: You can only choose to pack contiguous elements for MPI_Isend in parallel (1, i.e. yes) or not (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
+        else if (arg == "-no_pack" || arg == "-no-pack")
+        {
+            config->no_pack = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->no_pack != 0 && config->no_pack != 1)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to pack contiguous elements for MPI_Isend (1, i.e. yes) or skip (0, i.e. no).\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }
@@ -2742,9 +2756,15 @@ void register_likwid_markers(
 }
 #endif
 
-void bogus_init_pin(void){
-    
+void bogus_init_pin(int *num_devices, int my_rank){
     // Just to take overhead of pinning away from timers
+
+#ifdef __CUDACC__
+    CUDA_CHECK(cudaGetDeviceCount(num_devices));
+    CUDA_CHECK(cudaSetDevice(my_rank));
+    CUDA_CHECK(cudaDeviceSynchronize());
+#else
+
     int num_threads;
     double bogus = 0.0;
 
@@ -2764,6 +2784,7 @@ void bogus_init_pin(void){
     if(bogus < 100){
         printf("");
     }
+#endif
 }
 
 /**
@@ -3091,7 +3112,9 @@ template <typename VT, typename IT>
 void assign_spmv_kernel_cpu_data(
     Config *config,
     ContextData<IT> *local_context,
+    int nzr_size,
     ScsData<VT, IT> *local_scs,
+    VT **&to_send_elems,
     ScsData<double, IT> *dp_local_scs,
     ScsData<float, IT> *sp_local_scs,
 #ifdef HAVE_HALF_MATH
@@ -3116,6 +3139,33 @@ void assign_spmv_kernel_cpu_data(
     OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded,
     MultiPrecKernelArgs<IT> *multi_prec_kernel_args_encoded
 ){
+#ifdef DEBUG_MODE
+     printf("Assigning data to cpu structs...\n");
+#endif
+
+#ifdef SINGLEVEC_MPI_MODE
+    for(int i = 0; i < nzr_size; ++i){
+        int nz_recver = local_context->non_zero_receivers[i];
+        to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size()];
+    }
+#endif
+#ifdef MULTIVEC_MPI_MODE
+// With multivec mode, we need to replicate the to_send buffers for each vector
+for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+    for(int i = 0; i < nzr_size; ++i){
+        int nz_recver = local_context->non_zero_receivers[i];
+        to_send_elems[i + vec_idx * nzr_size] = new VT[local_context->comm_send_idxs[nz_recver].size()];
+    }
+}
+#endif
+#ifdef BULKVEC_MPI_MODE
+// With bulkvec mode, the send buffers just need to be larger
+    for(int i = 0; i < nzr_size; ++i){
+        int nz_recver = local_context->non_zero_receivers[i];
+        to_send_elems[i] = new VT[local_context->comm_send_idxs[nz_recver].size() * config->block_vec_size];
+    }
+#endif
+
     if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[sp_hp]" || config->value_type == "ap[dp_sp_hp]"){
         multi_prec_kernel_args_encoded->dp_C = &dp_local_scs->C;
         multi_prec_kernel_args_encoded->dp_n_chunks = &dp_local_scs->n_chunks; //shared for now
@@ -3160,7 +3210,6 @@ void assign_spmv_kernel_cpu_data(
 template <typename VT, typename IT>
 void assign_mpi_args(
     CommArgs<VT, IT> *comm_args_encoded,
-    void *comm_args_void_ptr,
     ContextData<IT> *local_context,
 #ifdef USE_MPI
     ScsData<VT, IT> *local_scs,
@@ -3170,11 +3219,20 @@ void assign_mpi_args(
     MPI_Request *send_requests,
     int *nzs_size,
     int *nzr_size,
+#ifdef __CUDACC__
+    int *&d_perm, // device pointers for packing kernel
+    int **&d_comm_send_idxs_ptr,
+    int **&h_comm_send_idxs_ptr,
+    int **&d_comm_send_idxs_data,
+#endif
 #endif
     int *my_rank,
     int *comm_size
 ){
 #ifdef USE_MPI
+#ifdef DEBUG_MODE
+     printf("Assigning data to mpi structs...\n");
+#endif
     MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
     // Encode comm args into struct
     comm_args_encoded->work_sharing_arr     = work_sharing_arr;
@@ -3187,6 +3245,27 @@ void assign_mpi_args(
     comm_args_encoded->num_local_rows       = &(local_context->num_local_rows);
     comm_args_encoded->per_vector_padding   = &(local_context->per_vector_padding);
     comm_args_encoded->MPI_ELEM_TYPE        = MPI_ELEM_TYPE;
+#ifdef __CUDACC__
+    CUDA_CHECK(cudaMalloc(&d_perm, local_scs->n_rows*sizeof(int)));
+    CUDA_CHECK(cudaMemcpy(d_perm, local_scs->old_to_new_idx.data(), local_scs->n_rows*sizeof(int), cudaMemcpyHostToDevice));
+    comm_args_encoded->d_perm               = d_perm;
+
+    // Allocate double pointer
+    CUDA_CHECK(cudaMalloc(&d_comm_send_idxs_ptr, (*comm_size) * sizeof(int *)));
+
+    // Allocate each individual pointer
+    for(int i = 0; i < (*comm_size); ++i){
+        int n_elem_to_send = local_context->comm_send_idxs[i].size();
+        CUDA_CHECK(cudaMalloc((void **)&d_comm_send_idxs_data[i], n_elem_to_send*sizeof(int)));
+        CUDA_CHECK(cudaMemcpy(d_comm_send_idxs_data[i], local_context->comm_send_idxs[i].data(), n_elem_to_send*sizeof(int), cudaMemcpyHostToDevice));
+        h_comm_send_idxs_ptr[i] = d_comm_send_idxs_data[i];
+    }
+
+    CUDA_CHECK(cudaMemcpy(d_comm_send_idxs_ptr, h_comm_send_idxs_ptr, (*comm_size) * sizeof(int *), cudaMemcpyHostToDevice));
+    comm_args_encoded->d_comm_send_idxs     = d_comm_send_idxs_ptr;
+
+#endif
+    MPI_Barrier(MPI_COMM_WORLD);
 #endif
     comm_args_encoded->local_context        = local_context;
     comm_args_encoded->my_rank              = my_rank;
@@ -3197,7 +3276,14 @@ void assign_mpi_args(
 template <typename VT, typename IT>
 void assign_spmv_kernel_gpu_data(
     Config *config,
+    ContextData<IT> *local_context,
+    int nzr_size,
     ScsData<VT, IT> *local_scs,
+#ifdef USE_MPI
+    VT **&d_to_send_elems_ptr,
+    VT **h_to_send_elems_ptr,
+    VT **&d_to_send_elems_data,
+#endif
     ScsData<double, IT> *dp_local_scs,
     ScsData<float, IT> *sp_local_scs,
 #ifdef HAVE_HALF_MATH
@@ -3219,40 +3305,40 @@ void assign_spmv_kernel_gpu_data(
     _Float16 *hp_local_x,
     _Float16 *hp_local_x_permuted,
 #endif
-    VT *d_x,
-    VT *d_y,
-    ST *d_C,
-    ST *d_n_chunks,
-    IT *d_chunk_ptrs,
-    IT *d_chunk_lengths,
-    IT *d_col_idxs,
-    VT *d_values,
-    ST *d_n_blocks,
-    double *d_x_dp,
-    double *d_y_dp,
-    ST *d_C_dp,
-    ST *d_n_chunks_dp,
-    IT *d_chunk_ptrs_dp,
-    IT *d_chunk_lengths_dp,
-    IT *d_col_idxs_dp,
+    VT *&d_x,
+    VT *&d_y,
+    ST *&d_C,
+    ST *&d_n_chunks,
+    IT *&d_chunk_ptrs,
+    IT *&d_chunk_lengths,
+    IT *&d_col_idxs,
+    VT *&d_values,
+    // ST *&d_n_blocks,
+    double *&d_x_dp,
+    double *&d_y_dp,
+    ST *&d_C_dp,
+    ST *&d_n_chunks_dp,
+    IT *&d_chunk_ptrs_dp,
+    IT *&d_chunk_lengths_dp,
+    IT *&d_col_idxs_dp,
     double *d_values_dp,
-    float *d_x_sp,
-    float *d_y_sp,
-    ST *d_C_sp,
-    ST *d_n_chunks_sp,
-    IT *d_chunk_ptrs_sp,
-    IT *d_chunk_lengths_sp,
-    IT *d_col_idxs_sp,
-    float *d_values_sp,
+    float *&d_x_sp,
+    float *&d_y_sp,
+    ST *&d_C_sp,
+    ST *&d_n_chunks_sp,
+    IT *&d_chunk_ptrs_sp,
+    IT *&d_chunk_lengths_sp,
+    IT *&d_col_idxs_sp,
+    float *&d_values_sp,
 #ifdef HAVE_HALF_MATH
-    _Float16 *d_x_hp,
-    _Float16 *d_y_hp,
-    ST *d_C_hp,
-    ST *d_n_chunks_hp,
-    IT *d_chunk_ptrs_hp,
-    IT *d_chunk_lengths_hp,
-    IT *d_col_idxs_hp,
-    _Float16  *d_values_hp,
+    _Float16 *&d_x_hp,
+    _Float16 *&d_y_hp,
+    ST *&d_C_hp,
+    ST *&d_n_chunks_hp,
+    IT *&d_chunk_ptrs_hp,
+    IT *&d_chunk_lengths_hp,
+    IT *&d_col_idxs_hp,
+    _Float16  *&d_values_hp,
 #endif
     ST n_blocks,
 #ifdef USE_CUSPARSE
@@ -3261,6 +3347,9 @@ void assign_spmv_kernel_gpu_data(
     OnePrecKernelArgs<VT, IT> *one_prec_kernel_args_encoded,
     MultiPrecKernelArgs<IT> *multi_prec_kernel_args_encoded
 ){
+#ifdef DEBUG_MODE
+    printf("Assigning data to gpu structs...\n");
+#endif
 
 #ifdef USE_CUSPARSE
     cusparseHandle_t     handle = NULL;
@@ -3271,51 +3360,51 @@ void assign_spmv_kernel_gpu_data(
     float     alpha           = 1.0f;
     float     beta            = 0.0f;
 
-    cusparseCreate(&handle);
+    CUDA_CHECK(cusparseCreate(&handle));
 
     if (config->kernel_format == "crs"){
         if(config->value_type == "dp"){
-            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+            CUDA_CHECK(cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
                 d_chunk_ptrs, d_col_idxs, d_values,
                 CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                 CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F
-            );
-            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F);
-            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F);
+            ));
+            CUDA_CHECK(cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F));
+            CUDA_CHECK(cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F));
 
-            cusparseSpMV_bufferSize(
+            CUDA_CHECK(cusparseSpMV_bufferSize(
                 handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
                 CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
-            );
+            ));
         }
         else if(config->value_type == "sp"){
-            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+            CUDA_CHECK(cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
                 d_chunk_ptrs, d_col_idxs, d_values,
                 CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F);
-            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F);
-            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F);
+                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
+            CUDA_CHECK(cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F));
+            CUDA_CHECK(cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F));
 
-            cusparseSpMV_bufferSize(
+            CUDA_CHECK(cusparseSpMV_bufferSize(
                 handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
                 CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
-            );
+            ));
         }
         else if(config->value_type == "hp"){
-            cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
+            CUDA_CHECK(cusparseCreateCsr(&matA, local_scs->n_rows, local_scs->n_cols, local_scs->nnz, 
                 d_chunk_ptrs, d_col_idxs, d_values,
                 CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_16F);
-            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_16F);
-            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_16F);
+                CUSPARSE_INDEX_BASE_ZERO, CUDA_R_16F));
+            CUDA_CHECK(cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_16F));
+            CUDA_CHECK(cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_16F));
 
-            cusparseSpMV_bufferSize(
+            CUDA_CHECK(cusparseSpMV_bufferSize(
                 handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, vecX, &beta, vecY, CUDA_R_16F,
                 CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
-            );
+            ));
         }
         else{
             printf("CuSparse SpMV only enabled with CRS format in DP, SP, or HP\n");
@@ -3325,7 +3414,7 @@ void assign_spmv_kernel_gpu_data(
     }
     else{
         if(config->value_type == "dp"){
-            cusparseCreateSlicedEll(
+            CUDA_CHECK(cusparseCreateSlicedEll(
                 &matA, 
                 local_scs->n_rows, 
                 local_scs->n_cols, 
@@ -3339,20 +3428,20 @@ void assign_spmv_kernel_gpu_data(
                 CUSPARSE_INDEX_32I,
                 CUSPARSE_INDEX_BASE_ZERO, 
                 CUDA_R_64F
-            );
+            ));
             // Create dense vector X
-            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F);
+            CUDA_CHECK(cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_64F));
             // Create dense vector y
-            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F);
+            CUDA_CHECK(cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_64F));
             // allocate an external buffer if needed
-            cusparseSpMV_bufferSize(
+            CUDA_CHECK(cusparseSpMV_bufferSize(
                 handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, vecX, &beta, vecY, CUDA_R_64F,
                 CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
-            );
+            ));
         }
         else if(config->value_type == "sp"){
-            cusparseCreateSlicedEll(
+            CUDA_CHECK(cusparseCreateSlicedEll(
                 &matA, 
                 local_scs->n_rows, 
                 local_scs->n_cols, 
@@ -3366,20 +3455,20 @@ void assign_spmv_kernel_gpu_data(
                 CUSPARSE_INDEX_32I,
                 CUSPARSE_INDEX_BASE_ZERO, 
                 CUDA_R_32F
-            );
+            ));
             // Create dense vector X
-            cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F);
+            CUDA_CHECK(cusparseCreateDnVec(&vecX, local_scs->n_cols, d_x, CUDA_R_32F));
             // Create dense vector y
-            cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F);
+            CUDA_CHECK(cusparseCreateDnVec(&vecY, local_scs->n_rows, d_y, CUDA_R_32F));
             // allocate an external buffer if needed
-            cusparseSpMV_bufferSize(
+            CUDA_CHECK(cusparseSpMV_bufferSize(
                 handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, vecX, &beta, vecY, CUDA_R_32F,
                 CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
-            );
+            ));
         }
         else if(config->value_type == "hp"){
-            cusparseCreateSlicedEll(
+            CUDA_CHECK(cusparseCreateSlicedEll(
                 &matA, 
                 local_scs->n_rows_padded, 
                 local_scs->n_cols, 
@@ -3393,17 +3482,17 @@ void assign_spmv_kernel_gpu_data(
                 CUSPARSE_INDEX_32I,
                 CUSPARSE_INDEX_BASE_ZERO, 
                 CUDA_R_16F
-            );
+            ));
             // Create dense vector X
-            cusparseCreateDnVec(&vecX, local_scs->n_rows_padded, d_x, CUDA_R_16F);
+            CUDA_CHECK(cusparseCreateDnVec(&vecX, local_scs->n_rows_padded, d_x, CUDA_R_16F));
             // Create dense vector y
-            cusparseCreateDnVec(&vecY, local_scs->n_rows_padded, d_y, CUDA_R_16F);
+            CUDA_CHECK(cusparseCreateDnVec(&vecY, local_scs->n_rows_padded, d_y, CUDA_R_16F));
             // allocate an external buffer if needed
-            cusparseSpMV_bufferSize(
+            CUDA_CHECK(cusparseSpMV_bufferSize(
                 handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, vecX, &beta, vecY, CUDA_R_16F,
                 CUSPARSE_SPMV_ALG_DEFAULT, &bufferSize
-            );
+            ));
         }
         else{
             printf("CuSparse SELL-P only enabled with SCS format in DP, SP, or HP\n");
@@ -3411,7 +3500,7 @@ void assign_spmv_kernel_gpu_data(
         }
     }
 
-    cudaMalloc(&dBuffer, bufferSize);
+    CUDA_CHECK(cudaMalloc(&dBuffer, bufferSize));
 
     cusparse_args_encoded->handle = handle;
     cusparse_args_encoded->opA = CUSPARSE_OPERATION_NON_TRANSPOSE;
@@ -3475,52 +3564,52 @@ void assign_spmv_kernel_gpu_data(
 
 
         // Allocate space for MP structs on device
-        cudaMalloc(&d_values_dp, n_scs_elements_dp*sizeof(double));
-        cudaMemcpy(d_values_dp, &(dp_local_scs->values)[0], n_scs_elements_dp*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMalloc(&d_values_sp, n_scs_elements_sp*sizeof(float));
-        cudaMemcpy(d_values_sp, &(sp_local_scs->values)[0], n_scs_elements_sp*sizeof(float), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMalloc(&d_values_dp, n_scs_elements_dp*sizeof(double)));
+        CUDA_CHECK(cudaMemcpy(d_values_dp, &(dp_local_scs->values)[0], n_scs_elements_dp*sizeof(double), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMalloc(&d_values_sp, n_scs_elements_sp*sizeof(float)));
+        CUDA_CHECK(cudaMemcpy(d_values_sp, &(sp_local_scs->values)[0], n_scs_elements_sp*sizeof(float), cudaMemcpyHostToDevice));
 #ifdef HAVE_HALF_MATH
-        cudaMalloc(&d_values_hp, n_scs_elements_hp*sizeof(_Float16));
-        cudaMemcpy(d_values_hp, &(hp_local_scs->values)[0], n_scs_elements_hp*sizeof(_Float16), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMalloc(&d_values_hp, n_scs_elements_hp*sizeof(_Float16)));
+        CUDA_CHECK(cudaMemcpy(d_values_hp, &(hp_local_scs->values)[0], n_scs_elements_hp*sizeof(_Float16), cudaMemcpyHostToDevice));
 #endif
 
-        cudaMalloc(&d_C_dp, sizeof(long));
-        cudaMalloc(&d_n_chunks_dp, sizeof(long));
-        cudaMalloc(&d_chunk_ptrs_dp, (dp_local_scs->n_chunks + 1)*sizeof(int));
-        cudaMalloc(&d_chunk_lengths_dp, dp_local_scs->n_chunks*sizeof(int));
-        cudaMalloc(&d_col_idxs_dp, n_scs_elements_dp*sizeof(int));
-        cudaMalloc(&d_C_sp, sizeof(long));
-        cudaMalloc(&d_n_chunks_sp, sizeof(long));
-        cudaMalloc(&d_chunk_ptrs_sp, (sp_local_scs->n_chunks + 1)*sizeof(int));
-        cudaMalloc(&d_chunk_lengths_sp, sp_local_scs->n_chunks*sizeof(int));
-        cudaMalloc(&d_col_idxs_sp, n_scs_elements_sp*sizeof(int));
+        CUDA_CHECK(cudaMalloc(&d_C_dp, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_n_chunks_dp, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_ptrs_dp, (dp_local_scs->n_chunks + 1)*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_lengths_dp, dp_local_scs->n_chunks*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_col_idxs_dp, n_scs_elements_dp*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_C_sp, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_n_chunks_sp, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_ptrs_sp, (sp_local_scs->n_chunks + 1)*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_lengths_sp, sp_local_scs->n_chunks*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_col_idxs_sp, n_scs_elements_sp*sizeof(int)));
 #ifdef HAVE_HALF_MATH
-        cudaMalloc(&d_C_hp, sizeof(long));
-        cudaMalloc(&d_n_chunks_hp, sizeof(long));
-        cudaMalloc(&d_chunk_ptrs_hp, (hp_local_scs->n_chunks + 1)*sizeof(int));
-        cudaMalloc(&d_chunk_lengths_hp, hp_local_scs->n_chunks*sizeof(int));
-        cudaMalloc(&d_col_idxs_hp, n_scs_elements_hp*sizeof(int));
+        CUDA_CHECK(cudaMalloc(&d_C_hp, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_n_chunks_hp, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_ptrs_hp, (hp_local_scs->n_chunks + 1)*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_lengths_hp, hp_local_scs->n_chunks*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_col_idxs_hp, n_scs_elements_hp*sizeof(int)));
 #endif
 
         // Copy matrix data to device
-        cudaMemcpy(d_chunk_ptrs_dp, &(dp_local_scs->chunk_ptrs)[0], (dp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_chunk_lengths_dp, &(dp_local_scs->chunk_lengths)[0], dp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_col_idxs_dp, &(dp_local_scs->col_idxs)[0], n_scs_elements_dp*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_C_dp, &dp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_n_chunks_dp, &dp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(d_chunk_ptrs_dp, &(dp_local_scs->chunk_ptrs)[0], (dp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_chunk_lengths_dp, &(dp_local_scs->chunk_lengths)[0], dp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_col_idxs_dp, &(dp_local_scs->col_idxs)[0], n_scs_elements_dp*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_C_dp, &dp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_n_chunks_dp, &dp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice));
 
-        cudaMemcpy(d_chunk_ptrs_sp, &(sp_local_scs->chunk_ptrs)[0], (sp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_chunk_lengths_sp, &(sp_local_scs->chunk_lengths)[0], sp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_col_idxs_sp, &(sp_local_scs->col_idxs)[0], n_scs_elements_sp*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_C_sp, &sp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_n_chunks_sp, &sp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(d_chunk_ptrs_sp, &(sp_local_scs->chunk_ptrs)[0], (sp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_chunk_lengths_sp, &(sp_local_scs->chunk_lengths)[0], sp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_col_idxs_sp, &(sp_local_scs->col_idxs)[0], n_scs_elements_sp*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_C_sp, &sp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_n_chunks_sp, &sp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice));
 
 #ifdef HAVE_HALF_MATH
-        cudaMemcpy(d_chunk_ptrs_hp, &(hp_local_scs->chunk_ptrs)[0], (hp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_chunk_lengths_hp, &(hp_local_scs->chunk_lengths)[0], hp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_col_idxs_hp, &(hp_local_scs->col_idxs)[0], n_scs_elements_hp*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_C_hp, &hp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_n_chunks_hp, &hp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(d_chunk_ptrs_hp, &(hp_local_scs->chunk_ptrs)[0], (hp_local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_chunk_lengths_hp, &(hp_local_scs->chunk_lengths)[0], hp_local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_col_idxs_hp, &(hp_local_scs->col_idxs)[0], n_scs_elements_hp*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_C_hp, &hp_local_scs->C, sizeof(long), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_n_chunks_hp, &hp_local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice));
 #endif
 
         // Copy x and y data to device
@@ -3545,22 +3634,22 @@ void assign_spmv_kernel_gpu_data(
 #endif
         }
 
-        cudaMalloc(&d_x_dp, local_scs->n_rows_padded*sizeof(double));
-        cudaMalloc(&d_y_dp, local_scs->n_rows_padded*sizeof(double));
-        cudaMalloc(&d_x_sp, local_scs->n_rows_padded*sizeof(float));
-        cudaMalloc(&d_y_sp, local_scs->n_rows_padded*sizeof(float));
+        CUDA_CHECK(cudaMalloc(&d_x_dp, local_scs->n_rows_padded*sizeof(double)));
+        CUDA_CHECK(cudaMalloc(&d_y_dp, local_scs->n_rows_padded*sizeof(double)));
+        CUDA_CHECK(cudaMalloc(&d_x_sp, local_scs->n_rows_padded*sizeof(float)));
+        CUDA_CHECK(cudaMalloc(&d_y_sp, local_scs->n_rows_padded*sizeof(float)));
 #ifdef HAVE_HALF_MATH
-        cudaMalloc(&d_x_sp, local_scs->n_rows_padded*sizeof(_Float16));
-        cudaMalloc(&d_y_sp, local_scs->n_rows_padded*sizeof(_Float16));
+        CUDA_CHECK(cudaMalloc(&d_x_sp, local_scs->n_rows_padded*sizeof(_Float16)));
+        CUDA_CHECK(cudaMalloc(&d_y_sp, local_scs->n_rows_padded*sizeof(_Float16)));
 #endif
 
-        cudaMemcpy(d_x_dp, local_x_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y_dp, local_y_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_x_sp, local_x_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y_sp, local_y_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(d_x_dp, local_x_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_y_dp, local_y_dp_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_x_sp, local_x_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_y_sp, local_y_sp_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice));
 #ifdef HAVE_HALF_MATH
-        cudaMemcpy(d_x_hp, local_x_hp_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_y_hp, local_y_hp_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(d_x_hp, local_x_hp_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_y_hp, local_y_hp_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice));
 #endif
 
         delete local_x_dp_hardcopy;
@@ -3607,95 +3696,80 @@ void assign_spmv_kernel_gpu_data(
                     + local_scs->chunk_lengths[local_scs->n_chunks - 1] * local_scs->C;
 
         if(config->value_type == "dp"){
-            cudaMalloc(&d_values, n_scs_elements*sizeof(double));
-            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(double), cudaMemcpyHostToDevice);
+            CUDA_CHECK(cudaMalloc(&d_values, n_scs_elements*sizeof(double)));
+            CUDA_CHECK(cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(double), cudaMemcpyHostToDevice));
         }
         else if(config->value_type == "sp"){
-            cudaMalloc(&d_values, n_scs_elements*sizeof(float));
-            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(float), cudaMemcpyHostToDevice);
+            CUDA_CHECK(cudaMalloc(&d_values, n_scs_elements*sizeof(float)));
+            CUDA_CHECK(cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(float), cudaMemcpyHostToDevice));
         }
         else if(config->value_type == "hp"){
 #ifdef HAVE_HALF_MATH
-            cudaMalloc(&d_values, n_scs_elements*sizeof(_Float16));
-            cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(_Float16), cudaMemcpyHostToDevice);
+            CUDA_CHECK(cudaMalloc(&d_values, n_scs_elements*sizeof(_Float16)));
+            CUDA_CHECK(cudaMemcpy(d_values, &(local_scs->values)[0], n_scs_elements*sizeof(_Float16), cudaMemcpyHostToDevice));
 #endif
         }
         
-        cudaMalloc(&d_C, sizeof(long));
-        cudaMalloc(&d_n_chunks, sizeof(long));
-        cudaMalloc(&d_chunk_ptrs, (local_scs->n_chunks + 1)*sizeof(int));
-        cudaMalloc(&d_chunk_lengths, local_scs->n_chunks*sizeof(int));
-        cudaMalloc(&d_col_idxs, n_scs_elements*sizeof(int));
+        CUDA_CHECK(cudaMalloc(&d_C, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_n_chunks, sizeof(long)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_ptrs, (local_scs->n_chunks + 1)*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_chunk_lengths, local_scs->n_chunks*sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&d_col_idxs, n_scs_elements*sizeof(int)));
 
-        cudaMemcpy(d_chunk_ptrs, &(local_scs->chunk_ptrs)[0], (local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_chunk_lengths, &(local_scs->chunk_lengths)[0], local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_col_idxs, &(local_scs->col_idxs)[0], n_scs_elements*sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_C, &local_scs->C, sizeof(long), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_n_chunks, &local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMemcpy(d_chunk_ptrs, &(local_scs->chunk_ptrs)[0], (local_scs->n_chunks + 1)*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_chunk_lengths, &(local_scs->chunk_lengths)[0], local_scs->n_chunks*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_col_idxs, &(local_scs->col_idxs)[0], n_scs_elements*sizeof(int), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_C, &local_scs->C, sizeof(long), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_n_chunks, &local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice));
 
-        if(config->value_type == "dp"){
-            // Make type-specific copy to send to device
-            double *local_x_hardcopy = new double[local_scs->n_rows_padded];
-            double *local_y_hardcopy = new double[local_scs->n_rows_padded];
 
-            #pragma omp parallel for
-            for(int i = 0; i < local_scs->n_rows_padded; ++i){
-                local_x_hardcopy[i] = local_x_permuted[i];
-                local_y_hardcopy[i] = local_y[i];
-            }
-
-            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(double));
-            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(double));
-
-            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(double), cudaMemcpyHostToDevice);
-
-            delete local_x_hardcopy;
-            delete local_y_hardcopy;
+#ifdef USE_MPI
+        CUDA_CHECK(cudaMalloc(&d_to_send_elems_ptr, nzr_size * sizeof(VT *)));
+#ifdef SINGLEVEC_MPI_MODE
+        for(int i = 0; i < nzr_size; ++i){
+            int nz_recver = local_context->non_zero_receivers[i];
+            CUDA_CHECK(cudaMalloc(&d_to_send_elems_data[i], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
+            h_to_send_elems_ptr[i] = d_to_send_elems_data[i];
         }
-        else if (config->value_type == "sp"){
-            // Make type-specific copy to send to device
-            float *local_x_hardcopy = new float[local_scs->n_rows_padded];
-            float *local_y_hardcopy = new float[local_scs->n_rows_padded];
-
-            #pragma omp parallel for
-            for(int i = 0; i < local_scs->n_rows_padded; ++i){
-                local_x_hardcopy[i] = local_x_permuted[i];
-                local_y_hardcopy[i] = local_y[i];
-            }
-
-            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(float));
-            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(float));
-
-            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(float), cudaMemcpyHostToDevice);   
-
-            delete local_x_hardcopy;
-            delete local_y_hardcopy;
-        }
-        else if (config->value_type == "hp"){
-#ifdef HAVE_HALF_MATH
-            // Make type-specific copy to send to device
-            _Float16 *local_x_hardcopy = new _Float16[local_scs->n_rows_padded];
-            _Float16 *local_y_hardcopy = new _Float16[local_scs->n_rows_padded];
-
-            #pragma omp parallel for
-            for(int i = 0; i < local_scs->n_rows_padded; ++i){
-                local_x_hardcopy[i] = local_x_permuted[i];
-                local_y_hardcopy[i] = (*local_y)[i];
-            }
-
-            cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(_Float16));
-            cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(_Float16));
-
-            cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);
-            cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyHostToDevice);   
-
-            delete local_x_hardcopy;
-            delete local_y_hardcopy;
 #endif
+#ifdef MULTIVEC_MPI_MODE
+    // With multivec mode, we need to replicate the to_send buffers for each vector
+    for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
+        for(int i = 0; i < nzr_size; ++i){
+            int nz_recver = local_context->non_zero_receivers[i];
+            CUDA_CHECK(cudaMalloc(&d_to_send_elems_data[i + vec_idx * nzr_size], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
+            h_to_send_elems_ptr[i] = d_to_send_elems_data[i];
+        }
+    }
+#endif
+#ifdef BULKVEC_MPI_MODE
+    // With bulkvec mode, the send buffers just need to be larger
+        for(int i = 0; i < nzr_size; ++i){
+            int nz_recver = local_context->non_zero_receivers[i];
+            CUDA_CHECK(cudaMalloc(&d_to_send_elems_data[i], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
+            h_to_send_elems_ptr[i] = d_to_send_elems_data[i];
+        }
+#endif
+        CUDA_CHECK(cudaMemcpy(d_to_send_elems_ptr, h_to_send_elems_ptr, nzr_size * sizeof(VT *), cudaMemcpyHostToDevice));
+#endif
+        // Make type-specific copy to send to device
+        VT *local_x_hardcopy = new VT[local_scs->n_rows_padded];
+        VT *local_y_hardcopy = new VT[local_scs->n_rows_padded];
+
+        #pragma omp parallel for
+        for(int i = 0; i < local_scs->n_rows_padded; ++i){
+            local_x_hardcopy[i] = local_x_permuted[i];
+            local_y_hardcopy[i] = local_y[i];
         }
 
+        CUDA_CHECK(cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(VT)));
+        CUDA_CHECK(cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(VT)));
+
+        CUDA_CHECK(cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(VT), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(VT), cudaMemcpyHostToDevice));
+
+        delete local_x_hardcopy;
+        delete local_y_hardcopy;
 
         // All args for kernel reside on the device
         one_prec_kernel_args_encoded->C =             d_C;
@@ -3735,7 +3809,9 @@ void copy_back_result(
 #endif
     ContextData<IT> *local_context
 ){
-
+#ifdef DEBUG_MODE
+        printf("Entering copy_back_result\n");
+#endif
         // Selects the first (n_rows)-many elements of a sorted y vector, and chops off padding
         std::vector<double> sorted_dp_local_y(local_y->size(), 0.0);
         std::vector<float> sorted_sp_local_y(local_y->size(), 0.0f);
@@ -3747,7 +3823,7 @@ void copy_back_result(
         if(config->value_type == "dp"){
 #ifdef __CUDACC__
             // TODO: Integrate SpMMV on GPUs
-            cudaMemcpy(dp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+            CUDA_CHECK(cudaMemcpy(dp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost));
 #else
             for(int i = 0; i < local_y->size(); ++i){
                 dp_local_x_permuted[i] = spmv_kernel_result[i];
@@ -3764,7 +3840,7 @@ void copy_back_result(
         }
         else if(config->value_type == "sp"){
 #ifdef __CUDACC__
-            cudaMemcpy(sp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(float), cudaMemcpyDeviceToHost);
+            CUDA_CHECK(cudaMemcpy(sp_local_x_permuted, spmv_kernel_result, local_scs->n_rows_padded*sizeof(float), cudaMemcpyDeviceToHost));
 #else
             for(int i = 0; i < local_y->size(); ++i){
                 sp_local_x_permuted[i] = spmv_kernel_result[i];
@@ -3782,7 +3858,7 @@ void copy_back_result(
         else if(config->value_type == "hp"){
 #ifdef HAVE_HALF_MATH
 #ifdef __CUDACC__
-            cudaMemcpy(hp_local_x_permuted->data(), spmv_kernel_result, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyDeviceToHost);
+            CUDA_CHECK(cudaMemcpy(hp_local_x_permuted->data(), spmv_kernel_result, local_scs->n_rows_padded*sizeof(_Float16), cudaMemcpyDeviceToHost));
 
 #else
             for(int i = 0; i < local_y->size(); ++i){
@@ -3802,7 +3878,7 @@ void copy_back_result(
         else if(config->value_type == "ap[dp_sp]" || config->value_type == "ap[dp_hp]" || config->value_type == "ap[dp_sp_hp]"){
             // TODO: Validate this!
 #ifdef __CUDACC__
-            cudaMemcpy(dp_local_x_permuted, dp_spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+            CUDA_CHECK(cudaMemcpy(dp_local_x_permuted, dp_spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost));
 #else
             for(int i = 0; i < local_y->size(); ++i){
                 dp_local_x_permuted[i] = dp_spmv_kernel_result[i];
@@ -3820,7 +3896,7 @@ void copy_back_result(
         else if(config->value_type == "ap[sp_hp]"){
 #ifdef HAVE_HALF_MATH
 #ifdef __CUDACC__
-            cudaMemcpy(sp_local_x_permuted, sp_spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost);
+            CUDA_CHECK(cudaMemcpy(sp_local_x_permuted, sp_spmv_kernel_result, local_scs->n_rows_padded*sizeof(double), cudaMemcpyDeviceToHost));
 #else
             for(int i = 0; i < local_y->size(); ++i){
                 sp_local_x_permuted[i] = sp_spmv_kernel_result[i];
