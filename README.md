@@ -11,13 +11,13 @@ Examples:\
 - kernel_format can be any one of: crs, scs (and by extention: ell and sell-p)
 
 Options:
-- -block_vec_size (int: width of block X vector for SpMMV)
+- -block_vec_size (int: width of block vectors for SpMMV)
 - -c (int: chunk size (required for scs))
 - -s (int: sigma (required for scs))
 - -rev (int: number of back-to-back revisions to perform)
 - -rand_x (0/1: random x vector option)
-- -dp / sp / hp / ap[dp_sp] / ap[dp_hp] / ap[sp_hp] / ap[dp_sp_hp] (numerical precision of matrix data)
-- -seg_nnz/seg_rows/seg_metis (global matrix partitioning for MPI)
+- -dp / sp / hp / ap[dp_sp] / ap[dp_hp] / ap[sp_hp] / ap[dp_sp_hp] [%s] (numerical precision of matrix data)
+- -seg_metis / seg_nnz / seg_rows [%s] (global matrix partitioning for MPI)
 - -validate (0/1: check result against MKL option)
 - -verbose (0/1: verbose validation of results)
 - -mode ('s'/'b': either in solve mode or bench mode)
@@ -25,11 +25,14 @@ Options:
 - -ba_synch (0/1: synch processes each benchmark loop)
 - -comm_halos (0/1: communicate halo elements each benchmark loop)
 - -par_pack (0/1: pack elements contigously for MPI_Isend in parallel)
+- -no_pack (0/1: skip packing remote elements to assess performance penalty)
+- -print_comm_vol (0/1: report the number of elements received on this MPI process per SpMV (requires bench mode))
+- -equilibrate (0/1: normalize rows of matrix)
+- --------------------------- Adaptive Precision Options ---------------------------
 - -ap_threshold_1 (float: threshold for two-way matrix partitioning for adaptive precision `-ap`)
 - -ap_threshold_2 (float: threshold for three-way matrix partitioning for adaptive precision `-ap`)
 - -dropout (0/1: enable dropout of elements below theh designated threshold)
 - -dropout_threshold (float: remove matrix elements below this range)
-- -equilibrate (0/1: normalize rows of matrix)
  
  
 Notes:

@@ -75,7 +75,7 @@ struct Config
     // converting it to a specific format.
     int sort_matrix = 1;
 
-    int verbose_validation = 0;
+    int verbose = 0;
 
     // activate profile logs, only root process
     int log_prof = 0;
@@ -94,6 +94,9 @@ struct Config
 
     // Skip packing remote elements to assess performance penalty
     int no_pack = 0;
+
+    // Report the number of elements received on this MPI process per SpMV
+    int print_comm_vol = 0;
 
     // Scale rows and column of matrix
     int equilibrate = 0;
@@ -684,6 +687,7 @@ class SpmvKernel {
 
         void validate_pointers(
         ){
+#ifdef __CUDACC__
             printf("d_perm\n");
             ST size; // Should just be n_rows when using crs
             cudaMemcpy((void *)&size, this->n_chunks, sizeof(long int), cudaMemcpyDeviceToHost);
@@ -772,6 +776,7 @@ class SpmvKernel {
             
                 delete[] h_arr;  // Free host memory 
             }
+#endif
 #endif
         }
 
@@ -1818,8 +1823,8 @@ struct Result
 {
     double perf_gflops{};
     double mem_mb{};
-    std::vector<double> perfs_from_procs; // used in Gather
-
+    std::vector<double> perfs_from_procs;
+    std::vector<int> recvd_elems_per_procs;
     std::vector<unsigned long> nnz_per_proc;
 
     // Used in mp

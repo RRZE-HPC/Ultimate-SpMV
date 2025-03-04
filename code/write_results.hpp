@@ -126,6 +126,7 @@ void write_bench_to_file(
 #endif
     working_file << std::endl;
 
+
     working_file << std::left << std::setw(width) << "Total Gflops:" <<
                     std::left << std::setw(width) << "Total Walltime:" << std::endl;
     working_file << std::left << std::setw(width) << "-------------" << 
@@ -135,6 +136,22 @@ void write_bench_to_file(
     working_file << std::left << std::setprecision(16) <<
                     std::left << std::setw(width) << r->perfs_from_procs[0] <<
                     std::left << std::setw(width) << r->total_walltime <<  std::endl;
+    working_file << std::endl;
+
+    if(config->verbose == 1){
+#ifdef USE_MPI
+        working_file << std::left << std::setw(width) << "Rank Idx:";
+        working_file << std::left << std::setw(width) << "Per rank Elems Recvd:" << std::endl;
+        working_file << std::left << std::setw(width) << "---------" << 
+                        std::left << std::setw(width) << "-------------" << std::endl;
+        
+        for(int mpi_rank = 0; mpi_rank < comm_size; ++mpi_rank)
+        working_file << std::left << std::setprecision(16) <<
+            std::left << std::setw(width) << mpi_rank <<
+            std::left << std::setw(width) << r->recvd_elems_per_procs[mpi_rank] << 
+            std::endl;
+#endif
+    }
 
     working_file << std::endl;
 }
@@ -291,7 +308,7 @@ void write_result_to_file(
     int n_result_digits = result_size > 0 ? (int) log10 ((double) result_size) + 1 : 1;
 
     // Print header
-    if(config->verbose_validation == 1){
+    if(config->verbose == 1){
         width = 24;
 
         working_file<< std::left << std::setw(n_result_digits + 8) << "vec idx:" 
@@ -309,7 +326,7 @@ void write_result_to_file(
                     << std::left << std::setw(width) << "------------"
                     << std::left << std::setw(width) << "---------" << std::endl;
     }
-    else if(config->verbose_validation == 0){
+    else if(config->verbose == 0){
         width = 18;
         working_file 
                     << std::left << std::setw(width-2) << "mkl rel. elem:"
@@ -348,7 +365,7 @@ void write_result_to_file(
         }
 #endif
         
-        if(config->verbose_validation == 1)
+        if(config->verbose == 1)
         {
             // Setting the width of the index column to be the number of digits of the result vector size
             working_file<< std::left << std::setw(n_result_digits + 8) << vec_count
@@ -367,7 +384,7 @@ void write_result_to_file(
 
             working_file << std::endl;
         }
-        else if(config -> verbose_validation == 0)
+        else if(config->verbose == 0)
         {
             if(relative_diff > max_relative_diff){
                 max_relative_diff = relative_diff;
@@ -390,7 +407,7 @@ void write_result_to_file(
         if((i + 1) % (r->total_rows) == 0 && i > 0)
             ++vec_count;
     }
-    if(config->verbose_validation == 0)
+    if(config->verbose == 0)
     {
         working_file << std::scientific
                     << std::left << std::setw(width) << max_relative_diff_elem_mkl

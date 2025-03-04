@@ -115,7 +115,8 @@ void bench_spmv(
     int nzs_size = 0;
     int to_send_count = 0;
 #ifndef USE_MPI
-    VT *to_send_elems[to_send_count];
+    // TODO: find a better workaround
+    VT **to_send_elems = new VT* [to_send_count];
 #endif
 
 #ifdef USE_MPI
@@ -133,7 +134,7 @@ void bench_spmv(
     to_send_count = nzr_size;
 #endif
 
-    VT *to_send_elems[to_send_count];
+    VT **to_send_elems = new VT* [to_send_count];
     
     // Delare MPI requests for non-blocking communication
     int recv_request_buf_size = 0;
@@ -820,16 +821,17 @@ void gather_results(
 ){
 
     IT num_local_rows = local_context->num_local_rows;
+    int recvd_elems = local_context->recv_counts_cumsum[comm_size]; // Validate
 
     if(config->mode == 'b'){
 
         double *perfs_from_procs_arr = new double[comm_size];
+        double *times_from_procs_arr = new double[comm_size];
+        int *recvd_elems_per_procs_arr = new int[comm_size];
         unsigned long *nnz_per_procs_arr = new unsigned long[comm_size];
         unsigned long *dp_nnz_per_procs_arr = new unsigned long[comm_size];
         unsigned long *sp_nnz_per_procs_arr = new unsigned long[comm_size];
-#ifdef HAVE_HALF_MATH
         unsigned long *hp_nnz_per_procs_arr = new unsigned long[comm_size];
-#endif
 #ifdef USE_MPI
 
         MPI_Gather(&(r->perf_gflops),
@@ -838,6 +840,15 @@ void gather_results(
                 perfs_from_procs_arr,
                 1,
                 MPI_DOUBLE,
+                0,
+                MPI_COMM_WORLD);
+
+        MPI_Gather(&recvd_elems,
+                1,
+                MPI_INT,
+                recvd_elems_per_procs_arr,
+                1,
+                MPI_INT,
                 0,
                 MPI_COMM_WORLD);
 
@@ -898,10 +909,16 @@ void gather_results(
 #endif
         // NOTE: Garbage values for all but root process
         r->perfs_from_procs = std::vector<double>(perfs_from_procs_arr, perfs_from_procs_arr + comm_size);
+        r->recvd_elems_per_procs = std::vector<int>(recvd_elems_per_procs_arr, recvd_elems_per_procs_arr + comm_size);
         r->nnz_per_proc = std::vector<unsigned long>(nnz_per_procs_arr, nnz_per_procs_arr + comm_size);
 
         delete[] perfs_from_procs_arr;
+        delete[] times_from_procs_arr;
+        delete[] recvd_elems_per_procs_arr;
         delete[] nnz_per_procs_arr;
+        delete[] dp_nnz_per_procs_arr;
+        delete[] sp_nnz_per_procs_arr;
+        delete[] hp_nnz_per_procs_arr;
 
     }
     else if(config->mode == 's'){

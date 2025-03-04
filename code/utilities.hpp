@@ -996,7 +996,7 @@ void cli_options_messge(
         "-dp / sp / hp / ap[dp_sp] / ap[dp_hp] / ap[sp_hp] / ap[dp_sp_hp] [%s] (numerical precision of matrix data) \n" \
         "-seg_metis / seg_nnz / seg_rows [%s] (global matrix partitioning for MPI) \n" \
         "-validate [%i] (0/1: check result against MKL option) \n" \
-        "-verbose [%i] (0/1: verbose validation of results) \n" \
+        "-verbose [%i] (0/1: verbose validation of results (in solve mode) or report the number of elements received (in bench mode)) \n" \
         "-mode [%c] ('s'/'b': either in solve mode or bench mode) \n" \
         "-bench_time [%g] (float: minimum number of seconds for SpMV benchmark) \n" \
         "-ba_synch [%i] (0/1: synch processes each benchmark loop) \n" \
@@ -1018,13 +1018,14 @@ void cli_options_messge(
         value_type->c_str(), \
         seg_method->c_str(), \
         config->validate_result, \
-        config->verbose_validation, \
+        config->verbose, \
         config->mode, \
         config->bench_time, \
         config->ba_synch, \
         config->comm_halos, \
         config->par_pack, \
         config->no_pack, \
+        config->print_comm_vol, \
         config->equilibrate, \
         config->ap_threshold_1, \
         config->ap_threshold_2, \
@@ -1134,12 +1135,12 @@ void parse_cli_inputs(
         }
         else if (arg == "-verbose")
         {
-            config->verbose_validation = atoi(argv[++i]); // i.e. grab the NEXT
+            config->verbose = atoi(argv[++i]); // i.e. grab the NEXT
 
-            if (config->verbose_validation != 0 && config->verbose_validation != 1)
+            if (config->verbose != 0 && config->verbose != 1)
             {
                 if(my_rank == 0){
-                    fprintf(stderr, "ERROR: Only validation verbosity levels 0 and 1 are supported.\n");
+                    fprintf(stderr, "ERROR: Only verbosity levels 0 and 1 are supported.\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }
@@ -1233,6 +1234,19 @@ void parse_cli_inputs(
             {
                 if(my_rank == 0){
                     fprintf(stderr, "ERROR: You can only choose to pack contiguous elements for MPI_Isend (1, i.e. yes) or skip (0, i.e. no).\n");
+                    cli_options_messge(argc, argv, seg_method, value_type, config);
+                    exit(1);
+                }
+            }
+        }
+        else if (arg == "-print_comm_vol" || arg == "-print-comm-vol")
+        {
+            config->print_comm_vol = atoi(argv[++i]); // i.e. grab the NEXT
+
+            if (config->print_comm_vol != 0 && config->print_comm_vol != 1)
+            {
+                if(my_rank == 0){
+                    fprintf(stderr, "ERROR: You can only choose to report elements received (1, i.e. yes) or skip (0, i.e. no).\n");
                     cli_options_messge(argc, argv, seg_method, value_type, config);
                     exit(1);
                 }
