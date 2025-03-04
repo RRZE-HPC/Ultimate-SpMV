@@ -821,7 +821,7 @@ void gather_results(
 ){
 
     IT num_local_rows = local_context->num_local_rows;
-    int recvd_elems = local_context->recv_counts_cumsum[comm_size]; // Validate
+    int recvd_elems = local_context->recv_counts_cumsum[comm_size] * config->block_vec_size; // Validate
 
     if(config->mode == 'b'){
 
