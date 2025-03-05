@@ -3228,7 +3228,12 @@ void assign_mpi_args(
 #ifdef USE_MPI
     ScsData<VT, IT> *local_scs,
     const IT *work_sharing_arr,
+#ifdef __CUDACC__
+    VT **h_to_send_elems,
+    VT **d_to_send_elems,
+#else
     VT **to_send_elems,
+#endif
     MPI_Request *recv_requests,
     MPI_Request *send_requests,
     int *nzs_size,
@@ -3236,8 +3241,7 @@ void assign_mpi_args(
 #ifdef __CUDACC__
     int *&d_perm, // device pointers for packing kernel
     int **&d_comm_send_idxs_ptr,
-    int **&h_comm_send_idxs_ptr,
-    int **&d_comm_send_idxs_data,
+    int **h_comm_send_idxs_ptr,
 #endif
 #endif
     int *my_rank,
@@ -3250,7 +3254,12 @@ void assign_mpi_args(
     MPI_Datatype MPI_ELEM_TYPE = get_mpi_type<VT>();
     // Encode comm args into struct
     comm_args_encoded->work_sharing_arr     = work_sharing_arr;
+#ifdef __CUDACC__
+    comm_args_encoded->to_send_elems        = h_to_send_elems;
+    comm_args_encoded->d_to_send_elems      = d_to_send_elems;
+#else
     comm_args_encoded->to_send_elems        = to_send_elems;
+#endif
     comm_args_encoded->perm                 = local_scs->old_to_new_idx.data();
     comm_args_encoded->recv_requests        = recv_requests; // pointer to first element of array
     comm_args_encoded->nzs_size             = nzs_size;
@@ -3264,17 +3273,18 @@ void assign_mpi_args(
     CUDA_CHECK(cudaMemcpy(d_perm, local_scs->old_to_new_idx.data(), local_scs->n_rows*sizeof(int), cudaMemcpyHostToDevice));
     comm_args_encoded->d_perm               = d_perm;
 
-    // Allocate double pointer
+    // Allocate array of pointers on-device
     CUDA_CHECK(cudaMalloc(&d_comm_send_idxs_ptr, (*comm_size) * sizeof(int *)));
 
-    // Allocate each individual pointer
+    // For each rank in comm_size, malloc the appropriate amount of space on-device
+    // These device pointers are stored on the host-side array h_comm_send_idxs_ptr
     for(int i = 0; i < (*comm_size); ++i){
         int n_elem_to_send = local_context->comm_send_idxs[i].size();
-        CUDA_CHECK(cudaMalloc((void **)&d_comm_send_idxs_data[i], n_elem_to_send*sizeof(int)));
-        CUDA_CHECK(cudaMemcpy(d_comm_send_idxs_data[i], local_context->comm_send_idxs[i].data(), n_elem_to_send*sizeof(int), cudaMemcpyHostToDevice));
-        h_comm_send_idxs_ptr[i] = d_comm_send_idxs_data[i];
+        CUDA_CHECK(cudaMalloc((void **)&h_comm_send_idxs_ptr[i], n_elem_to_send*sizeof(int)));
     }
 
+    // Copy all device pointers (currently in host-side array) to device-side array of pointers
+    // NOTE: This is needed when a gpu kernel needs to dereference
     CUDA_CHECK(cudaMemcpy(d_comm_send_idxs_ptr, h_comm_send_idxs_ptr, (*comm_size) * sizeof(int *), cudaMemcpyHostToDevice));
     comm_args_encoded->d_comm_send_idxs     = d_comm_send_idxs_ptr;
 
@@ -3296,7 +3306,6 @@ void assign_spmv_kernel_gpu_data(
 #ifdef USE_MPI
     VT **&d_to_send_elems_ptr,
     VT **h_to_send_elems_ptr,
-    VT **&d_to_send_elems_data,
 #endif
     ScsData<double, IT> *dp_local_scs,
     ScsData<float, IT> *sp_local_scs,
@@ -3738,12 +3747,15 @@ void assign_spmv_kernel_gpu_data(
 
 
 #ifdef USE_MPI
+        // Allocate array of pointers on-device
         CUDA_CHECK(cudaMalloc(&d_to_send_elems_ptr, nzr_size * sizeof(VT *)));
+
+        // For each non-zero receiver, malloc the appropriate amount of space on-device
+        // and store the device pointer in the host-size array 
 #ifdef SINGLEVEC_MPI_MODE
         for(int i = 0; i < nzr_size; ++i){
             int nz_recver = local_context->non_zero_receivers[i];
-            CUDA_CHECK(cudaMalloc(&d_to_send_elems_data[i], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
-            h_to_send_elems_ptr[i] = d_to_send_elems_data[i];
+            CUDA_CHECK(cudaMalloc(&h_to_send_elems_ptr[i], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
         }
 #endif
 #ifdef MULTIVEC_MPI_MODE
@@ -3751,8 +3763,7 @@ void assign_spmv_kernel_gpu_data(
     for(int vec_idx = 0; vec_idx < config->block_vec_size; ++vec_idx){
         for(int i = 0; i < nzr_size; ++i){
             int nz_recver = local_context->non_zero_receivers[i];
-            CUDA_CHECK(cudaMalloc(&d_to_send_elems_data[i + vec_idx * nzr_size], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
-            h_to_send_elems_ptr[i] = d_to_send_elems_data[i];
+            CUDA_CHECK(cudaMalloc(&h_to_send_elems_ptr[i + vec_idx * nzr_size], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
         }
     }
 #endif
@@ -3760,10 +3771,11 @@ void assign_spmv_kernel_gpu_data(
     // With bulkvec mode, the send buffers just need to be larger
         for(int i = 0; i < nzr_size; ++i){
             int nz_recver = local_context->non_zero_receivers[i];
-            CUDA_CHECK(cudaMalloc(&d_to_send_elems_data[i], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
-            h_to_send_elems_ptr[i] = d_to_send_elems_data[i];
+            CUDA_CHECK(cudaMalloc(&h_to_send_elems_ptr[i], local_context->comm_send_idxs[nz_recver].size() * sizeof(VT)));
         }
 #endif
+        // Copy all device pointers (currently in host-side array) to device-side array of pointers
+        // NOTE: This is needed when a gpu kernel needs to dereference
         CUDA_CHECK(cudaMemcpy(d_to_send_elems_ptr, h_to_send_elems_ptr, nzr_size * sizeof(VT *), cudaMemcpyHostToDevice));
 #endif
         // Make type-specific copy to send to device

@@ -179,10 +179,8 @@ void bench_spmv(
     // device pointers for packing kernel
     VT **d_to_send_elems_ptr;
     VT **h_to_send_elems_ptr = new VT* [to_send_count];
-    VT **d_to_send_elems_data = new VT* [to_send_count];
     int **d_comm_send_idxs_ptr = new int*;
     int **h_comm_send_idxs_ptr = new int* [comm_size];
-    int **d_comm_send_idxs_data = new int* [comm_size];
     int *d_perm = new int; 
 #endif
 
@@ -221,7 +219,6 @@ assign_spmv_kernel_gpu_data<VT>(
 #ifdef USE_MPI
     d_to_send_elems_ptr,
     h_to_send_elems_ptr,
-    d_to_send_elems_data,
 #endif
     dp_local_scs,
     sp_local_scs,
@@ -326,6 +323,7 @@ assign_spmv_kernel_gpu_data<VT>(
         local_scs,
         work_sharing_arr,
 #ifdef __CUDACC__
+        h_to_send_elems_ptr,
         d_to_send_elems_ptr,
 #else
         to_send_elems,
@@ -338,7 +336,6 @@ assign_spmv_kernel_gpu_data<VT>(
         d_perm,
         d_comm_send_idxs_ptr,
         h_comm_send_idxs_ptr,
-        d_comm_send_idxs_data,
 #endif
 #endif
         &my_rank,

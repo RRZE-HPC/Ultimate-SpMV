@@ -200,6 +200,7 @@ struct CommArgs
     MPI_Datatype MPI_ELEM_TYPE;
 #ifdef __CUDACC__
     int *d_perm               = nullptr;
+    VT **d_to_send_elems      = nullptr;
     int **d_comm_send_idxs    = nullptr;
 #endif
 #endif
@@ -409,6 +410,7 @@ class SpmvKernel {
         const IT per_vector_padding    = *(comm_args_decoded->per_vector_padding);
         MPI_Datatype MPI_ELEM_TYPE     = comm_args_decoded->MPI_ELEM_TYPE;
 #ifdef __CUDACC__
+        VT **d_to_send_elems             = comm_args_decoded->d_to_send_elems;
         int *d_perm               = comm_args_decoded->d_perm; // Needed for d_send_buf packing
         int **d_comm_send_idxs     = comm_args_decoded->d_comm_send_idxs; // Needed for d_send_buf packing
 #endif
@@ -791,7 +793,7 @@ class SpmvKernel {
             int TPB = 32;
             ST n_thread_blocks = (outgoing_buf_size + TPB - 1) / TPB;
             pack_d_send_buf<VT, IT><<<n_thread_blocks,TPB>>>(
-                this->to_send_elems, 
+                this->d_to_send_elems, 
                 this->local_x, 
                 this->d_perm, 
                 this->d_comm_send_idxs, 
@@ -935,23 +937,10 @@ class SpmvKernel {
 #endif
                 // Move non-contiguous data to a contiguous buffer for communication
                 if(!config->no_pack) pack_send_buf(outgoing_buf_size, to_proc_idx, receiving_proc, block_offset);
-                
-                // TODO: Rewrite sanity checker so we can use it here
-                // SanityChecker::check_MPI_Recv_data<VT>(config, send_requests, outgoing_buf_size, to_proc_idx, receiving_proc, vec_idx, my_rank);
-
-#ifdef __CUDACC__
-                // TODO: How to get around this?
-                VT *h_subarray;
-                cudaMemcpy(&h_subarray, &to_send_elems[to_proc_idx], sizeof(VT *), cudaMemcpyDeviceToHost);
-#endif
 
                 MPI_Isend(
 #ifdef SINGLEVEC_MPI_MODE
-#ifdef __CUDACC__
-                    h_subarray,
-#else
                     to_send_elems[to_proc_idx],
-#endif              
                     outgoing_buf_size,
                     this->MPI_ELEM_TYPE,
                     receiving_proc,
