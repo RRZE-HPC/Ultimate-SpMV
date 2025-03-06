@@ -760,11 +760,11 @@ class SpmvKernel {
                 // CUDA_CHECK(cudaMemcpy(h_arr, &d_comm_send_idxs_ptr[i], size * sizeof(int *), cudaMemcpyDeviceToHost));
                 VT *d_subarray;
                 if(config->value_type == "dp"){
-                    CUDA_CHECK(cudaMemcpy(&d_subarray, &this->to_send_elems[i], sizeof(double *), cudaMemcpyDeviceToHost));
+                    CUDA_CHECK(cudaMemcpy(&d_subarray, &this->d_to_send_elems[i], sizeof(double *), cudaMemcpyDeviceToHost));
                     CUDA_CHECK(cudaMemcpy(h_arr, d_subarray, size * sizeof(double), cudaMemcpyDeviceToHost));
                 }
                 else if(config->value_type == "sp"){
-                    CUDA_CHECK(cudaMemcpy(&d_subarray, &this->to_send_elems[i], sizeof(float *), cudaMemcpyDeviceToHost));
+                    CUDA_CHECK(cudaMemcpy(&d_subarray, &this->d_to_send_elems[i], sizeof(float *), cudaMemcpyDeviceToHost));
                     CUDA_CHECK(cudaMemcpy(h_arr, d_subarray, size * sizeof(float), cudaMemcpyDeviceToHost));
                 }
                 std::cout << "d_subarray = " << d_subarray << std::endl;
@@ -804,6 +804,9 @@ class SpmvKernel {
             );
 
             cudaDeviceSynchronize();
+#ifdef DEBUG_MODE_FINE
+            if(my_rank == 0) validate_pointers();
+#endif
 
 #else
 #ifndef BULKVEC_MPI_MODE
@@ -905,13 +908,11 @@ class SpmvKernel {
 #ifdef BULKVEC_MPI_MODE
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                     &(local_x)[num_local_rows + local_context->recv_counts_cumsum[sending_proc]],
-                    // incoming_buf_size * config->block_vec_size,
                     incoming_buf_size,
                     local_context->bulk_recv_types[from_proc_idx],
 #endif
 #ifdef ROWWISE_BLOCK_VECTOR_LAYOUT
                     &(local_x)[(config->block_vec_size * num_local_rows) + local_context->recv_counts_cumsum[sending_proc] * config->block_vec_size],
-                    // incoming_buf_size * config->block_vec_size,
                     incoming_buf_size,
                     local_context->bulk_recv_types[from_proc_idx],
 #endif

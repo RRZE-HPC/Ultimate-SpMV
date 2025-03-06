@@ -233,6 +233,7 @@ assign_spmv_kernel_gpu_data<VT>(
 #endif
     local_x->data(),
     local_x_permuted.data(),
+    local_x->size(),
     dp_local_x->data(),
     dp_local_x_permuted.data(),
     sp_local_x->data(),

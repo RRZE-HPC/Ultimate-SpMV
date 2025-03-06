@@ -2323,7 +2323,7 @@ class SimpleDenseMatrix {
             IT padding_from_heri = 0;
 
 #ifdef USE_MPI
-            padding_from_heri = (local_context->recv_counts_cumsum).back();   
+            padding_from_heri = (local_context->recv_counts_cumsum).back();
 #endif
             int padding = std::max(local_context->scs_padding, padding_from_heri);
 
@@ -3281,11 +3281,13 @@ void assign_mpi_args(
     for(int i = 0; i < (*comm_size); ++i){
         int n_elem_to_send = local_context->comm_send_idxs[i].size();
         CUDA_CHECK(cudaMalloc((void **)&h_comm_send_idxs_ptr[i], n_elem_to_send*sizeof(int)));
+        CUDA_CHECK(cudaMemcpy(h_comm_send_idxs_ptr[i], local_context->comm_send_idxs[i].data(), n_elem_to_send*sizeof(int), cudaMemcpyHostToDevice));
     }
 
     // Copy all device pointers (currently in host-side array) to device-side array of pointers
     // NOTE: This is needed when a gpu kernel needs to dereference
     CUDA_CHECK(cudaMemcpy(d_comm_send_idxs_ptr, h_comm_send_idxs_ptr, (*comm_size) * sizeof(int *), cudaMemcpyHostToDevice));
+
     comm_args_encoded->d_comm_send_idxs     = d_comm_send_idxs_ptr;
 
 #endif
@@ -3320,6 +3322,7 @@ void assign_spmv_kernel_gpu_data(
 #endif
     VT *local_x,
     VT *local_x_permuted,
+    int padded_size,
     double *dp_local_x,
     double *dp_local_x_permuted,
     float *sp_local_x,
@@ -3745,7 +3748,6 @@ void assign_spmv_kernel_gpu_data(
         CUDA_CHECK(cudaMemcpy(d_C, &local_scs->C, sizeof(long), cudaMemcpyHostToDevice));
         CUDA_CHECK(cudaMemcpy(d_n_chunks, &local_scs->n_chunks, sizeof(long), cudaMemcpyHostToDevice));
 
-
 #ifdef USE_MPI
         // Allocate array of pointers on-device
         CUDA_CHECK(cudaMalloc(&d_to_send_elems_ptr, nzr_size * sizeof(VT *)));
@@ -3779,20 +3781,20 @@ void assign_spmv_kernel_gpu_data(
         CUDA_CHECK(cudaMemcpy(d_to_send_elems_ptr, h_to_send_elems_ptr, nzr_size * sizeof(VT *), cudaMemcpyHostToDevice));
 #endif
         // Make type-specific copy to send to device
-        VT *local_x_hardcopy = new VT[local_scs->n_rows_padded];
-        VT *local_y_hardcopy = new VT[local_scs->n_rows_padded];
+        VT *local_x_hardcopy = new VT[padded_size];
+        VT *local_y_hardcopy = new VT[padded_size];
 
         #pragma omp parallel for
-        for(int i = 0; i < local_scs->n_rows_padded; ++i){
+        for(int i = 0; i < padded_size; ++i){
             local_x_hardcopy[i] = local_x_permuted[i];
             local_y_hardcopy[i] = local_y[i];
         }
 
-        CUDA_CHECK(cudaMalloc(&d_x, local_scs->n_rows_padded*sizeof(VT)));
-        CUDA_CHECK(cudaMalloc(&d_y, local_scs->n_rows_padded*sizeof(VT)));
+        CUDA_CHECK(cudaMalloc(&d_x, padded_size*sizeof(VT)));
+        CUDA_CHECK(cudaMalloc(&d_y, padded_size*sizeof(VT)));
 
-        CUDA_CHECK(cudaMemcpy(d_x, local_x_hardcopy, local_scs->n_rows_padded*sizeof(VT), cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_y, local_y_hardcopy, local_scs->n_rows_padded*sizeof(VT), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_x, local_x_hardcopy, padded_size*sizeof(VT), cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_y, local_y_hardcopy, padded_size*sizeof(VT), cudaMemcpyHostToDevice));
 
         delete local_x_hardcopy;
         delete local_y_hardcopy;
