@@ -783,7 +783,7 @@ class SpmvKernel {
         }
 
         // template <typename VT, typename IT>
-        inline void pack_send_buf(int outgoing_buf_size, int to_proc_idx, int receiving_proc, int block_offset){
+        inline void pack_send_buf(int outgoing_buf_size, int to_proc_idx, int receiving_proc, int block_offset, int vec_idx){
 #ifdef __CUDACC__
 #ifdef DEBUG_MODE_FINE
             if(my_rank == 0) validate_pointers();
@@ -857,10 +857,11 @@ class SpmvKernel {
         inline void init_halo_exchange(int vec_idx = 0){
 #ifdef USE_MPI
 #ifndef NO_MPI_MODE
-            int outgoing_buf_size, incoming_buf_size;
-            int receiving_proc, sending_proc;
+            int outgoing_buf_size = 0, incoming_buf_size = 0;
+            int receiving_proc = 0, sending_proc = 0;
+            int block_offset = 0;
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-            int block_offset = vec_idx * (num_local_rows + per_vector_padding);
+            block_offset = vec_idx * (num_local_rows + per_vector_padding);
 #endif
 
             // First, post receives
@@ -937,7 +938,7 @@ class SpmvKernel {
                 }
 #endif
                 // Move non-contiguous data to a contiguous buffer for communication
-                if(!config->no_pack) pack_send_buf(outgoing_buf_size, to_proc_idx, receiving_proc, block_offset);
+                if(!config->no_pack) pack_send_buf(outgoing_buf_size, to_proc_idx, receiving_proc, block_offset, vec_idx);
 
                 MPI_Isend(
 #ifdef SINGLEVEC_MPI_MODE
