@@ -31,3 +31,11 @@ EXE/
 #benchmarking data
 bench_*
 SLURM_OUT_FILES
+
+#large matrices to prevnt unnecessary upload
+matrices/bundle_adj_b.mtx
+matrices/bundle_adj.mtx
+matrices/Emilia_923.mtx
+matrices/Flan_1565.mtx
+matrices/kkt_power.mtx
+matrices/ML_Geer.mtx
