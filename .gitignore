@@ -27,3 +27,7 @@ ML_Geer_data_vol_tests/
 *.gch
 
 EXE/
+
+#benchmarking data
+bench_*
+SLURM_OUT_FILES
