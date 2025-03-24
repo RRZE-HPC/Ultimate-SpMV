@@ -61,7 +61,7 @@ update_config_value "USE_LIKWID" "0"
 update_config_value "USE_CUSPARSE" "0"
 update_config_value "USE_SCAMAC" "0"
 
-declare -a mpi_modes=("singlevec" "multivec" "bulkvec")
+declare -a mpi_modes=("singlevec" "bulkvec") # "multivec"  # removed it due to issues in intelmpi implementation issues
 declare -a active_modes=(1)
 declare -a deactive_modes=(0)
 declare -a binarymodes=(0)
