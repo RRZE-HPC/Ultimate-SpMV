@@ -3,7 +3,7 @@
 #SBATCH -J SPMMV_cache_crsbneck
 #SBATCH -p singlenode
 #SBATCH --constraint=hwperf
-#SBATCH --time=1-00:00:00
+#SBATCH --time=23:00:00
 #SBATCH --output=./SLURM_OUT_FILES/%j_%x.out
 #SBATCH --export=NONE
 
@@ -28,21 +28,21 @@ for np in $(seq $startcores -1 $endcores); do
     for bvecsize in $(seq $maxblockvec -1 1); do
         echo "number of process $np and blockvecsize $bvecsize | start @ $(date +"%T")"
         SECONDS=0
-        likwid-mpirun -mpi intelmpi -n $np -g L3 -m \
+        srun --cpu-freq=1800000-1800000:performance likwid-mpirun -mpi intelmpi -n $np -g L3 -m \
             ./$exe $matfile \
             crs \
             -mode b \
             -block_vec_size $bvecsize >temp.txt
         cat temp.txt >>L3_likwid.txt
         L3bandwidth=$(cat temp.txt | grep -i "L3 bandwidth \[MBytes/s\] STAT" | awk -F '|' '{print $3}')
-        likwid-mpirun -mpi intelmpi -n $np -g L2 -m \
+        srun --cpu-freq=1800000-1800000:performance likwid-mpirun -mpi intelmpi -n $np -g L2 -m \
             ./$exe $matfile \
             crs \
             -mode b \
             -block_vec_size $bvecsize >temp.txt
         cat temp.txt >>L2_likwid.txt
         L2loadbandwidth=$(cat temp.txt | grep -i "L2D load bandwidth \[MBytes/s\] STAT" | awk -F '|' '{print $3}')
-        likwid-mpirun -mpi intelmpi -n $np -g MEM_DP -m \
+        srun --cpu-freq=1800000-1800000:performance likwid-mpirun -mpi intelmpi -n $np -g MEM_DP -m \
             ./$exe $matfile \
             crs \
             -mode b \

@@ -2,7 +2,7 @@
 #
 #SBATCH -J SPMMV_bott_crs
 #SBATCH -p singlenode
-#SBATCH --time=20:00:00
+#SBATCH --time=23:00:00
 #SBATCH --output=./SLURM_OUT_FILES/%j_%x.out
 #SBATCH --export=NONE
 
@@ -27,7 +27,7 @@ for np in $(seq $startcores -1 $endcores); do
     for bvecsize in $(seq $maxblockvec -1 1); do
         echo "number of process $np and blockvecsize $bvecsize | start @ $(date +"%T")"
         SECONDS=0
-        likwid-mpirun -mpi intelmpi -n $np \
+        srun --cpu-freq=1800000-1800000:performance likwid-mpirun -mpi intelmpi -n $np \
             ./$exe \
             $matfile \
             crs \

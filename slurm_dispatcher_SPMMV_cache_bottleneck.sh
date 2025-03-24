@@ -12,7 +12,7 @@ mkdir $newfoldername
 
 cp $exefile $newfoldername
 
-echo "np, bvecsize, likwidoutflopps, likwidoutbandwidth, L2loadbandwidth, L3bandwidth" >$newfoldername/spmv_cache_data.txt
+echo "#np, bvecsize, likwidoutflopps, likwidoutbandwidth, L2loadbandwidth, L3bandwidth" >$newfoldername/spmv_cache_data.txt
 echo "" >$newfoldername/L2_likwid.txt
 echo "" >$newfoldername/L3_likwid.txt
 echo "" >$newfoldername/MEM_likwid.txt
@@ -20,8 +20,7 @@ echo "" >$newfoldername/MEM_likwid.txt
 startcores=$maxcores               #72
 endcores=$((maxcores - stepcores)) #72-5 = 67
 ID=$(sbatch SPMMV_cache_bottleneck.sh $newfoldername $matrixfile $maxblockvec $startcores $endcores | grep "^Submitted" | cut -f 4 -d ' ')
-echo "newfoldername | matrixfile | maxblockvec | startcores | endcores | ID" >$newfoldername/slurmids.txt
-echo "$newfoldername | $matrixfile | $maxblockvec | $startcores | $endcores | $ID" >>$newfoldername/slurmids.txt
+echo "$newfoldername | $matrixfile | $maxblockvec | $startcores | $endcores | $ID" >$newfoldername/slurmids.txt
 
 for loopcorestart in $(seq $endcores $((-stepcores - 1)) 2); do
     lscore=$((loopcorestart - 1))
@@ -31,4 +30,5 @@ for loopcorestart in $(seq $endcores $((-stepcores - 1)) 2); do
 done
 
 echo "list of schduled jobs : "
+echo "newfoldername | matrixfile | maxblockvec | startcores | endcores | ID" 
 cat $newfoldername/slurmids.txt
