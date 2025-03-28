@@ -46,7 +46,7 @@ spmv_omp_csr(
         for (ST row = 0; row < *num_rows; ++row) {
             VT sum{};
 
-            #pragma omp simd simdlen(SIMD_LENGTH) reduction(+:sum)
+            #pragma omp simd simdlen(SIMD_LENGTH)
             for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
                 sum += values[j] * x[col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
@@ -106,18 +106,9 @@ block_spmv_omp_csr(
             }
 
             for (IT j = row_ptrs[row]; j < row_ptrs[row + 1]; ++j) {
-                #pragma omp simd
+                #pragma omp simd simdlen(SIMD_LENGTH)
                 for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
-
-// #ifdef DEBUG_MODE_FINE
-//                     printf("rank %i: Accessing tmp[%i] += X[%i]\n", *my_rank, vec_idx, (*block_size * *vec_length) + col_idxs[j]);
-//                     printf("rank %i: vec_idx = %i\n", *my_rank, vec_idx);
-//                     printf("rank %i: *num_rows = %i\n", *my_rank, *num_rows);
-//                     printf("rank %i: row = %i\n", *my_rank, row);
-//                     printf("rank %i: col_idxs[j] = %i\n", *my_rank, col_idxs[j]);
-//                     printf("rank %i: j = %i\n", *my_rank, j);
-// #endif
                     tmp[vec_idx] += values[j] * X[(*vec_length * vec_idx) + col_idxs[j]];
 #ifdef DEBUG_MODE_FINE
                     printf("rank %i: %f += %f * %f using col idx %i w/ j=%i, row=%i\n", *my_rank,tmp[vec_idx], values[j], X[(*vec_length * vec_idx) + col_idxs[j]], col_idxs[j], j, row);
@@ -132,6 +123,7 @@ block_spmv_omp_csr(
                 }
             }
 
+            #pragma omp simd simdlen(SIMD_LENGTH)
             for (int vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                 Y[row + (vec_idx * *vec_length)] = tmp[vec_idx];
@@ -354,7 +346,7 @@ block_spmv_omp_scs_general(
 
             for (IT j = 0; j < chunk_lengths[c]; ++j) {
                 for (IT i = 0; i < *C; ++i) {
-                    #pragma omp simd
+                    #pragma omp simd simdlen(SIMD_LENGTH)
                     for (IT vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
 	                    tmp[i * (*block_size) + vec_idx] += values[cs + j * *C + i] * X[col_idxs[cs + j * *C + i] + vec_idx * (*vec_length)];
@@ -374,7 +366,7 @@ block_spmv_omp_scs_general(
             }
 
             for (IT i = 0; i < *C; ++i) {
-                #pragma omp simd
+                #pragma omp simd simdlen(SIMD_LENGTH)
                 for (IT vec_idx = 0; vec_idx < *block_size; ++vec_idx) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                         Y[(c * *C + i) + vec_idx * (*vec_length)] = tmp[i * (*block_size) + vec_idx];
@@ -445,7 +437,7 @@ block_scs_impl_cpu(
 
             for (IT j = 0; j < chunk_lengths[c]; ++j) {
                 for (IT i = 0; i < C; ++i) {
-                    #pragma omp simd
+                    #pragma omp simd simdlen(SIMD_LENGTH)
                     for (IT n = 0; n < (*block_size); ++n) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                         tmp[i * (*block_size) + n] += values[cs + j * C + i] * X[col_idxs[cs + j * C + i] + n * (*vec_length)];
@@ -458,7 +450,7 @@ block_scs_impl_cpu(
             }
             
             for (IT i = 0; i < C; ++i) {
-                #pragma omp simd
+                #pragma omp simd simdlen(SIMD_LENGTH)
                 for (IT n = 0; n < (*block_size); ++n) {
 #ifdef COLWISE_BLOCK_VECTOR_LAYOUT
                     Y[(c * C + i) + n * (*vec_length)] = tmp[i * (*block_size) + n];
