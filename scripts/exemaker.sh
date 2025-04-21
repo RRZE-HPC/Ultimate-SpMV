@@ -9,6 +9,8 @@ RED="\e[31m"
 GREEN="\e[32m"
 RESET="\e[0m"
 
+cd ..
+
 exedir="./EXE"
 
 [ ! -d "$exedir" ] && mkdir -p $exedir
