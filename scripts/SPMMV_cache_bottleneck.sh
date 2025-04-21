@@ -3,7 +3,7 @@
 #SBATCH -J SPMMV_cache_crsbneck
 #SBATCH -p singlenode
 #SBATCH --constraint=hwperf
-#SBATCH --time=0:30:00
+#SBATCH --time=23:00:00
 #SBATCH --output=../SLURM_OUT_FILES/%j_%x.out
 #SBATCH --export=NONE
 
