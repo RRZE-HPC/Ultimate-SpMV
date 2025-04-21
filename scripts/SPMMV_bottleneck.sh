@@ -2,8 +2,8 @@
 #
 #SBATCH -J SPMMV_bott_crs
 #SBATCH -p singlenode
-#SBATCH --time=23:00:00
-#SBATCH --output=./SLURM_OUT_FILES/%j_%x.out
+#SBATCH --time=23:30:00
+#SBATCH --output=../SLURM_OUT_FILES/%j_%x.out
 #SBATCH --export=NONE
 
 unset SLURM_EXPORT_ENV
