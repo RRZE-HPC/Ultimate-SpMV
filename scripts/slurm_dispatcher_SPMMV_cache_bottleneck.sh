@@ -6,7 +6,7 @@ maxcores=${3:-72}
 stepcores=${4:-12}
 maxblockvec=${5:-30}
 
-newfoldername=bench_cache_SpMMV_$(date "+%Y%m%d_%H%M%S")
+newfoldername=../bench_cache_SpMMV_$(date "+%Y%m%d_%H%M%S")
 
 mkdir $newfoldername
 
